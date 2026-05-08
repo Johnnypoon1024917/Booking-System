@@ -1,0 +1,32 @@
+services:
+  mrbs_api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_DSN=postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      - postgres_db
+      - rabbitmq
+
+  postgres_db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: fsd_mrbs
+      POSTGRES_USER: mrbs_admin
+      POSTGRES_PASSWORD: SecurePass123!
+    ports:
+      - "5432:5432"
+    # CRITICAL: This was missing. It maps your SQL schema into the container.
+    volumes:
+      - ./src/infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
