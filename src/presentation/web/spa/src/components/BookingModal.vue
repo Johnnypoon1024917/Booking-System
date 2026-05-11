@@ -140,12 +140,13 @@ function formatDate(d) {
 async function submit() {
   busy.value = true
   try {
-    const startISO = `${props.date}T${props.start}:00Z`
-    const endISO = `${props.date}T${props.end}:00Z`
+    // Convert local date+time to proper ISO with timezone offset
+    const startLocal = new Date(`${props.date}T${props.start}:00`)
+    const endLocal = new Date(`${props.date}T${props.end}:00`)
     const r = await api.createBooking({
       resource_id: props.resource.ID || props.resource.id,
-      start_time: startISO,
-      end_time: endISO,
+      start_time: startLocal.toISOString(),
+      end_time: endLocal.toISOString(),
       meeting_url: meetingURL.value || undefined,
       custom_data: customData,
       recurrence: recur.value ? { pattern: pattern.value, count: count.value } : undefined
