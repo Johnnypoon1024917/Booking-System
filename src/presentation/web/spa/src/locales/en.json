@@ -363,6 +363,7 @@
       "deactivated": "Resource deactivated",
       "confirmDeactivate": "Deactivate this resource? It will be hidden from new bookings.",
       "saveFirst": "Save the parent resource before splitting.",
+      "alreadySplit": "This is a composite/parent resource. Sub-resources are managed separately.",
       "name": "Name",
       "type": "Asset type",
       "region": "Region",

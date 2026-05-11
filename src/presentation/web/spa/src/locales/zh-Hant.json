@@ -363,6 +363,7 @@
       "deactivated": "資源已停用",
       "confirmDeactivate": "停用此資源？將無法繼續預約。",
       "saveFirst": "請先儲存父資源後再進行分拆。",
+      "alreadySplit": "這是一個複合/父資源。子資源需單獨管理。",
       "name": "名稱",
       "type": "資產類型",
       "region": "地區",
