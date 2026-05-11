@@ -1,79 +1,26 @@
-```
-# Compiled and build artifacts
-*.pyc
-__pycache__/
-*.o
-*.obj
-*.class
-*.exe
-*.dll
-*.so
-*.a
-*.out
-
-# Dependencies
+# Vue.js/JavaScript project ignores
 node_modules/
-venv/
-.venv/
+dist/
+build/
+.nuxt/
+.next/
+.un~lock
 .env
 .env.local
 .env.*
-
-# Build directories
-dist/
-build/
-target/
-.gradle/
-
-# Python specific
-*.pyc
+*.log
+*.tmp
+.vscode/
+.idea/
 __pycache__/
-*.pyo
-*.pyd
-.Python
-*.so
-.PyInstaller/
+*.pyc
 .pytest_cache/
-.mypy_cache/
 .coverage
 coverage/
 htmlcov/
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-*.swo
-
-# Editors
-.vscode/
-.idea/
-
-# System files
 .DS_Store
 Thumbs.db
-```
+*.swp
+*.swo
+target/
+.gradle/
