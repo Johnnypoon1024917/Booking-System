@@ -112,12 +112,35 @@
             <input type="number" v-model.number="splitForm.child_capacity" min="1"/>
           </label>
         </div>
+        
+        <!-- Sub-resource names as chips/tags -->
         <label class="field mt">
           <span>{{ $t('admin.resources.childNamesOpt') }}</span>
-          <textarea rows="2" :value="(splitForm.child_names || []).join('\n')"
-                    @input="splitForm.child_names = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"
-                    :placeholder="$t('admin.resources.childNamesPh')"></textarea>
+          <div class="sub-names-editor">
+            <div class="sub-names-list">
+              <div v-for="(name, idx) in splitForm.child_names" :key="idx" class="sub-name-chip">
+                <span class="chip-label">{{ name }}</span>
+                <button type="button" class="chip-remove" @click.prevent="removeChildName(idx)" :aria-label="'Remove'">
+                  <X :size="12"/>
+                </button>
+              </div>
+              <div v-if="splitForm.child_names.length < splitForm.child_count" class="sub-name-input-wrapper">
+                <input 
+                  type="text" 
+                  v-model="newChildName" 
+                  @keyup.enter="addChildName"
+                  :placeholder="$t('admin.resources.addNamePh')"
+                  class="sub-name-input"
+                />
+                <button type="button" class="btn icon-only sm" @click.prevent="addChildName" :disabled="!newChildName.trim()">
+                  <Plus :size="14"/>
+                </button>
+              </div>
+            </div>
+            <small class="muted">{{ $t('admin.resources.childNamesHelp') }}</small>
+          </div>
         </label>
+        
         <label class="field mt">
           <span>{{ $t('admin.resources.equipment') }}</span>
           <input :value="(splitForm.child_equipment || []).join(', ')"
@@ -191,12 +214,92 @@
   font-size: 13px;
   color: var(--text);
 }
+
+/* Sub-names editor (chips/tags) */
+.sub-names-editor {
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.sub-names-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.sub-name-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--brand-primary);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
+  animation: chip-in 150ms var(--ease);
+}
+
+@keyframes chip-in {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.chip-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: background var(--dur-fast);
+}
+
+.chip-remove:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+.sub-name-input-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sub-name-input {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  min-width: 140px;
+}
+
+.sub-name-input:focus {
+  outline: none;
+  border-color: var(--brand-primary);
+  box-shadow: inset 0 0 0 1px var(--brand-primary);
+}
 </style>
 
 <script setup>
 import { computed, reactive, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Combine, SplitSquareVertical, Save, Trash2, Users, Plus } from 'lucide-vue-next'
+import { Combine, SplitSquareVertical, Save, Trash2, Users, Plus, X } from 'lucide-vue-next'
 import Modal from './Modal.vue'
 import { api } from '../api'
 import { useToastStore } from '../stores/toast'
@@ -214,6 +317,7 @@ const form = reactive({
 })
 const busy = ref(false)
 const showSplit = ref(false)
+const newChildName = ref('')
 const splitForm = reactive({
   child_count: 3, 
   child_capacity: 4, 
@@ -364,5 +468,16 @@ function addSubResource() {
 
 function removeSubResource(idx) {
   splitForm.sub_resources.splice(idx, 1)
+}
+
+function addChildName() {
+  const name = newChildName.value.trim()
+  if (!name) return
+  splitForm.child_names.push(name)
+  newChildName.value = ''
+}
+
+function removeChildName(idx) {
+  splitForm.child_names.splice(idx, 1)
 }
 </script>
