@@ -1,1 +1,84 @@
-Nothing needs to be added to .gitignore since only a Vue component file (.vue) was modified and no build artifacts, dependencies, or temporary files were included in the changes.
+```
+# Build artifacts
+dist/
+build/
+*.o
+*.obj
+*.out
+
+# Dependencies
+node_modules/
+vendor/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+*.test
+*.prof
+cover.out
+coverage.txt
+Godeps/
+bin/
+
+# Node
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+node_modules/
+jspm_packages/
+web_modules/
+*.min.js
+*.min.css
+
+# Vue/SPA
+public/dist/
+dist/
+*.vuepress/dist
+.nuxt/
+```

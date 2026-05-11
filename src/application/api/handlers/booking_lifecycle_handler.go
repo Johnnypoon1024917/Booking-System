@@ -18,6 +18,7 @@ import (
 type BookingLookup interface {
 	FindByID(ctx context.Context, id string) (booking.Booking, error)
 	ListByUserUpcoming(ctx context.Context, userID string) ([]booking.Booking, error)
+	ListAllForDate(ctx context.Context, tenantID, date string) ([]booking.Booking, error)
 }
 
 // BookingLifecycleHandler — get, update, cancel, list-mine.
@@ -62,6 +63,23 @@ func (h *BookingLifecycleHandler) ListMine(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	out, err := h.bookings.ListByUserUpcoming(r.Context(), uid)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ListAll returns all bookings for a given date (or upcoming if no date).
+// Admin-only endpoint for the timetable view.
+func (h *BookingLifecycleHandler) ListAll(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantIDFromCtx(r)
+	if !ok {
+		http.Error(w, "tenant context missing", http.StatusUnauthorized)
+		return
+	}
+	date := r.URL.Query().Get("date")
+	out, err := h.bookings.ListAllForDate(r.Context(), tid.String(), date)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

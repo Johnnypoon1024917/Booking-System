@@ -52,6 +52,7 @@ export const api = {
   cancelBooking: (id, reason) =>
     request(`/api/v1/bookings/${id}` + (reason ? `?reason=${encodeURIComponent(reason)}` : ''), { method: 'DELETE' }),
   myBookings:    ()      => request('/api/v1/me/bookings'),
+  listAllBookings: (date) => request(`/api/v1/admin/bookings${date ? `?date=${date}` : ''}`),
 
   // ----- Approvals -----
   listApprovals: ()                  => request('/api/v1/approvals'),

@@ -41,6 +41,9 @@
         <router-link to="/admin/resources" @click="$emit('navigate')" class="sub">
           <Boxes :size="14" /> {{ $t('nav.resources') }}
         </router-link>
+        <router-link to="/admin/bookings" @click="$emit('navigate')" class="sub">
+          <Calendar :size="14" /> {{ $t('nav.bookings') }}
+        </router-link>
         <router-link to="/admin/resource-types" @click="$emit('navigate')" class="sub">
           <Tag :size="14" /> {{ $t('nav.resourceTypes') }}
         </router-link>

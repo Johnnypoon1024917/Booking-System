@@ -202,6 +202,39 @@ ORDER BY start_time ASC`
 	return scanBookings(rows)
 }
 
+// ListAllForDate returns all bookings for a given date (or all upcoming if no date).
+// Used by admin timetable view.
+func (r *BookingRepo) ListAllForDate(ctx context.Context, tenantID, date string) ([]booking.Booking, error) {
+	var query string
+	var args []interface{}
+	
+	if date != "" {
+		query = `
+SELECT ` + bookingColumns + `
+FROM bookings
+WHERE tenant_id = $1
+  AND start_time >= $2::date
+  AND start_time < ($2::date + INTERVAL '1 day')
+ORDER BY start_time ASC`
+		args = []interface{}{tenantID, date}
+	} else {
+		query = `
+SELECT ` + bookingColumns + `
+FROM bookings
+WHERE tenant_id = $1
+  AND end_time > NOW() - INTERVAL '7 days'
+ORDER BY start_time ASC`
+		args = []interface{}{tenantID}
+	}
+	
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBookings(rows)
+}
+
 // CountConcurrent reports how many active bookings overlap [start, end) on
 // the given resource. Used by the use case to enforce shared_capacity for
 // resources whose booking_mode == "shared".
