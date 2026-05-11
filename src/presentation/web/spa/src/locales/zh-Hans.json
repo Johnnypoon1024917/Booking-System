@@ -450,6 +450,19 @@
       "count": "本年度有 {n} 个假期",
       "empty": "本年度尚无假期",
       "confirmDelete": "删除此假期？"
+    },
+    "bookings": {
+      "title": "预约管理",
+      "subtitle": "查看和管理所有资源的预约。",
+      "timetable": "时间表",
+      "floorplan": "平面图",
+      "searchPh": "按用户或资源搜索…",
+      "allResources": "所有资源",
+      "allStatuses": "所有状态",
+      "empty": "未找到预约",
+      "emptyDesc": "当前筛选条件下没有预约。",
+      "details": "预约详情",
+      "refresh": "刷新"
     }
   },
   "kiosk": {
