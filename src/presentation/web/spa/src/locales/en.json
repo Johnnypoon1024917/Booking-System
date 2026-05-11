@@ -106,7 +106,16 @@
     "biweekly": "Every 2 weeks",
     "monthly": "Monthly",
     "occurrences": "Occurrences",
-    "untitled": "Untitled booking"
+    "untitled": "Untitled booking",
+    "start": "Start time",
+    "end": "End time",
+    "status": "Status",
+    "user": "User",
+    "resource": "Resource",
+    "confirmed": "Confirmed",
+    "pending": "Pending",
+    "cancelled": "Cancelled",
+    "checkedin": "Checked In"
   },
   "myBookings": {
     "title": "My Bookings",
@@ -494,6 +503,9 @@
     "tomorrow": "Tomorrow",
     "refresh": "Refresh",
     "active": "Active",
-    "inactive": "Inactive"
+    "inactive": "Inactive",
+    "close": "Close",
+    "capacity": "Capacity",
+    "available": "Available"
   }
 }
