@@ -40,13 +40,13 @@ type ChainMaterializer interface {
 }
 
 type CreateBookingUseCase struct {
-	bookingRepo   booking.Repository
-	adminRepo     admin.AdminRepository
-	resourceRepo  ResourceLookup
-	limitChecker  BookingLimitChecker
-	chain         ChainMaterializer
-	broker        MessageBroker
-	zoomMaskBase  string
+	bookingRepo  booking.Repository
+	adminRepo    admin.AdminRepository
+	resourceRepo ResourceLookup
+	limitChecker BookingLimitChecker
+	chain        ChainMaterializer
+	broker       MessageBroker
+	zoomMaskBase string
 }
 
 // NewCreateBookingUseCase wires the booking pipeline. resourceRepo and
@@ -91,12 +91,12 @@ func (uc *CreateBookingUseCase) WithChainMaterializer(c ChainMaterializer) *Crea
 
 // Request carries all booking inputs from the API layer.
 type Request struct {
-	TenantID    string
-	ResourceID  string
-	UserID      string
-	Start, End  time.Time
-	MeetingURL  string            // optional dynamic Zoom/Teams URL
-	CustomData  map[string]string // tenant-defined custom fields
+	TenantID   string
+	ResourceID string
+	UserID     string
+	Start, End time.Time
+	MeetingURL string            // optional dynamic Zoom/Teams URL
+	CustomData map[string]string // tenant-defined custom fields
 }
 
 // Result describes what was persisted so the caller can decide what to
@@ -117,12 +117,13 @@ type Result struct {
 //  5. Resource lookup → decide approval required & mask meeting URL
 //  6. Persist with optimistic locking
 //  7. Publish async event for ICS+SMTP worker
-func (uc *CreateBookingUseCase) Execute(ctx context.Context, resourceID, userID string, start, end time.Time) (string, error) {
+func (uc *CreateBookingUseCase) Execute(ctx context.Context, resourceID, userID string, start, end time.Time, tenantID string) (string, error) {
 	res, err := uc.ExecuteRequest(ctx, Request{
 		ResourceID: resourceID,
 		UserID:     userID,
 		Start:      start,
 		End:        end,
+		TenantID:   tenantID,
 	})
 	if err != nil {
 		return "", err

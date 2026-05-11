@@ -107,10 +107,15 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Context().Value("userID").(string)
+	// Extract tenant ID from context and pass it to the use case
+	var tenantID string
+	if tid, ok := tenantIDFromCtx(r); ok {
+		tenantID = tid.String()
+	}
 	start, _ := time.Parse(time.RFC3339, req.StartTime)
 	end, _ := time.Parse(time.RFC3339, req.EndTime)
 
-	_, err := h.uc.Execute(r.Context(), req.ResourceID, userID, start, end)
+	_, err := h.uc.Execute(r.Context(), req.ResourceID, userID, start, end, tenantID)
 	if err != nil {
 		// Map error categories to proper status codes. Internal errors are
 		// logged with full detail but the client only sees a generic msg.
