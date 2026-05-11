@@ -95,10 +95,16 @@
         </div>
       </div>
 
+      <!-- Show split button only for new resources (not yet saved) -->
       <div v-if="!form.ID && form.CompositeMode !== 'child'" class="mt">
         <button class="btn ghost sm" @click.prevent="showSplit = !showSplit">
           <SplitSquareVertical :size="13"/> {{ $t('admin.resources.splitAction') }}
         </button>
+      </div>
+
+      <!-- For existing parent resources, show info message instead of split form -->
+      <div v-if="form.ID && form.CompositeMode === 'parent'" class="mt">
+        <p class="muted text-sm">{{ $t('admin.resources.alreadySplit') }}</p>
       </div>
 
       <div v-if="showSplit" class="mt">
