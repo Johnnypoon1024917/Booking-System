@@ -152,7 +152,7 @@ const editing = ref(null)
 const selectedBooking = ref(null)
 const viewMode = ref('timetable')
 const q = ref('')
-const filterDate = ref(new Date().toISOString().split('T')[0])
+const filterDate = ref('')
 const filterResource = ref('')
 const filterStatus = ref('')
 
@@ -193,7 +193,7 @@ async function load() {
   loading.value = true
   try {
     const [bookingsData, resourcesData, usersData] = await Promise.all([
-      api.listAllBookings(filterDate.value),
+      api.listAllBookings(filterDate.value || 'all'),
       api.listResources(),
       api.listUsers()
     ])

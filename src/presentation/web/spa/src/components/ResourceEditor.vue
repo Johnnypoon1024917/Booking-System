@@ -70,7 +70,29 @@
       </div>
 
       <div v-if="form.CompositeMode === 'parent'" class="mt">
-        <small class="muted">{{ $t('admin.resources.subCount', { n: form.SubResourceCount }) }}</small>
+        <div class="sub-resources-list">
+          <div v-for="(sub, idx) in splitForm.sub_resources" :key="idx" class="sub-resource-item">
+            <div class="sub-resource-header">
+              <span class="sub-resource-title">{{ $t('admin.resources.subResource') }} {{ idx + 1 }}</span>
+              <button class="btn ghost danger sm" @click.prevent="removeSubResource(idx)" v-if="splitForm.sub_resources.length > 1">
+                <Trash2 :size="12"/>
+              </button>
+            </div>
+            <div class="grid-2">
+              <label class="field">
+                <span>{{ $t('admin.resources.name') }}</span>
+                <input v-model="sub.name" :placeholder="$t('admin.resources.subResourceNamePh')" />
+              </label>
+              <label class="field">
+                <span>{{ $t('admin.resources.capacity') }}</span>
+                <input type="number" v-model.number="sub.capacity" min="1" />
+              </label>
+            </div>
+          </div>
+          <button class="btn ghost sm mt" @click.prevent="addSubResource">
+            <Plus :size="12"/> {{ $t('admin.resources.addSubResource') }}
+          </button>
+        </div>
       </div>
 
       <div v-if="!form.ID && form.CompositeMode !== 'child'" class="mt">
@@ -143,12 +165,38 @@
 .day-name {
   font-weight: 500;
 }
+
+.sub-resources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sub-resource-item {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.sub-resource-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sub-resource-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
 </style>
 
 <script setup>
 import { computed, reactive, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Combine, SplitSquareVertical, Save, Trash2, Users } from 'lucide-vue-next'
+import { Combine, SplitSquareVertical, Save, Trash2, Users, Plus } from 'lucide-vue-next'
 import Modal from './Modal.vue'
 import { api } from '../api'
 import { useToastStore } from '../stores/toast'
@@ -167,8 +215,22 @@ const form = reactive({
 const busy = ref(false)
 const showSplit = ref(false)
 const splitForm = reactive({
-  child_count: 3, child_capacity: 4, child_names: [], child_equipment: []
+  child_count: 3, 
+  child_capacity: 4, 
+  child_names: [], 
+  child_equipment: [],
+  sub_resources: []
 })
+
+// Initialize sub_resources when composite mode is parent
+if (form.CompositeMode === 'parent' && form.SubResourceCount > 0) {
+  for (let i = 0; i < form.SubResourceCount; i++) {
+    splitForm.sub_resources.push({
+      name: form.Name ? `${form.Name} - ${i + 1}` : `Sub-resource ${i + 1}`,
+      capacity: Math.floor(form.Capacity / form.SubResourceCount) || 4
+    })
+  }
+}
 // Tenant-defined resource types (gym, studio, parking, …). Falls back to the
 // 4 built-ins if the catalog endpoint isn't reachable yet.
 const resourceTypes = ref([
@@ -291,5 +353,16 @@ async function doSplit() {
     emit('split', res)
   } catch (e) { toasts.error('Split failed', e.message) }
   finally { busy.value = false }
+}
+
+function addSubResource() {
+  splitForm.sub_resources.push({
+    name: `Sub-resource ${splitForm.sub_resources.length + 1}`,
+    capacity: form.Capacity || 4
+  })
+}
+
+function removeSubResource(idx) {
+  splitForm.sub_resources.splice(idx, 1)
 }
 </script>
