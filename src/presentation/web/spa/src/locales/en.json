@@ -450,6 +450,19 @@
       "count": "{n} holidays this year",
       "empty": "No holidays for this year",
       "confirmDelete": "Delete this holiday?"
+    },
+    "bookings": {
+      "title": "Bookings",
+      "subtitle": "View and manage all bookings across your resources.",
+      "timetable": "Timetable",
+      "floorplan": "Floor Plan",
+      "searchPh": "Search by user or resource…",
+      "allResources": "All resources",
+      "allStatuses": "All statuses",
+      "empty": "No bookings found",
+      "emptyDesc": "There are no bookings matching your current filters.",
+      "details": "Booking Details",
+      "refresh": "Refresh"
     }
   },
   "kiosk": {
