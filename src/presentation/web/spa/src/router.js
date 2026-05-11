@@ -7,6 +7,7 @@ const MyBookings      = () => import('./views/MyBookings.vue')
 const Approvals       = () => import('./views/Approvals.vue')
 const Admin           = () => import('./views/Admin.vue')
 const AdminResources  = () => import('./views/AdminResources.vue')
+const AdminBookings   = () => import('./views/AdminBookings.vue')
 const AdminResourceTypes = () => import('./views/AdminResourceTypes.vue')
 const AdminUsers      = () => import('./views/AdminUsers.vue')
 const AdminDepartments = () => import('./views/AdminDepartments.vue')
@@ -36,6 +37,7 @@ export const router = createRouter({
     // Admin module
     { path: '/admin',             name: 'admin',             component: Admin,            meta: { auth: true, roles: adminRoles } },
     { path: '/admin/resources',   name: 'admin-resources',   component: AdminResources,   meta: { auth: true, roles: roomAdminRoles } },
+    { path: '/admin/bookings',    name: 'admin-bookings',    component: AdminBookings,    meta: { auth: true, roles: roomAdminRoles } },
     { path: '/admin/resource-types', name: 'admin-resource-types', component: AdminResourceTypes, meta: { auth: true, roles: adminRoles } },
     { path: '/admin/users',       name: 'admin-users',       component: AdminUsers,       meta: { auth: true, roles: adminRoles } },
     { path: '/admin/departments', name: 'admin-departments', component: AdminDepartments, meta: { auth: true, roles: adminRoles } },

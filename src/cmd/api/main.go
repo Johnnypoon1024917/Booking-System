@@ -218,6 +218,11 @@ func main() {
 		middleware.RequireRoleHandler(allBookerRoles, lifecycleH.ListMine),
 	))
 
+	// Admin: all bookings for timetable view
+	mux.Handle("/api/v1/admin/bookings", tenantMW.Middleware(
+		perm(adminRoles, "report.export", lifecycleH.ListAll),
+	))
+
 	// Approvals
 	mux.Handle("/api/v1/approvals", tenantMW.Middleware(
 		perm(approverRoles, "approval.decide", approvalH.Dispatch),
