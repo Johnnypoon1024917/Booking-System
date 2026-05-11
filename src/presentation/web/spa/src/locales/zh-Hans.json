@@ -106,7 +106,16 @@
     "biweekly": "每两周",
     "monthly": "每月",
     "occurrences": "次数",
-    "untitled": "未命名预约"
+    "untitled": "未命名预约",
+    "start": "开始时间",
+    "end": "结束时间",
+    "status": "状态",
+    "user": "用户",
+    "resource": "资源",
+    "confirmed": "已确认",
+    "pending": "待审批",
+    "cancelled": "已取消",
+    "checkedin": "已签到"
   },
   "myBookings": {
     "title": "我的预约",
@@ -494,6 +503,9 @@
     "tomorrow": "明日",
     "refresh": "刷新",
     "active": "启用中",
-    "inactive": "停用"
+    "inactive": "停用",
+    "close": "关闭",
+    "capacity": "容量",
+    "available": "可用"
   }
 }

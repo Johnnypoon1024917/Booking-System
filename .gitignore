@@ -1,26 +1,4 @@
-# Vue.js/JavaScript project ignores
-node_modules/
-dist/
-build/
-.nuxt/
-.next/
-.un~lock
-.env
-.env.local
-.env.*
-*.log
-*.tmp
-.vscode/
-.idea/
-__pycache__/
-*.pyc
-.pytest_cache/
-.coverage
-coverage/
-htmlcov/
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-target/
-.gradle/
+```
+# Locales directory - assuming these are build artifacts or generated files
+src/presentation/web/spa/src/locales/
+```
