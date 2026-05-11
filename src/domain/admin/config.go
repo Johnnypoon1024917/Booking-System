@@ -1,8 +1,10 @@
 package admin
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
-// ResourceConfig handles the tools to configure departments, regions, locations, and individual room parameters.
 type ResourceConfig struct {
 	ID               string
 	Name             string
@@ -10,20 +12,19 @@ type ResourceConfig struct {
 	Region           string
 	Location         string
 	Capacity         int
-	IsRestricted     bool // Handles Restricted Rooms: "VIP/Admin Only" visibility[cite: 33].
-	RequiresApproval bool // Handles Special Rooms requiring a one-level approval workflow[cite: 32].
+	IsRestricted     bool
+	RequiresApproval bool
 }
 
-// Holiday handles the manual addition/editing of holidays.
 type Holiday struct {
 	ID          string
 	Date        time.Time
 	Description string
-	IsBlocker   bool // Defines if this prevents bookings
+	IsBlocker   bool
 }
 
 type AdminRepository interface {
-	CreateResource(config ResourceConfig) error
-	AddHoliday(holiday Holiday) error
-	IsDateHoliday(date time.Time) (bool, error)
+	CreateResource(ctx context.Context, config ResourceConfig) error
+	AddHoliday(ctx context.Context, holiday Holiday) error
+	IsDateHoliday(ctx context.Context, date time.Time) (bool, error)
 }

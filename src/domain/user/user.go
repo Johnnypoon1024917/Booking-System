@@ -10,10 +10,12 @@ const (
 )
 
 type User struct {
-	ID       string
-	Username string
-	DN       string
-	Role     string
-	IsActive bool
-	Grade    string // e.g., "SDO" for Secretary validation
+	ID           string
+	TenantID     string   // Tenant isolation
+	Username     string
+	DN           string
+	Role         string
+	IsActive     bool
+	Grade        string   // e.g., "SDO" for Secretary validation
+	RegionAccess []string // For Room Admin role: list of regions
 }

@@ -1,26 +1,197 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>FSD MRBS - AD Login</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <script src="/js/auth.js" defer></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in · Resource Booking</title>
+  <meta name="theme-color" content="#0a1f44" />
+  <style>
+    :root {
+      --brand-primary: #0a1f44;
+      --brand-secondary: #d71920;
+      --brand-accent: #f7b500;
+      --bg: #f6f7fb;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --text-muted: #94a3b8;
+      --border: #e6e8ee;
+      --danger: #dc2626;
+      --shadow-xl: 0 24px 48px rgba(15, 23, 42, 0.16);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+                   "PingFang HK", "Microsoft JhengHei", "Microsoft YaHei", Roboto, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    @media (max-width: 880px) { body { grid-template-columns: 1fr; } .hero { display: none; } }
+
+    /* Hero side */
+    .hero {
+      position: relative; overflow: hidden;
+      background: linear-gradient(135deg, var(--brand-primary) 0%, #0e2a5e 60%, var(--brand-secondary) 130%);
+      color: white;
+      padding: 48px;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .hero::before, .hero::after {
+      content: ''; position: absolute; border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,255,255,0.12), transparent 70%);
+    }
+    .hero::before { width: 520px; height: 520px; right: -120px; top: -120px; }
+    .hero::after  { width: 380px; height: 380px; left:  -100px; bottom: -120px; background: radial-gradient(circle, rgba(247,181,0,0.18), transparent 70%); }
+    .hero-brand {
+      position: relative; z-index: 1;
+      display: flex; align-items: center; gap: 12px;
+      font-weight: 600;
+    }
+    .hero-brand .logo {
+      width: 38px; height: 38px; border-radius: 11px;
+      background: rgba(255,255,255,0.16); backdrop-filter: blur(10px);
+      display: grid; place-items: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    .hero-brand small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
+    .hero-pitch {
+      position: relative; z-index: 1; max-width: 460px;
+    }
+    .hero-pitch h1 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.05; letter-spacing: -0.02em; margin: 0 0 18px; }
+    .hero-pitch p  { font-size: 16px; opacity: 0.85; line-height: 1.55; margin: 0; }
+    .hero-features {
+      position: relative; z-index: 1;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    }
+    .hero-features .feat {
+      padding: 14px; border-radius: 12px;
+      background: rgba(255,255,255,0.08); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .hero-features b { font-size: 13px; }
+    .hero-features small { display: block; opacity: 0.7; font-size: 11px; margin-top: 4px; line-height: 1.4; }
+
+    /* Form side */
+    .form-wrap { display: grid; place-items: center; padding: 48px 28px; }
+    .form-card {
+      width: 100%; max-width: 420px;
+    }
+    .lang-row { display: flex; gap: 4px; margin-bottom: 28px; }
+    .lang-row button {
+      font: inherit; padding: 6px 12px; font-size: 12px;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .lang-row button:hover { background: #f1f3f8; }
+    .lang-row button.active { background: var(--brand-primary); color: white; border-color: var(--brand-primary); }
+
+    h2 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.01em; }
+    .form-card > p { color: var(--text-muted); font-size: 14px; margin: 0 0 28px; }
+
+    .field { display: block; margin-bottom: 14px; }
+    .field span {
+      display: block; font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%; padding: 11px 13px;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: var(--surface); font: inherit;
+      transition: border-color 120ms, box-shadow 120ms;
+    }
+    .field input:focus {
+      outline: none; border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px rgba(10, 31, 68, 0.12);
+    }
+    .submit {
+      display: flex; justify-content: center; align-items: center; gap: 8px;
+      width: 100%; padding: 12px;
+      background: var(--brand-primary); color: white; font: inherit; font-weight: 500;
+      border: 0; border-radius: 10px; cursor: pointer;
+      transition: filter 150ms;
+      margin-top: 6px;
+    }
+    .submit:hover { filter: brightness(1.08); }
+    .submit:disabled { opacity: 0.6; cursor: not-allowed; }
+    .submit svg { animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .err {
+      display: none; margin-top: 14px;
+      padding: 10px 12px; background: #fee2e2; color: var(--danger);
+      border: 1px solid #fecaca; border-radius: 10px; font-size: 13px;
+    }
+    .err.show { display: block; }
+
+    .footer {
+      margin-top: 28px; font-size: 12px; color: var(--text-muted);
+      text-align: center; line-height: 1.6;
+    }
+  </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center h-screen bg-cover" style="background-image: url('https://images.unsplash.com/photo-1555626906-fcf10d6851b4?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80');">
-    <div class="absolute inset-0 bg-[#003366] opacity-80"></div>
-    <div class="bg-white p-10 rounded-xl shadow-2xl z-10 w-full max-w-md border-t-4 border-[#cc0000]">
-        <div class="text-center mb-8">
-            <i class="fa-solid fa-fire-shield text-5xl text-[#cc0000] mb-4"></i>
-            <h1 class="text-2xl font-bold">FSD MRBS</h1>
-            <p class="text-sm text-gray-500">Active Directory Single Sign-On</p>
-        </div>
-        <form id="loginForm">
-            <input type="text" id="username" class="w-full mb-4 px-3 py-2 border rounded-lg focus:ring-2 outline-none" placeholder="Username (e.g., officer)" required>
-            <input type="password" id="password" class="w-full mb-6 px-3 py-2 border rounded-lg focus:ring-2 outline-none" placeholder="Password" required>
-            <button type="submit" class="w-full bg-[#003366] text-white font-bold py-3 rounded-lg shadow-lg">Authenticate</button>
-            <div id="loginError" class="mt-4 text-sm text-red-600 text-center hidden font-semibold"></div>
-        </form>
+<body>
+  <aside class="hero">
+    <div class="hero-brand">
+      <div class="logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+        </svg>
+      </div>
+      <div>
+        Resource Booking
+        <small data-i18n="tagline">Multi-tenant booking platform</small>
+      </div>
     </div>
+
+    <div class="hero-pitch">
+      <h1 data-i18n="heroTitle">Real-time room booking, made effortless.</h1>
+      <p data-i18n="heroBody">Single sign-on, recurring meetings, ICS calendar sync, QR check-in, and a tenant studio — all in one place.</p>
+    </div>
+
+    <div class="hero-features">
+      <div class="feat"><b data-i18n="f1Title">Trilingual</b><small data-i18n="f1Body">EN / 繁體 / 简体 — switch on the fly.</small></div>
+      <div class="feat"><b data-i18n="f2Title">HK Aware</b><small data-i18n="f2Body">HKO weather + gov.hk holidays auto-sync.</small></div>
+      <div class="feat"><b data-i18n="f3Title">Real-time</b><small data-i18n="f3Body">WebSocket availability, no refresh.</small></div>
+    </div>
+  </aside>
+
+  <main class="form-wrap">
+    <div class="form-card">
+      <div class="lang-row" role="group" aria-label="language">
+        <button data-locale="en" type="button">EN</button>
+        <button data-locale="zh-Hant" type="button">繁</button>
+        <button data-locale="zh-Hans" type="button">简</button>
+      </div>
+
+      <h2 data-i18n="signIn">Sign in</h2>
+      <p data-i18n="signInDesc">Use your Active Directory credentials to continue.</p>
+
+      <form id="loginForm" novalidate>
+        <label class="field">
+          <span data-i18n="username">Username</span>
+          <input type="text" id="username" autocomplete="username" required placeholder="officer" />
+        </label>
+        <label class="field">
+          <span data-i18n="password">Password</span>
+          <input type="password" id="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="submit" id="submitBtn">
+          <span data-i18n="continue">Continue</span>
+        </button>
+        <div class="err" id="loginError"></div>
+      </form>
+
+      <div class="footer">
+        <span data-i18n="footer">Single sign-on protected · Compliant with HK PDPO</span>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/auth.js" defer></script>
 </body>
 </html>

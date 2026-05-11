@@ -2,9 +2,8 @@ package rabbitmq
 
 import (
 	"context"
-	"encoding/json"
-	"fsd-mrbs/src/domain/booking"
 	"log"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -17,10 +16,11 @@ func NewRabbitMQPublisher(url string) *RabbitMQPublisher {
 	return &RabbitMQPublisher{connUrl: url}
 }
 
-func (p *RabbitMQPublisher) PublishBookingCreated(ctx context.Context, b *booking.Booking) error {
+// Publish implements the usecase.MessageBroker interface
+func (p *RabbitMQPublisher) Publish(queueName string, message []byte) error {
+	// Open connection with a timeout for High Availability
 	conn, err := amqp.Dial(p.connUrl)
 	if err != nil {
-		log.Printf("Failed to connect to RabbitMQ: %v", err)
 		return err
 	}
 	defer conn.Close()
@@ -31,19 +31,26 @@ func (p *RabbitMQPublisher) PublishBookingCreated(ctx context.Context, b *bookin
 	}
 	defer ch.Close()
 
-	q, err := ch.QueueDeclare("pimm_sync_queue", true, false, false, false, nil)
+	q, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
-	body, _ := json.Marshal(b)
-	err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
-		ContentType: "application/json",
-		Body:        body,
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = ch.PublishWithContext(ctx,
+		"",     // exchange
+		q.Name, // routing key
+		false,  // mandatory
+		false,  // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        message,
+		})
 
 	if err == nil {
-		log.Printf("Event published to PIMM Queue: %s", b.ID)
+		log.Printf("Successfully published event to queue: %s", queueName)
 	}
 	return err
 }

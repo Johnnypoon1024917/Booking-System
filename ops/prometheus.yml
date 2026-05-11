@@ -1,0 +1,23 @@
+# Prometheus scrape config for the FSD MRBS stack.
+# Visit http://localhost:9090 once `docker compose up` is running.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # The API binary exposes /api/metrics on port 8080 — same port as the
+  # JSON API. Behind a real load balancer the metrics endpoint should be
+  # ACL'd to internal scrapers only.
+  - job_name: fsd-mrbs-api
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ["mrbs_api:8080"]
+        labels:
+          service: api
+          env: dev
+
+  # Prometheus itself, for sanity checking.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

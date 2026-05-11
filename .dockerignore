@@ -1,0 +1,20 @@
+# Don't copy anything into the build context that we don't need.
+.git
+.gitignore
+.kiro
+.vscode
+.idea
+*.exe
+*.test
+*.out
+coverage.html
+
+# SPA outputs — rebuilt fresh in the node stage
+src/presentation/web/spa/node_modules
+src/presentation/web/spa/dist
+src/presentation/web/spa/.vite
+
+# Local docs / scratch
+README*.md
+ONBOARDING.md
+*.log

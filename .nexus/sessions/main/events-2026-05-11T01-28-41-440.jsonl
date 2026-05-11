@@ -1,0 +1,8 @@
+{"ts":"2026-05-11T01:28:51.054Z","payload":{"type":"statusUpdate","message":"Nexus: Indexing AST Code Map..."}}
+{"ts":"2026-05-11T01:28:51.061Z","payload":{"type":"statusUpdate","message":"Nexus: Parsing Traceability Matrix (LLM)..."}}
+{"ts":"2026-05-11T01:28:51.077Z","payload":{"type":"statusUpdate","message":"Nexus: Aggregating 0 specs..."}}
+{"ts":"2026-05-11T01:28:51.090Z","payload":{"type":"statusUpdate","message":""}}
+{"ts":"2026-05-11T01:29:11.044Z","payload":{"type":"statusUpdate","message":"Nexus: Indexing AST Code Map..."}}
+{"ts":"2026-05-11T01:29:11.056Z","payload":{"type":"statusUpdate","message":"Nexus: Parsing Traceability Matrix (LLM)..."}}
+{"ts":"2026-05-11T01:29:11.069Z","payload":{"type":"statusUpdate","message":"Nexus: Aggregating 0 specs..."}}
+{"ts":"2026-05-11T01:29:11.087Z","payload":{"type":"statusUpdate","message":""}}

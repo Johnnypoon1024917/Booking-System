@@ -1,27 +1,44 @@
-/* Custom Webkit Scrollbar for Professional Dashboards */
-::-webkit-scrollbar { 
-    width: 8px; 
-    height: 8px; 
-}
-::-webkit-scrollbar-track { 
-    background: #f1f1f1; 
-}
-::-webkit-scrollbar-thumb { 
-    background: #cbd5e1; 
-    border-radius: 4px; 
-}
-::-webkit-scrollbar-thumb:hover { 
-    background: #003366; 
+:root {
+    --fsd-blue: #002147;
+    --fsd-red: #D71920;
+    --fsd-gold: #FFD700;
+    --fsd-green: #10B981;
+    --bg-main: #F3F4F6;
 }
 
-/* FSD Global Utilities */
-.view-hidden { 
-    display: none !important; 
+body {
+    background-color: var(--bg-main);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
-.glass-panel { 
-    background: rgba(255, 255, 255, 0.95); 
-    backdrop-filter: blur(10px); 
-}
-.fsd-shadow {
+
+/* Professional Card Style */
+.fsd-card {
+    background: white;
+    border-radius: 0.75rem;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.fsd-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+/* Availability Indicators  */
+.status-available { border-left: 5px solid var(--fsd-green); }
+.status-conflict { border-left: 5px solid var(--fsd-red); opacity: 0.75; }
+
+/* Interactive Sidebar */
+.nav-item {
+    display: flex;
+    items: center;
+    padding: 0.75rem 1.5rem;
+    color: rgba(255, 255, 255, 0.7);
+    transition: all 0.3s;
+}
+
+.nav-item.active {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--fsd-gold);
+    border-left: 4px solid var(--fsd-gold);
 }

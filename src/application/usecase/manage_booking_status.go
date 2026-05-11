@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fsd-mrbs/src/domain/booking"
+	"time"
 )
 
 type ManageBookingStatusUseCase struct {
@@ -44,6 +45,8 @@ func (uc *ManageBookingStatusUseCase) UpdateCheckInStatus(ctx context.Context, b
 
 	if isCheckIn {
 		b.Status = booking.StatusCheckedIn
+		now := time.Now()
+		b.CheckedInAt = &now
 	} else {
 		b.Status = booking.StatusNoShow
 	}

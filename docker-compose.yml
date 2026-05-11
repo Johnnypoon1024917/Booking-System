@@ -1,32 +1,151 @@
 services:
+  # ----- API -----------------------------------------------------------------
+  # Builds once, runs migrations, then serves the SPA + JSON API on :8080.
   mrbs_api:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
+    image: fsd-mrbs:latest
     ports:
       - "8080:8080"
     environment:
-      - DB_DSN=postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DEFAULT_TENANT_ID: "00000000-0000-0000-0000-000000000001"
+      ZOOM_MASK_BASE: "https://ess.hkfsd.hksarg/redirect"
+      LISTEN_ADDR: ":8080"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      APP_ENV: "${APP_ENV:-development}"
     depends_on:
-      - postgres_db
-      - rabbitmq
+      postgres_db: { condition: service_healthy }
+      rabbitmq:    { condition: service_healthy }
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "Running migrations…" &&
+        /app/migrate -action up -db-url $$DB_DSN -path file:///app/migrations &&
+        echo "Starting API…" &&
+        exec /app/api
 
+  # ----- Notification worker -------------------------------------------------
+  # Reuses the same image. Falls back to log-only sender if SMTP_HOST unset.
+  mrbs_worker:
+    image: fsd-mrbs:latest
+    depends_on:
+      mrbs_api: { condition: service_started }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-no-reply@fsd-mrbs.local}"
+      SMTP_TLS: "${SMTP_TLS:-false}"
+    command: ["/app/worker"]
+
+  # ----- Webhook dispatcher --------------------------------------------------
+  # HMAC-signs payloads, retries with exponential backoff, parks after 5 fails.
+  mrbs_webhook_worker:
+    image: fsd-mrbs:latest
+    depends_on:
+      mrbs_api: { condition: service_started }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    command: ["/app/webhook_worker"]
+
+  # ----- Microsoft Graph (Outlook) sync -------------------------------------
+  # Pushes booking lifecycle events to room mailboxes for tenants that have
+  # configured Microsoft credentials in /admin/integrations.
+  mrbs_graph_worker:
+    image: fsd-mrbs:latest
+    depends_on:
+      mrbs_api: { condition: service_started }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      INTEGRATION_SECRET_KEY: "${INTEGRATION_SECRET_KEY:-}"
+    command: ["/app/graph_worker"]
+
+  # ----- Background scheduler ------------------------------------------------
+  # Auto-release no-shows, HKO poll, gov.hk holiday import.
+  mrbs_scheduler:
+    image: fsd-mrbs:latest
+    depends_on:
+      mrbs_api: { condition: service_started }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+    command: ["/app/scheduler"]
+
+  # ----- Postgres ------------------------------------------------------------
   postgres_db:
     image: postgres:15-alpine
     restart: always
     environment:
-      POSTGRES_DB: fsd_mrbs
-      POSTGRES_USER: mrbs_admin
+      POSTGRES_DB:       fsd_mrbs
+      POSTGRES_USER:     mrbs_admin
       POSTGRES_PASSWORD: SecurePass123!
     ports:
       - "5432:5432"
-    # CRITICAL: This was missing. It maps your SQL schema into the container.
     volumes:
-      - ./src/infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mrbs_admin -d fsd_mrbs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  # ----- RabbitMQ ------------------------------------------------------------
+  # Management UI on :15672 (guest / guest). Healthcheck waits for the
+  # AMQP listener to actually accept connections, not just for the
+  # process to exist — workers gate on this so they don't dial too soon.
   rabbitmq:
     image: rabbitmq:3-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      # ping covers "broker process up + responsive"; check_port_connectivity
+      # also confirms the AMQP listener accepts TCP. The shell form lets us
+      # chain them; exec form (CMD) wouldn't honor &&.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # ----- Prometheus ----------------------------------------------------------
+  # Scrapes the API's /api/metrics endpoint every 15s.
+  # UI on :9090 — try queries like:
+  #   rate(http_requests_total[1m])
+  #   histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      mrbs_api: { condition: service_started }
+
+  # ----- OpenTelemetry collector --------------------------------------------
+  # Receives OTLP/HTTP from the API, exports to a backend of choice. Default
+  # config logs spans to stdout — swap in jaeger/tempo/honeycomb in prod.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    ports:
+      - "4318:4318"   # OTLP/HTTP
+      - "4317:4317"   # OTLP/gRPC
+    volumes:
+      - ./ops/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    command: ["--config", "/etc/otelcol-contrib/config.yaml"]
+
+volumes:
+  postgres_data:

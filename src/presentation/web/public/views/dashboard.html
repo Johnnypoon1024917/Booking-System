@@ -2,254 +2,265 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HKFSD - Unified Booking Dashboard</title>
+    <title>FSD MRBS | Enterprise Resource Management</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
     <script>
         // CLIENT-SIDE SECURITY GATE
-        if (!sessionStorage.getItem('fsd_jwt')) {
-            window.location.href = '/';
-        }
+        if (!sessionStorage.getItem('fsd_jwt')) { window.location.href = '/'; }
         
         tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        fsdBlue: '#003366',
-                        fsdRed: '#cc0000',
-                        fsdGold: '#d4af37',
-                        fsdGreen: '#2e8b57'
-                    }
-                }
-            }
+            theme: { extend: { colors: { fsdBlue: '#002147', fsdRed: '#D71920', fsdGold: '#FFD700', fsdGreen: '#10B981' } } }
         }
     </script>
 </head>
-<body class="bg-gray-100 text-gray-800 font-sans h-screen flex overflow-hidden">
+<body class="h-screen flex overflow-hidden bg-gray-100">
 
-    <aside class="w-64 bg-fsdBlue text-white flex flex-col shadow-xl z-20">
-        <div class="h-20 flex items-center px-6 border-b border-blue-800">
-            <i class="fa-solid fa-fire-extinguisher text-2xl text-fsdGold mr-3"></i>
-            <div>
-                <h1 class="text-lg font-bold tracking-wider leading-tight">FSD</h1>
-                <p class="text-xs text-blue-300">Unified Booking System</p>
-            </div>
+    <aside class="w-72 bg-fsdBlue text-white flex flex-col shadow-2xl z-30">
+        <div class="p-8 border-b border-white/10 flex items-center">
+            <i class="fa-solid fa-fire-extinguisher text-3xl text-fsdGold mr-4"></i>
+            <h1 class="text-xl font-bold">FSD MRBS</h1>
         </div>
-        <nav class="flex-1 py-6 space-y-1 overflow-y-auto">
-            <a href="#" onclick="switchTab('dashboard')" id="nav-dashboard" class="flex items-center px-6 py-3 bg-blue-900 border-l-4 border-fsdGold text-white transition">
-                <i class="fa-solid fa-chart-pie w-6"></i> Dashboard
-            </a>
-            <a href="#" onclick="switchTab('search')" id="nav-search" class="flex items-center px-6 py-3 text-blue-200 hover:bg-blue-800 hover:text-white border-l-4 border-transparent transition">
-                <i class="fa-solid fa-magnifying-glass-location w-6"></i> Advanced Search
-            </a>
-            <div class="px-6 py-3 mt-6 text-xs font-semibold text-blue-400 uppercase tracking-wider">Administration</div>
-            <a href="#" onclick="switchTab('config')" id="nav-config" class="flex items-center px-6 py-3 text-blue-200 hover:bg-blue-800 hover:text-white border-l-4 border-transparent transition">
-                <i class="fa-solid fa-sliders w-6"></i> System Config
-            </a>
+        <nav class="flex-1 mt-6">
+            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="w-full flex items-center px-8 py-4 text-white/70 hover:bg-white/10 transition border-l-4 border-transparent active-nav">
+                <i class="fa-solid fa-chart-line mr-4 w-5"></i> Dashboard
+            </button>
+            <button onclick="switchTab('search')" id="nav-search" class="w-full flex items-center px-8 py-4 text-white/70 hover:bg-white/10 transition border-l-4 border-transparent">
+                <i class="fa-solid fa-calendar-check mr-4 w-5"></i> Resource Booking
+            </button>
+            <div id="adminMenu" class="hidden">
+                <div class="px-8 mt-8 mb-2 text-[10px] font-bold text-white/30 uppercase">System Control</div>
+                <button onclick="switchTab('config')" id="nav-config" class="w-full flex items-center px-8 py-4 text-white/70 hover:bg-white/10 transition border-l-4 border-transparent">
+                    <i class="fa-solid fa-sliders mr-4 w-5"></i> System Config
+                </button>
+            </div>
         </nav>
-        <div class="p-4 border-t border-blue-800 bg-blue-950">
-            <div class="flex items-center mb-3">
-                <div class="h-8 w-8 rounded-full bg-fsdGold text-fsdBlue flex items-center justify-center font-bold text-sm" id="userAvatar"></div>
-                <div class="ml-3 overflow-hidden">
-                    <p class="text-sm font-semibold truncate" id="displayUsername"></p>
-                    <p class="text-xs text-blue-300 truncate" id="displayRole"></p>
+        <div class="p-6 bg-black/20 border-t border-white/10">
+            <div class="flex items-center">
+                <div class="w-10 h-10 rounded-full bg-fsdGold text-fsdBlue flex items-center justify-center font-bold mr-3" id="u-avatar">U</div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold truncate" id="u-name">User</p>
+                    <p class="text-[10px] text-white/50 uppercase" id="u-role">Role</p>
                 </div>
             </div>
-            <button onclick="logout()" class="w-full text-left text-sm text-blue-300 hover:text-white transition"><i class="fa-solid fa-sign-out-alt mr-2"></i> Secure Logout</button>
+            <button onclick="logout()" class="mt-4 text-xs text-white/40 hover:text-white transition"><i class="fa-solid fa-right-from-bracket mr-2"></i> Secure Logout</button>
         </div>
     </aside>
 
-    <main class="flex-1 flex flex-col bg-gray-50 relative overflow-hidden">
-        
-        <div id="broadcastBanner" class="bg-fsdRed text-white px-6 py-3 flex items-center justify-between shadow-md z-10">
-            <div class="flex items-center">
-                <i class="fa-solid fa-triangle-exclamation text-xl mr-3 animate-pulse"></i>
-                <p class="text-sm font-medium"><strong>DEPARTMENT BROADCAST:</strong> Typhoon Signal No. 8 is currently hoisted. "Mark as Exception" logic is active for No-Shows.</p>
-            </div>
-            <button onclick="document.getElementById('broadcastBanner').style.display='none'" class="text-white hover:text-gray-200"><i class="fa-solid fa-xmark"></i></button>
+    <main class="flex-1 flex flex-col overflow-hidden">
+        <div class="bg-fsdRed text-white px-8 py-3 flex items-center shadow-lg animate-pulse" id="broadcast">
+            <i class="fa-solid fa-triangle-exclamation mr-4"></i>
+            <p class="text-sm font-bold">Typhoon Signal No. 8 Active: All "No-Show" penalties are currently suspended.</p>
         </div>
 
-        <header class="h-16 bg-white border-b flex items-center px-8 shadow-sm justify-between z-10">
-            <h2 id="pageTitle" class="text-xl font-semibold text-gray-800">Operational Dashboard</h2>
-            <div class="text-sm text-gray-500 font-medium" id="currentDate"></div>
+        <header class="h-20 bg-white border-b px-10 flex items-center justify-between">
+            <h2 id="view-title" class="text-2xl font-bold text-gray-800">Operational Dashboard</h2>
+            <div class="text-sm font-medium text-gray-400" id="live-clock"></div>
         </header>
 
-        <div class="flex-1 overflow-y-auto p-8">
+        <div class="flex-1 overflow-y-auto p-10 space-y-8">
             
-            <div id="view-dashboard" class="space-y-6">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-fsdBlue fsd-shadow">
-                        <p class="text-sm text-gray-500 font-semibold uppercase">My Active Bookings</p>
-                        <p class="text-3xl font-bold text-gray-800 mt-2">1</p>
+            <div id="view-dashboard" class="space-y-8">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div class="bg-white p-8 rounded-2xl shadow-sm border-b-4 border-fsdBlue">
+                        <p class="text-xs font-bold text-gray-400 uppercase">My Active Bookings</p>
+                        <h3 class="text-4xl font-black mt-2">--</h3>
                     </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-fsdGold fsd-shadow">
-                        <p class="text-sm text-gray-500 font-semibold uppercase">Pending Approvals</p>
-                        <p class="text-3xl font-bold text-gray-800 mt-2">0</p>
+                    <div class="bg-white p-8 rounded-2xl shadow-sm border-b-4 border-fsdGreen">
+                        <p class="text-xs font-bold text-gray-400 uppercase">Resource Utilisation</p>
+                        <h3 class="text-4xl font-black mt-2">84%</h3>
                     </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-fsdRed fsd-shadow">
-                        <p class="text-sm text-gray-500 font-semibold uppercase">My No-Shows</p>
-                        <p class="text-3xl font-bold text-gray-800 mt-2">0</p>
+                    <div class="bg-white p-8 rounded-2xl shadow-sm border-b-4 border-fsdRed">
+                        <p class="text-xs font-bold text-gray-400 uppercase">Pending Approvals</p>
+                        <h3 class="text-4xl font-black mt-2">--</h3>
                     </div>
+                </div>
+                <div class="bg-white rounded-2xl shadow-sm p-10 h-96 flex flex-col items-center justify-center text-gray-300 border border-dashed border-gray-300">
+                    <i class="fa-solid fa-calendar-days text-6xl mb-4"></i>
+                    <p class="font-bold">Real-time Schedule Feed Active</p>
                 </div>
             </div>
 
-            <div id="view-search" class="view-hidden flex flex-col lg:flex-row gap-6 h-full">
-                <div class="w-full lg:w-1/3 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h3 class="text-lg font-bold text-gray-800 border-b pb-3 mb-5"><i class="fa-solid fa-filter text-fsdBlue mr-2"></i> Resource Filter</h3>
-                    <form id="searchForm" onsubmit="executeSearch(event)" class="space-y-4">
+            <div id="view-search" class="hidden flex flex-col lg:flex-row gap-8 h-full">
+                <div class="w-full lg:w-1/3 bg-white p-8 rounded-2xl shadow-lg h-fit space-y-6">
+                    <h4 class="text-lg font-bold border-b pb-4"><i class="fa-solid fa-filter mr-2 text-fsdBlue"></i> Advanced Search</h4>
+                    <form id="searchForm" class="space-y-5">
                         <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Region</label>
-                            <select id="s_region" class="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border outline-none">
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Primary Region</label>
+                            <select id="region" class="w-full bg-gray-50 border rounded-xl p-3 outline-none focus:ring-2 focus:ring-fsdBlue">
                                 <option value="Hong Kong">Hong Kong HQ</option>
+                                <option value="Kowloon">Kowloon Command</option>
                             </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Date</label>
-                            <input type="date" id="s_date" class="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border outline-none" required>
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Start Time</label>
-                                <input type="time" id="s_start" value="09:00" class="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border" required>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Booking Date</label>
+                                <input type="date" id="date" class="w-full bg-gray-50 border rounded-xl p-3">
                             </div>
                             <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">End Time</label>
-                                <input type="time" id="s_end" value="10:00" class="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border" required>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Min. Capacity</label>
+                                <input type="number" id="capacity" value="4" class="w-full bg-gray-50 border rounded-xl p-3">
                             </div>
                         </div>
-                        <button type="submit" class="w-full bg-fsdBlue text-white font-bold py-3 rounded-lg hover:bg-blue-900 transition mt-4">
-                            Check Availability
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Start</label>
+                                <input type="time" id="start" value="09:00" class="w-full bg-gray-50 border rounded-xl p-3">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">End</label>
+                                <input type="time" id="end" value="10:00" class="w-full bg-gray-50 border rounded-xl p-3">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full bg-fsdBlue text-white font-bold py-4 rounded-xl shadow-xl hover:bg-black transition">
+                            Query Available Assets
                         </button>
                     </form>
                 </div>
 
-                <div class="w-full lg:w-2/3 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
-                    <div class="p-5 border-b bg-gray-50 rounded-t-xl"><h3 class="text-lg font-bold text-gray-800">Validation Results</h3></div>
-                    <div id="resultsContainer" class="flex-1 p-6 bg-gray-100 overflow-y-auto">
-                        <div id="emptySearch" class="h-full flex flex-col items-center justify-center text-gray-400">
-                            <p>Execute a search to view real-time availability.</p>
-                        </div>
-                        <div id="resultCards" class="space-y-4 view-hidden"></div>
+                <div class="w-full lg:w-2/3 flex flex-col space-y-4 h-full overflow-y-auto pr-2" id="resultsList">
+                    <div class="bg-white p-10 rounded-2xl shadow-sm border border-dashed flex flex-col items-center justify-center text-gray-400">
+                        <i class="fa-solid fa-satellite-dish text-4xl mb-4 animate-pulse"></i>
+                        <p>Waiting for Advanced Search Query parameters...</p>
                     </div>
                 </div>
             </div>
 
-            <div id="view-config" class="view-hidden space-y-6">
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-2xl">
-                    <h3 class="text-lg font-bold text-[#003366] border-b pb-3 mb-5"><i class="fa-solid fa-calendar-xmark mr-2"></i> Holiday Management</h3>
-                    <p class="text-sm text-gray-600 mb-5">System Admins can designate official holidays. The system will automatically block new bookings on these dates.</p>
-                    
-                    <form id="holidayForm" onsubmit="addHoliday(event)" class="space-y-4">
+            <div id="view-config" class="hidden">
+                <div class="bg-white p-10 rounded-2xl shadow-sm max-w-2xl">
+                    <h3 class="text-2xl font-bold mb-6 border-b pb-4">System Administration</h3>
+                    <div class="space-y-8">
                         <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Holiday Date</label>
-                            <input type="date" id="h_date" class="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border outline-none" required>
+                            <h4 class="font-bold text-fsdRed mb-4"><i class="fa-solid fa-calendar-xmark mr-2"></i> Holiday Management</h4>
+                            <form id="holidayForm" class="space-y-4">
+                                <input type="date" id="h-date" class="w-full border p-3 rounded-xl">
+                                <input type="text" id="h-desc" placeholder="Holiday Description" class="w-full border p-3 rounded-xl">
+                                <button type="submit" class="bg-fsdBlue text-white px-8 py-3 rounded-xl font-bold">Register Blocker</button>
+                            </form>
                         </div>
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Description</label>
-                            <input type="text" id="h_desc" placeholder="e.g., Lunar New Year" class="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border outline-none" required>
-                        </div>
-                        <button type="submit" class="w-full bg-[#003366] text-white font-bold py-2.5 rounded-lg hover:bg-blue-900 transition">
-                            Register Holiday Blocker
-                        </button>
-                        <div id="holidayMessage" class="mt-3 text-sm font-bold hidden"></div>
-                    </form>
+                    </div>
                 </div>
             </div>
 
         </div>
     </main>
 
-    <div id="bookingModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 view-hidden">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
-            <div class="bg-fsdBlue px-6 py-4 flex justify-between text-white"><h3 class="font-bold">Confirm Reservation</h3><button onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button></div>
-            <div class="p-6">
-                <p class="text-sm mb-4">Please review the details before confirming.</p>
-                <div class="bg-gray-50 border rounded-lg p-4 mb-5 text-sm space-y-2">
-                    <div class="flex justify-between font-semibold"><span class="text-gray-600">Asset:</span> <span id="m_assetName"></span></div>
-                    <div class="flex justify-between font-semibold"><span class="text-gray-600">Date:</span> <span id="m_date"></span></div>
-                    <div class="flex justify-between font-semibold"><span class="text-gray-600">Time:</span> <span id="m_time"></span></div>
+    <div id="bookingModal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center">
+        <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
+            <div class="bg-fsdBlue p-8 text-white flex justify-between items-center">
+                <h3 class="text-xl font-bold">Confirm FSD Reservation</h3>
+                <i class="fa-solid fa-xmark cursor-pointer" onclick="closeModal()"></i>
+            </div>
+            <div class="p-8 space-y-6">
+                <div class="p-6 bg-gray-50 rounded-2xl border space-y-3">
+                    <div class="flex justify-between text-sm"><span class="text-gray-500">Asset:</span> <span id="m-name" class="font-bold">--</span></div>
+                    <div class="flex justify-between text-sm"><span class="text-gray-500">Duration:</span> <span id="m-time" class="font-bold">--</span></div>
+                    <div class="flex justify-between text-sm"><span class="text-gray-500">Approver:</span> <span class="font-bold text-fsdGold">Auto-Approved</span></div>
                 </div>
-                <div class="flex space-x-3">
-                    <button onclick="closeModal()" class="flex-1 bg-gray-200 text-gray-800 font-bold py-2 rounded-lg">Cancel</button>
-                    <button onclick="submitBooking()" class="flex-1 bg-fsdGreen text-white font-bold py-2 rounded-lg">Confirm Booking</button>
+                <div class="flex gap-4">
+                    <button onclick="closeModal()" class="flex-1 py-4 font-bold text-gray-400 hover:text-gray-600">Cancel</button>
+                    <button onclick="submitBooking()" class="flex-1 bg-fsdGreen text-white font-bold py-4 rounded-2xl shadow-lg shadow-fsdGreen/20">Finalise Booking</button>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        // Init User State
-        const user = sessionStorage.getItem('fsd_user');
-        document.getElementById('displayUsername').innerText = user ? user.toUpperCase() : 'USER';
-        document.getElementById('displayRole').innerText = sessionStorage.getItem('fsd_role') || '';
-        document.getElementById('userAvatar').innerText = user ? user.charAt(0).toUpperCase() : 'U';
-        
-        document.getElementById('currentDate').innerText = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        document.getElementById('s_date').value = new Date().toISOString().split('T')[0];
-
-        let selectedResource = null;
-
-        function logout() { sessionStorage.clear(); window.location.href = '/'; }
-
-        function switchTab(tabId) {
-            ['dashboard', 'search', 'config'].forEach(t => {
-                document.getElementById(`view-${t}`).classList.add('view-hidden');
-                document.getElementById(`nav-${t}`).className = "flex items-center px-6 py-3 text-blue-200 hover:bg-blue-800 hover:text-white border-l-4 border-transparent transition";
-            });
-            document.getElementById(`view-${tabId}`).classList.remove('view-hidden');
-            document.getElementById(`nav-${tabId}`).className = "flex items-center px-6 py-3 bg-blue-900 border-l-4 border-fsdGold text-white transition";
-            
-            const titles = { 'dashboard': 'Operational Dashboard', 'search': 'Resource Availability Engine', 'config': 'System Administration' };
-            document.getElementById('pageTitle').innerText = titles[tabId];
-        }
-
-        async function executeSearch(e) {
-            e.preventDefault();
-            document.getElementById('emptySearch').classList.add('view-hidden');
-            const list = document.getElementById('resultCards');
-            list.classList.remove('view-hidden');
-            list.innerHTML = `<div class="text-center p-10"><i class="fa-solid fa-circle-notch fa-spin text-3xl text-fsdBlue"></i></div>`;
-
-            // Mock Data Integration for UI Demonstration
-            setTimeout(() => {
-                list.innerHTML = '';
-                const mock = [{ id: '1', name: 'Command Center Alpha', cap: 20, ok: true }, { id: '2', name: 'Training Room Beta', cap: 50, ok: false }];
-                mock.forEach(r => {
-                    const border = r.ok ? 'border-l-fsdGreen' : 'border-l-fsdRed opacity-60';
-                    const icon = r.ok ? 'fa-check-circle text-fsdGreen' : 'fa-xmark-circle text-fsdRed';
-                    const btn = r.ok ? `<button onclick="openModal('${r.id}', '${r.name}')" class="bg-fsdBlue text-white px-4 py-2 rounded font-bold text-sm">Book</button>` : `<span class="text-gray-500 font-bold text-sm">Conflict</span>`;
-                    list.innerHTML += `<div class="bg-white p-4 rounded-lg shadow border border-l-4 ${border} flex justify-between items-center mb-3">
-                        <div><h4 class="font-bold text-gray-800"><i class="fa-solid ${icon} mr-2"></i> ${r.name}</h4></div>
-                        <div>${btn}</div></div>`;
+        // --- End-to-End Dynamic Integration Logic ---
+        const API = {
+            search: async (q) => {
+                const res = await fetch(`/api/v1/bookings/search?location=${q.loc}&date=${q.date}&start_time=${q.start}&end_time=${q.end}`, {
+                    headers: { 'Authorization': `Bearer ${sessionStorage.getItem('fsd_jwt')}` }
                 });
-            }, 500);
+                return res.json();
+            },
+            book: async (data) => {
+                return fetch('/api/v1/bookings', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${sessionStorage.getItem('fsd_jwt')}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            }
+        };
+
+        // UI Helpers
+        function switchTab(tabId) {
+            ['dashboard', 'search', 'config'].forEach(t => document.getElementById(`view-${t}`).classList.add('hidden'));
+            document.getElementById(`view-${tabId}`).classList.remove('hidden');
+            document.getElementById('view-title').innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1) + " Control";
         }
 
+        // Initialise Dashboard
+        (function init() {
+            document.getElementById('u-name').innerText = sessionStorage.getItem('fsd_user').toUpperCase();
+            document.getElementById('u-role').innerText = sessionStorage.getItem('fsd_role');
+            document.getElementById('u-avatar').innerText = sessionStorage.getItem('fsd_user').charAt(0).toUpperCase();
+            if (sessionStorage.getItem('fsd_role') === 'System Admin') document.getElementById('adminMenu').classList.remove('hidden');
+            document.getElementById('date').value = new Date().toISOString().split('T')[0];
+        })();
+
+        // --- THE DYNAMIC SEARCH ENGINE ---
+        document.getElementById('searchForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const list = document.getElementById('resultsList');
+            list.innerHTML = `<div class="flex justify-center p-20"><i class="fa-solid fa-spinner fa-spin text-4xl text-fsdBlue"></i></div>`;
+
+            const query = {
+                loc: document.getElementById('region').value,
+                date: document.getElementById('date').value,
+                start: document.getElementById('start').value,
+                end: document.getElementById('end').value
+            };
+
+            const data = await API.search(query);
+            
+            // Render REAL data from Postgres
+            list.innerHTML = data.length ? '' : `<div class="p-10 bg-white rounded-2xl text-center text-gray-400">No available assets match these criteria.</div>`;
+            
+            data.forEach(item => {
+                // Visual Colour Differentiation
+                list.innerHTML += `
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border-l-8 border-fsdGreen flex justify-between items-center transform hover:scale-[1.01] transition">
+                        <div>
+                            <h5 class="text-xl font-bold text-gray-800">${item.Name}</h5>
+                            <p class="text-xs text-gray-400 mt-1 uppercase font-bold">${item.AssetType} | ${item.Location} | Capacity: ${item.Capacity}</p>
+                            <div class="mt-2 flex gap-2">
+                                ${item.Equipment ? item.Equipment.map(e => `<span class="px-2 py-1 bg-gray-100 text-[8px] rounded font-bold">${e}</span>`).join('') : ''}
+                            </div>
+                        </div>
+                        <button onclick="openModal('${item.ID}', '${item.Name}')" class="bg-fsdBlue text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-fsdBlue/20">Reserve</button>
+                    </div>`;
+            });
+        };
+
+        let selected = null;
         function openModal(id, name) {
-            selectedResource = { id, name };
-            document.getElementById('m_assetName').innerText = name;
-            document.getElementById('m_date').innerText = document.getElementById('s_date').value;
-            document.getElementById('m_time').innerText = `${document.getElementById('s_start').value} - ${document.getElementById('s_end').value}`;
-            document.getElementById('bookingModal').classList.remove('view-hidden');
+            selected = { resource_id: id, name };
+            document.getElementById('m-name').innerText = name;
+            document.getElementById('m-time').innerText = `${document.getElementById('start').value} to ${document.getElementById('end').value}`;
+            document.getElementById('bookingModal').classList.remove('hidden');
+            document.getElementById('bookingModal').classList.add('flex');
         }
 
-        function closeModal() { document.getElementById('bookingModal').classList.add('view-hidden'); }
+        function closeModal() { document.getElementById('bookingModal').classList.add('hidden'); }
 
         async function submitBooking() {
-            alert(`✅ SUCCESS: Booking Confirmed for ${selectedResource.name}. Calendar synchronisation dispatched.`);
-            closeModal();
+            const startRFC = `${document.getElementById('date').value}T${document.getElementById('start').value}:00Z`;
+            const endRFC = `${document.getElementById('date').value}T${document.getElementById('end').value}:00Z`;
+
+            const res = await API.book({ resource_id: selected.resource_id, start_time: startRFC, end_time: endRFC });
+            
+            if (res.ok) {
+                alert("SUCCESS: FSD Resource Secured. PIMM Sync Dispatched via RabbitMQ.");
+                location.reload();
+            } else {
+                const err = await res.text();
+                alert(`CONFLICT: ${err}`);
+            }
         }
 
-        async function addHoliday(e) {
-            e.preventDefault();
-            const msg = document.getElementById('holidayMessage');
-            // Assuming successful API call for UI mockup purposes
-            msg.className = "mt-3 text-sm font-bold text-green-600";
-            msg.innerText = "Holiday successfully registered. Bookings are now blocked for this date.";
-            msg.classList.remove('hidden');
-        }
+        function logout() { sessionStorage.clear(); window.location.href = '/'; }
     </script>
 </body>
 </html>
