@@ -22,6 +22,7 @@
     "dashboard": "概覽",
     "search": "搜尋房間",
     "myBookings": "我的預約",
+    "bookings": "所有預約",
     "approvals": "審批",
     "reports": "報告",
     "admin": "租戶設定",
@@ -83,6 +84,7 @@
     }
   },
   "booking": {
+    "title": "預約標題",
     "confirm": "確認預約",
     "approver": "審批人",
     "autoApproved": "自動審批",
@@ -103,7 +105,8 @@
     "weekly": "每週",
     "biweekly": "每兩週",
     "monthly": "每月",
-    "occurrences": "次數"
+    "occurrences": "次數",
+    "untitled": "未命名預約"
   },
   "myBookings": {
     "title": "我的預約",

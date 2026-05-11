@@ -68,6 +68,11 @@
     </div>
 
     <label class="field">
+      <span>{{ $t('booking.title') }} <span v-if="true">*</span></span>
+      <input v-model="title" placeholder="e.g. Weekly Team Sync" required />
+    </label>
+
+    <label class="field">
       <span>{{ $t('booking.meetingURL') }}</span>
       <input v-model="meetingURL" placeholder="https://teams.microsoft.com/…" />
     </label>
@@ -121,6 +126,7 @@ const toasts = useToastStore()
 const { locale } = useI18n()
 const customFields = computed(() => tenant.customization?.custom_fields || [])
 const customData = reactive({})
+const title = ref('')
 const meetingURL = ref('')
 const busy = ref(false)
 const result = ref(null)
@@ -147,6 +153,7 @@ async function submit() {
       resource_id: props.resource.ID || props.resource.id,
       start_time: startLocal.toISOString(),
       end_time: endLocal.toISOString(),
+      title: title.value || undefined,
       meeting_url: meetingURL.value || undefined,
       custom_data: customData,
       recurrence: recur.value ? { pattern: pattern.value, count: count.value } : undefined

@@ -22,6 +22,7 @@
     "dashboard": "概览",
     "search": "搜索房间",
     "myBookings": "我的预约",
+    "bookings": "所有预约",
     "approvals": "审批",
     "reports": "报告",
     "admin": "租户设置",
@@ -83,6 +84,7 @@
     }
   },
   "booking": {
+    "title": "预约标题",
     "confirm": "确认预约",
     "approver": "审批人",
     "autoApproved": "自动审批",
@@ -103,7 +105,8 @@
     "weekly": "每周",
     "biweekly": "每两周",
     "monthly": "每月",
-    "occurrences": "次数"
+    "occurrences": "次数",
+    "untitled": "未命名预约"
   },
   "myBookings": {
     "title": "我的预约",

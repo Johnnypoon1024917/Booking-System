@@ -22,6 +22,7 @@
     "dashboard": "Dashboard",
     "search": "Find a Room",
     "myBookings": "My Bookings",
+    "bookings": "All Bookings",
     "approvals": "Approvals",
     "reports": "Reports",
     "admin": "Tenant Studio",
@@ -83,6 +84,7 @@
     }
   },
   "booking": {
+    "title": "Booking title",
     "confirm": "Confirm booking",
     "approver": "Approver",
     "autoApproved": "Auto-approved",
@@ -103,7 +105,8 @@
     "weekly": "Weekly",
     "biweekly": "Every 2 weeks",
     "monthly": "Monthly",
-    "occurrences": "Occurrences"
+    "occurrences": "Occurrences",
+    "untitled": "Untitled booking"
   },
   "myBookings": {
     "title": "My Bookings",
