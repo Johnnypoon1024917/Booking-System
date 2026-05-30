@@ -671,6 +671,7 @@ label.toggle input { width: auto; }
 .mrbs .avail-row.bad { color: var(--asl-bad); }
 .mrbs .avail-row .chk { color: var(--asl-avail); flex: 0 0 auto; }
 .mrbs .avail-row .space { flex: 1; }
+.mrbs .avail-row .tree-branch { color: var(--asl-muted, #94a3b8); flex: 0 0 auto; margin-right: 2px; font-family: monospace; line-height: 1; user-select: none; }
 
 /* Search.vue two-panel shell + recurring pattern box -------------- */
 .search-shell { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
@@ -1274,6 +1275,37 @@ h1.page-title::after { content: ' »'; color: var(--fsd-muted); font-weight: 400
   color: var(--success);
 }
 .bm-result p { margin: 4px 0 0; color: var(--text-muted); }
+
+/* Scheduling assistant — single-day free/busy timeline for the chosen room. */
+.bm-fb-legend { font-weight: 400; font-size: 11px; color: var(--text-muted); display: inline-flex; gap: 10px; align-items: center; }
+.bm-fb-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.bm-fb-legend .dot.busy { background: var(--danger); }
+.bm-fb-legend .dot.slot { background: color-mix(in srgb, var(--brand-primary) 30%, transparent); border: 1px solid var(--brand-primary); }
+.bm-fb-track {
+  position: relative; height: 40px; margin-top: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-inset); overflow: hidden;
+}
+.bm-fb-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--border); }
+.bm-fb-tick span { position: absolute; top: 2px; left: 3px; font-size: 9px; color: var(--text-muted); }
+.bm-fb-busy { position: absolute; top: 14px; bottom: 6px; background: var(--danger); opacity: 0.85; border-radius: 3px; }
+.bm-fb-slot {
+  position: absolute; top: 12px; bottom: 4px; box-sizing: border-box;
+  border: 2px solid var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-primary) 18%, transparent);
+  border-radius: 4px;
+}
+.bm-fb-slot.conflict { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 18%, transparent); }
+
+/* Segmented toggle — "this event vs entire series" scope choice. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.seg-btn {
+  padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer;
+  background: var(--surface-inset); color: var(--text-muted); border: none;
+  border-right: 1px solid var(--border);
+}
+.seg-btn:last-child { border-right: none; }
+.seg-btn.active { background: var(--brand-primary); color: #fff; }
 .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .sub-card {
   margin-top: 8px; padding: 10px;

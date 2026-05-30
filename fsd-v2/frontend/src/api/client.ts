@@ -84,6 +84,11 @@ export const api = {
   createBooking: (b: any) => http.post('/api/v1/bookings', b).then((r) => r.data),
   updateBooking: (id: string, b: any) =>
     http.put(`/api/v1/bookings/${id}`, b).then((r) => r.data),
+  // Edit the whole recurring series an instance belongs to — returns
+  // { updated, skipped[] }. Falls back to a single update server-side when the
+  // booking isn't part of a series.
+  updateBookingSeries: (id: string, b: any) =>
+    http.put(`/api/v1/bookings/${id}/series`, b).then((r) => r.data),
   cancelBooking: (id: string, reason?: string) =>
     http.delete(`/api/v1/bookings/${id}`, { params: { reason } }),
 

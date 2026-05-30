@@ -3,6 +3,7 @@ import { Search as SearchIcon, SearchX, MapPinned, Check, X } from 'lucide-react
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useTenant } from '../stores/tenant';
+import { useAuth } from '../hooks/useAuth';
 import { useBookingRules } from '../hooks/useBookingRules';
 import { Skeleton } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
@@ -27,6 +28,8 @@ function addMinutes(hhmm: string, mins: number) {
   const t = h * 60 + m + mins;
   return `${String(Math.floor(t / 60) % 24).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 }
+function hmToMin(hhmm: string) { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+function minToHHMM(t: number) { return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; }
 
 type CellKind = 'ok' | 'blocked' | 'unavailable';
 interface Row { id: string; r: any; depth: number; st: { kind: CellKind; via?: string }; }
@@ -34,6 +37,7 @@ interface Row { id: string; r: any; depth: number; st: { kind: CellKind; via?: s
 export function Search() {
   const toast = useToast();
   const tenant = useTenant((s) => s.customization);
+  const user = useAuth((s) => s.user);
   const { allowsPattern } = useBookingRules();
 
   const today = new Date().toISOString().slice(0, 10);
@@ -53,9 +57,9 @@ export function Search() {
   const [picked, setPicked] = useState<any | null>(null);
   const [modalRoom, setModalRoom] = useState<any | null>(null);
 
-  // 30-min time slots inside the admin-configured working hours; slots
-  // earlier than "now" are disabled when the chosen date is today.
-  const timeSlots = useMemo(() => {
+  // Admin-configured working-hours window + "is the chosen date today" so we
+  // can grey out slots earlier than now.
+  const hours = useMemo(() => {
     const c: any = tenant || {};
     const sh = Number.isInteger(c.calendar_start_hour) ? c.calendar_start_hour
       : Number.isInteger(c.calendarStartHour) ? c.calendarStartHour : 8;
@@ -63,14 +67,48 @@ export function Search() {
       : Number.isInteger(c.calendarEndHour) ? c.calendarEndHour : 20;
     const isToday = form.date === new Date().toISOString().slice(0, 10);
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    return { sh, eh, isToday, nowMin };
+  }, [tenant, form.date]);
+
+  // Start slots stop one step *before* closing — you can't start a meeting at
+  // the moment the calendar day ends.
+  const startSlots = useMemo(() => {
+    const { sh, eh, isToday, nowMin } = hours;
     const out: { value: string; past: boolean }[] = [];
-    for (let m = sh * 60; m <= eh * 60; m += STEP) {
-      const hh = String(Math.floor(m / 60)).padStart(2, '0');
-      const mm = String(m % 60).padStart(2, '0');
-      out.push({ value: `${hh}:${mm}`, past: isToday && m < nowMin });
+    for (let m = sh * 60; m <= eh * 60 - STEP; m += STEP) {
+      out.push({ value: minToHHMM(m), past: isToday && m < nowMin });
     }
     return out;
-  }, [tenant, form.date]);
+  }, [hours]);
+
+  // End slots are generated from the chosen start (start+30 … closing) so the
+  // dropdown can never settle on a value absent from its own list. The old
+  // shared-array approach went blank whenever start+60 overshot closing (e.g.
+  // start 20:00 → default end 21:00, which wasn't in the 08:00–20:00 array).
+  const endSlots = useMemo(() => {
+    const { eh, isToday, nowMin } = hours;
+    const out: { value: string; past: boolean }[] = [];
+    for (let m = hmToMin(form.start) + STEP; m <= eh * 60; m += STEP) {
+      out.push({ value: minToHHMM(m), past: isToday && m < nowMin });
+    }
+    return out;
+  }, [hours, form.start]);
+
+  // Keep start/end inside the working-hours window. Tenant config loads async
+  // (and "now" may already be past closing), so a default like 21:30 can land
+  // outside the slot lists — snap it back in so the selects never show blank.
+  useEffect(() => {
+    const { sh, eh } = hours;
+    const maxStart = eh * 60 - STEP;
+    setForm((f) => {
+      let s = hmToMin(f.start);
+      if (s < sh * 60 || s > maxStart) s = sh * 60;
+      let e = hmToMin(f.end);
+      if (e <= s || e > eh * 60) e = Math.min(s + 60, eh * 60);
+      const sv = minToHHMM(s), ev = minToHHMM(e);
+      return sv === f.start && ev === f.end ? f : { ...f, start: sv, end: ev };
+    });
+  }, [hours]);
 
   const locations = useMemo(() => {
     const ls = [...new Set(allResources.map((r) => r.location).filter(Boolean))];
@@ -141,10 +179,16 @@ export function Search() {
         const list = await api.resources().catch(() => []);
         setAllResources(list || []);
         const locs = [...new Set((list || []).map((r: any) => r.location).filter(Boolean))];
-        setForm((f) => ({ ...f, region: (locs[0] as string) || 'Hong Kong' }));
+        // Default the location to the user's own region instead of whichever
+        // happens to sort first, so a Hong Kong user doesn't re-pick it every
+        // visit. Fall back to the first available location when their home
+        // region has no bookable rooms (or isn't set).
+        const home = (user?.regionAccess || []).find((r) => locs.includes(r));
+        setForm((f) => ({ ...f, region: home || (locs[0] as string) || 'Hong Kong' }));
       } catch { /* non-fatal */ }
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   async function search() {
     setBusy(true); setHasSearched(true); setPicked(null);
@@ -168,8 +212,14 @@ export function Search() {
   }
 
   function syncEnd(v: string) {
-    set('start', v);
-    if (form.end <= v) set('end', addMinutes(v, 60));
+    // Default the end to start+60, but clamp at closing so we never produce a
+    // value the end dropdown can't represent.
+    const endCap = hours.eh * 60;
+    setForm((f) => {
+      let e = hmToMin(f.end);
+      if (e <= hmToMin(v) || e > endCap) e = Math.min(hmToMin(v) + 60, endCap);
+      return { ...f, start: v, end: minToHHMM(e) };
+    });
   }
   function onBooked() { setModalRoom(null); setPicked(null); toast.success('Reservation submitted'); search(); }
 
@@ -203,13 +253,13 @@ export function Search() {
                 <label className="fld">
                   <span>Start Time</span>
                   <select value={form.start} onChange={(e) => syncEnd(e.target.value)}>
-                    {timeSlots.map((t) => <option key={'s' + t.value} value={t.value} disabled={t.past}>{t.value}{t.past ? ' (past)' : ''}</option>)}
+                    {startSlots.map((t) => <option key={'s' + t.value} value={t.value} disabled={t.past}>{t.value}{t.past ? ' (past)' : ''}</option>)}
                   </select>
                 </label>
                 <label className="fld">
                   <span>End Time</span>
                   <select value={form.end} onChange={(e) => set('end', e.target.value)}>
-                    {timeSlots.map((t) => <option key={'e' + t.value} value={t.value} disabled={t.past || t.value <= form.start}>{t.value}</option>)}
+                    {endSlots.map((t) => <option key={'e' + t.value} value={t.value} disabled={t.past}>{t.value}</option>)}
                   </select>
                 </label>
               </div>
@@ -230,7 +280,8 @@ export function Search() {
                     {allowsPattern('daily') && <label className="rad"><input type="radio" name="pat" value="daily" checked={form.pattern === 'daily'} onChange={() => set('pattern', 'daily')}/> Daily</label>}
                     {allowsPattern('weekly') && <label className="rad"><input type="radio" name="pat" value="weekly" checked={form.pattern === 'weekly'} onChange={() => set('pattern', 'weekly')}/> Weekly</label>}
                     {allowsPattern('monthly') && <label className="rad"><input type="radio" name="pat" value="monthly" checked={form.pattern === 'monthly'} onChange={() => set('pattern', 'monthly')}/> Monthly</label>}
-                    {allowsPattern('weekday') && <label className="rad"><input type="radio" name="pat" value="weekday" checked={form.pattern === 'weekday'} onChange={() => set('pattern', 'weekday')}/> Weekdays</label>}
+                    {/* "Weekdays" removed: the backend recurrence enum only accepts
+                        daily/weekly/bi-weekly/monthly/custom, so it 400'd on submit. */}
                   </div>
                   <label className="fld" style={{ margin: 0 }}>
                     <span>End By Date (required)</span>
@@ -268,6 +319,9 @@ export function Search() {
                          style={{ paddingLeft: 12 + row.depth * 22 }}
                          title={row.st.kind === 'blocked' ? `Blocked by a booking on ${row.st.via} (shared/split space)` : ''}
                          onClick={() => row.st.kind === 'ok' && setPicked(row.r)}>
+                      {/* Tree connector so a sub-room reads as physically inside
+                          its parent (└─), not just an indented sibling. */}
+                      {row.depth > 0 && <span className="tree-branch" aria-hidden="true">└─</span>}
                       {row.st.kind === 'ok'
                         ? <input type="checkbox" checked={picked?.id === row.id} onChange={() => setPicked(row.r)} onClick={(e) => e.stopPropagation()}/>
                         : null}
@@ -309,7 +363,17 @@ export function Search() {
       </div>
 
       {modalRoom && (
-        <BookingModal resource={modalRoom} date={form.date} start={form.start} end={form.end}
+        <BookingModal resource={modalRoom} date={form.date}
+          // All-day searches checked 00:00–23:59 availability, so the modal must
+          // confirm the same window — passing the hidden dropdown times let a
+          // user book 09:00–10:00 while believing they'd reserved the whole day.
+          start={form.allDay ? '00:00' : form.start}
+          end={form.allDay ? '23:59' : form.end}
+          // Carry the user's recurring-schedule choices into the dialog instead
+          // of dropping them on open.
+          initialRecur={form.recur}
+          initialPattern={form.pattern as 'daily' | 'weekly' | 'bi-weekly' | 'monthly'}
+          initialUntil={form.endDate}
           onClose={() => setModalRoom(null)} onBooked={onBooked}/>
       )}
     </div>

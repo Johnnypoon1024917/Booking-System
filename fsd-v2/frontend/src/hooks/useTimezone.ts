@@ -57,6 +57,21 @@ export function useTimezone() {
     const toUtcIso = (dateStr: string, timeStr: string) =>
       zonedWallTimeToUtcIso(dateStr, timeStr, tz);
 
-    return { tz, offset, label, formatTime, formatDateTime, toUtcIso };
+    // Inverse of toUtcIso for form prefill: split a stored UTC instant into the
+    // tenant-zone wall-clock { date: 'YYYY-MM-DD', time: 'HH:MM' } the <input
+    // type="date"/"time"> controls expect. Used when opening a booking for edit
+    // so the fields show the same zoned time the calendar does.
+    const toParts = (d: Date | string): { date: string; time: string } => {
+      const date = typeof d === 'string' ? new Date(d) : d;
+      const p = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(date).reduce((a, x) => { a[x.type] = x.value; return a; }, {} as Record<string, string>);
+      // Some engines emit "24" for midnight under hour12:false — normalise it.
+      const hh = p.hour === '24' ? '00' : p.hour;
+      return { date: `${p.year}-${p.month}-${p.day}`, time: `${hh}:${p.minute}` };
+    };
+
+    return { tz, offset, label, formatTime, formatDateTime, toUtcIso, toParts };
   }, [tz]);
 }

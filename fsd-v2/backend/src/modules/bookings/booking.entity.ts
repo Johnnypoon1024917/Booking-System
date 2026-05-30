@@ -33,6 +33,13 @@ export class Booking {
   @Column({ name: 'custom_field_values', type: 'jsonb', nullable: true })
   customFieldValues?: Record<string, unknown> | null;
 
+  // Service add-ons requested for this booking (e.g. Catering, IT setup).
+  // jsonb string-array so the list follows whatever the tenant offers without
+  // a migration, and a name containing a comma can't corrupt it the way a
+  // simple-array would. null/absent when no add-ons were chosen.
+  @Column({ name: 'services', type: 'jsonb', nullable: true })
+  services?: string[] | null;
+
   // Chargeback / cost-center code this booking is billed against. Resolved
   // at create time from the booker's choice (else the resource default) and
   // validated against the tenant's configured cost_centers list. null when

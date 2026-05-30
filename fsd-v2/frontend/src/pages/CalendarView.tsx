@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useRealtime } from '../hooks/useRealtime';
 import { BookingModal } from '../components/BookingModal';
-import { confirmDialog, promptDialog } from '../stores/confirm';
+import { confirmDialog } from '../stores/confirm';
 
 // Schedule view — FullCalendar week/month/day grid with the v1 .mrbs panel
 // chrome, a room filter, a status legend, and BookingModal-based creation.
@@ -30,7 +30,7 @@ export function CalendarView() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [roomFilter, setRoomFilter] = useState('');   // '' = all rooms
-  const [modal, setModal] = useState<{ resource?: any; date: string; start: string; end: string } | null>(null);
+  const [modal, setModal] = useState<{ existingBooking?: any; resource?: any; date: string; start: string; end: string } | null>(null);
   const { lastEvent } = useRealtime();
 
   useEffect(() => { api.resources().then(setRooms).catch(() => setRooms([])); reload(); }, []);
@@ -134,26 +134,26 @@ export function CalendarView() {
     } catch (e: any) { toast.error('Update failed', e.displayMessage || e.message); info.revert(); }
   }
 
-  async function onEventClick(info: any) {
-    // Don't offer cancel on a booking whose subject is hidden from the caller.
+  // Teams/Outlook parity: clicking an event opens its details for editing
+  // (adjust time, title, meeting URL) with a "Cancel booking" button inside the
+  // dialog — not an immediate cancel prompt, which was the hostile legacy UX.
+  function onEventClick(info: any) {
+    // Don't open a booking whose subject is hidden from the caller.
     if (info.event.extendedProps?.subjectHidden) {
       toast.info('Private booking', 'This slot is reserved privately by another user.');
       return;
     }
-    const reason = await promptDialog({
-      title: 'Cancel booking',
-      message: `Cancel "${info.event.title}"?`,
-      inputLabel: 'Reason',
-      placeholder: 'e.g. No longer needed',
-      required: true,
-      multiline: true,
-      confirmText: 'Cancel booking',
-      cancelText: 'Keep booking',
-      tone: 'danger',
+    const fullBooking = bookings.find((b) => b.id === info.event.id);
+    if (!fullBooking) return;
+    // date/start/end are placeholders — the modal prefills from the booking's
+    // stored instant in the tenant zone; they only matter for the create path.
+    setModal({
+      existingBooking: fullBooking,
+      resource: rooms.find((r) => r.id === fullBooking.resourceId),
+      date: info.event.start ? isoDate(info.event.start) : isoDate(new Date()),
+      start: info.event.start ? hhmm(info.event.start) : '09:00',
+      end: info.event.end ? hhmm(info.event.end) : '10:00',
     });
-    if (!reason) return;
-    try { await api.cancelBooking(info.event.id, reason); reload(); }
-    catch (e: any) { toast.error('Cancel failed', e.displayMessage || e.message); }
   }
 
   return (
@@ -203,7 +203,7 @@ export function CalendarView() {
       </div>
 
       {modal && (
-        <BookingModal resource={modal.resource} resources={rooms} bookings={bookings} date={modal.date} start={modal.start} end={modal.end}
+        <BookingModal existingBooking={modal.existingBooking} resource={modal.resource} resources={rooms} bookings={bookings} date={modal.date} start={modal.start} end={modal.end}
           onClose={() => setModal(null)} onBooked={() => { setModal(null); reload(); }} />
       )}
     </div>

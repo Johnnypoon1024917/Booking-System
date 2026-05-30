@@ -27,6 +27,9 @@ class CreateBookingDto {
   // resource-defined, so a loose object — the service validates required
   // fields and strips unknown keys.
   @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
+  // Service add-ons (Catering, IT setup, …). Without this decorator the
+  // global whitelist validator strips the array even when the SPA sends it.
+  @IsOptional() @IsArray() @IsString({ each: true }) services?: string[];
   // Chargeback code; validated against the tenant's cost_centers in the service.
   @IsOptional() @IsString() costCenterCode?: string;
 }
@@ -35,6 +38,9 @@ class UpdateBookingDto {
   @IsOptional() @IsDateString() endTime?: string;
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() meetingUrl?: string;
+  // Move the booking to a different room. Re-runs the same resource
+  // validation + conflict check the time path does, against the new room.
+  @IsOptional() @IsUUID() resourceId?: string;
 }
 class CreateRecurringDtoIn {
   @IsUUID() resourceId!: string;
@@ -52,6 +58,8 @@ class CreateRecurringDtoIn {
   @IsOptional() @IsBoolean() isPrivate?: boolean;
   @IsOptional() @IsString() rrule?: string;
   @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
+  // Service add-ons applied to every occurrence in the series.
+  @IsOptional() @IsArray() @IsString({ each: true }) services?: string[];
   @IsOptional() @IsString() costCenterCode?: string;
 }
 
@@ -167,6 +175,23 @@ export class BookingsController {
       next: { startTime: updated.startTime, endTime: updated.endTime, title: updated.title },
     });
     return updated;
+  }
+
+  // PUT /api/v1/bookings/:id/series — apply an edit to the whole recurring
+  // series the booking belongs to (Outlook "edit series"). Future, non-settled
+  // occurrences are shifted by the same delta the edited instance moved; title,
+  // meeting URL and room changes propagate to all. Per-occurrence conflicts are
+  // skipped and reported rather than aborting the batch. Falls back to a single
+  // update when the booking isn't part of a series.
+  @Put(':id/series')
+  async updateSeries(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: UpdateBookingDto) {
+    const r = await this.svc.updateSeries(u.tenantId, u.id, u.role, id, dto);
+    await this.audit.record(u, {
+      action: 'BOOKING_MODIFIED', severity: 'info',
+      targetEntity: 'booking', targetId: id,
+      next: { series: true, updated: r.updated, skipped: r.skipped.length },
+    });
+    return r;
   }
 
   @Delete(':id') @HttpCode(204)

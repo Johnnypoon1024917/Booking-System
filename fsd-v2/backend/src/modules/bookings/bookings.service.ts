@@ -26,6 +26,8 @@ export interface CreateBookingDto {
   meetingUrl?: string;
   isPrivate?: boolean;
   customFieldValues?: Record<string, unknown>;
+  // Service add-ons (Catering, IT setup, …) requested for the booking.
+  services?: string[];
   // Chargeback / cost-center code to bill this booking against. Validated
   // against the tenant's configured list (customization.cost_centers).
   costCenterCode?: string;
@@ -35,6 +37,7 @@ export interface UpdateBookingDto {
   endTime?: string | Date;
   meetingUrl?: string;
   title?: string;
+  resourceId?: string;   // move the booking to a different room
 }
 
 @Injectable()
@@ -171,6 +174,7 @@ export class BookingsService {
         meetingUrl: dto.meetingUrl || '',
         isPrivate: !!dto.isPrivate,
         customFieldValues: Object.keys(customFieldValues).length ? customFieldValues : null,
+        services: dto.services && dto.services.length ? dto.services : null,
         costCenterCode,
         // A per-resource override wins over the resource's own flag: `?? `
         // falls through only when the override key is absent, so a room can
@@ -214,11 +218,16 @@ export class BookingsService {
         throw new ConflictException(`cannot modify a ${b.status} booking`);
       }
 
-      if (timeChanged) {
+      // A room move re-runs the same resource validation + conflict check the
+      // time path does (against the new room), even when the time is unchanged.
+      const targetResourceId = dto.resourceId || b.resourceId;
+      const resourceChanged = targetResourceId !== b.resourceId;
+
+      if (timeChanged || resourceChanged) {
         const start = dto.startTime ? new Date(dto.startTime) : b.startTime;
         const end = dto.endTime ? new Date(dto.endTime) : b.endTime;
         if (!(end > start)) throw new ConflictException('end must be after start');
-        const resource = await m.getRepository(Resource).findOne({ where: { id: b.resourceId, tenantId } });
+        const resource = await m.getRepository(Resource).findOne({ where: { id: targetResourceId, tenantId } });
         // Parity with create(): a missing or inactive resource is not
         // bookable. Previously `if (resource)` let a reschedule onto a
         // deleted/deactivated resource through with NO conflict check at all.
@@ -229,13 +238,14 @@ export class BookingsService {
         await this.lockResources(m, tenantId, ids);
         await this.assertNoConflict(m, tenantId, ids, start, end, id, resource);
         // If the resource requires approval (per its override, else its own
-        // flag), a reschedule re-enters the approval queue rather than
+        // flag), a reschedule/move re-enters the approval queue rather than
         // silently staying Confirmed.
         if ((resource.ruleOverrides?.requiresApproval ?? resource.requiresApproval) && b.status === 'Confirmed') {
           b.status = 'Pending Approval';
         }
         b.startTime = start;
         b.endTime = end;
+        b.resourceId = resource.id;
       }
       if (dto.title !== undefined) b.title = dto.title;
       if (dto.meetingUrl !== undefined) b.meetingUrl = dto.meetingUrl;
@@ -250,6 +260,63 @@ export class BookingsService {
     this.dispatchSync('BOOKING_UPDATED', tenantId, saved.id);
     void this.notifications.enqueue(tenantId, 'BOOKING_UPDATED', saved);
     return saved;
+  }
+
+  // updateSeries applies an edit to the whole recurring series an instance
+  // belongs to ("edit series"). Each future, non-settled occurrence is shifted
+  // by the SAME delta the edited instance moved (a pure-UTC offset, so it's
+  // timezone-agnostic and needs no per-occurrence wall-clock math); title,
+  // meeting URL and room changes propagate to all. We reuse update() per
+  // occurrence so every occurrence gets the identical validation, locking and
+  // conflict re-check — and a clash on one occurrence is skipped and reported
+  // rather than aborting the batch (mirrors createSeries). Past and settled
+  // occurrences are left untouched, matching Outlook.
+  async updateSeries(
+    tenantId: string, userId: string, role: string, id: string, dto: UpdateBookingDto,
+  ): Promise<{ updated: number; skipped: string[] }> {
+    const anchor = await this.get(tenantId, id);
+    if (anchor.userId !== userId && !this.isAdmin(role)) throw new ForbiddenException();
+
+    // Not part of a series — fall back to a plain single update.
+    if (!anchor.recurrenceId) {
+      await this.update(tenantId, userId, role, id, dto);
+      return { updated: 1, skipped: [] };
+    }
+
+    // Delta measured against the anchor's CURRENT window, before any change.
+    const deltaStartMs = dto.startTime ? +new Date(dto.startTime) - +anchor.startTime : 0;
+    const deltaEndMs = dto.endTime ? +new Date(dto.endTime) - +anchor.endTime : 0;
+    const timeShift = deltaStartMs !== 0 || deltaEndMs !== 0;
+    const now = new Date();
+
+    const siblings = await this.bookings.find({
+      where: { tenantId, recurrenceId: anchor.recurrenceId },
+      order: { startTime: 'ASC' },
+    });
+
+    const result = { updated: 0, skipped: [] as string[] };
+    for (const s of siblings) {
+      // Future, editable occurrences only.
+      if (TERMINAL_STATUSES.includes(s.status)) continue;
+      if (s.startTime < now) continue;
+
+      const patch: UpdateBookingDto = {};
+      if (dto.title !== undefined) patch.title = dto.title;
+      if (dto.meetingUrl !== undefined) patch.meetingUrl = dto.meetingUrl;
+      if (dto.resourceId) patch.resourceId = dto.resourceId;
+      if (timeShift) {
+        patch.startTime = new Date(+s.startTime + deltaStartMs).toISOString();
+        patch.endTime = new Date(+s.endTime + deltaEndMs).toISOString();
+      }
+      try {
+        await this.update(tenantId, userId, role, s.id, patch);
+        result.updated++;
+      } catch {
+        // Conflict / rule violation on this occurrence — skip and report.
+        result.skipped.push(s.startTime.toISOString());
+      }
+    }
+    return result;
   }
 
   async cancel(tenantId: string, userId: string, role: string, id: string, reason: string) {
