@@ -251,7 +251,8 @@
     "edit": "編輯預約",
     "cancelReason": "取消原因？（可選）",
     "cancelled": "預約已取消",
-    "empty": "尚無預約"
+    "empty": "尚無預約",
+    "approvalLoadFailed": "無法載入審批狀態 — 點擊重試"
   },
   "approvals": {
     "title": "審批",

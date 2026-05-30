@@ -222,7 +222,7 @@ export function Dashboard() {
                        role="button" tabIndex={0} onClick={reveal}
                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); reveal(); } }}>
                     <div className="vbar-plot">
-                      <div className="vbar-bar" style={{ height: `${Math.max(2, Math.round((b.count / maxCount) * 100))}%` }}>
+                      <div className="vbar-bar" style={{ height: `${b.count === 0 ? 0 : Math.max(2, Math.round((b.count / maxCount) * 100))}%` }}>
                         <span className="vbar-val">{b.count}</span>
                       </div>
                     </div>

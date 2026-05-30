@@ -24,7 +24,10 @@ export function NewBooking() {
   const nav = useNavigate();
   const tz = useTimezone();
   const toast = useToast();
-  const today = new Date().toISOString().slice(0, 10);
+  // Local YYYY-MM-DD — NOT toISOString(), which is UTC and would roll the
+  // default (and the min= floor) back a day for users east of GMT in the
+  // early morning. en-CA formats local time as YYYY-MM-DD natively (QA #2).
+  const today = new Date().toLocaleDateString('en-CA');
 
   // Step 1 inputs
   const [step, setStep] = useState<Step>(1);
@@ -39,6 +42,10 @@ export function NewBooking() {
 
   // Step 3 — booking detail + optional recurrence
   const [detail, setDetail] = useState({ title: '', meetingUrl: '', isPrivate: false });
+  // Resource-defined custom booking-form fields (e.g. Cost Center Code). The
+  // room may require them, so the wizard must render and enforce them or the
+  // server rejects the submit with a 400 (QA #1).
+  const [cfValues, setCfValues] = useState<Record<string, any>>({});
   const [recurring, setRecurring] = useState(false);
   const [pattern, setPattern] = useState<Pattern>('weekly');
   const [interval, setInterval] = useState(1);
@@ -85,8 +92,12 @@ export function NewBooking() {
 
   function pickRoom(r: any) {
     setPickedRoom(r);
+    setCfValues({});   // a different room never inherits the previous one's answers
     setStep(3);
   }
+
+  const customFields: any[] = pickedRoom?.customFields || [];
+  function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); }
 
   function toggleByday(wd: number) {
     setByday((cur) => cur.includes(wd) ? cur.filter((d) => d !== wd) : [...cur, wd].sort());
@@ -100,11 +111,22 @@ export function NewBooking() {
     setRooms(null);
     setRecurring(false);
     setDetail({ title: '', meetingUrl: '', isPrivate: false });
+    setCfValues({});
     setStep(1);
   }
 
   async function submit() {
     if (!pickedRoom) return;
+    // Enforce required custom fields client-side (the server re-checks). Without
+    // this the wizard would let the user submit a room that demands e.g. a Cost
+    // Center Code and only surface the failure as a raw 400 (QA #1).
+    for (const f of customFields) {
+      if (!f.required) continue;
+      const v = cfValues[f.key];
+      const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+      if (empty) { toast.warning(t('bookingModal.requiredField', { field: f.label || f.key })); return; }
+    }
+    const customFieldValues = Object.keys(cfValues).length ? cfValues : undefined;
     setSubmitting(true);
     setResult(null);
     try {
@@ -116,6 +138,7 @@ export function NewBooking() {
           title: detail.title,
           meetingUrl: detail.meetingUrl,
           isPrivate: detail.isPrivate,
+          customFieldValues,
         });
         setResult({ ok: t('booking.bookedId', { id: created.id }) });
       } else {
@@ -131,6 +154,7 @@ export function NewBooking() {
           title: detail.title,
           meetingUrl: detail.meetingUrl,
           isPrivate: detail.isPrivate,
+          customFieldValues,
         });
         const created = res.bookingIds?.length || 0;
         const skipped = res.skipped?.length || 0;
@@ -212,6 +236,40 @@ export function NewBooking() {
             {' '}{t('booking.privateHideTitle')}
           </label>
 
+          {/* Resource-defined custom fields — rendered by type; required ones
+              are enforced on submit (and again server-side) (QA #1). */}
+          {customFields.map((f) => {
+            const label = `${f.label || f.key}${f.required ? '*' : ''}`;
+            if (f.type === 'checkbox') {
+              return (
+                <label key={f.key} className="row" style={{ alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={!!cfValues[f.key]}
+                         onChange={(e) => setCf(f.key, e.target.checked)} />
+                  <span>{label}</span>
+                </label>
+              );
+            }
+            if (f.type === 'select') {
+              return (
+                <label key={f.key}>{label}
+                  <select value={cfValues[f.key] ?? ''} onChange={(e) => setCf(f.key, e.target.value)}>
+                    <option value="">{t('bookingModal.choose')}</option>
+                    {(f.options || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </label>
+              );
+            }
+            return (
+              <label key={f.key}>{label}
+                <input
+                  type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+                  value={cfValues[f.key] ?? ''}
+                  onChange={(e) => setCf(f.key, f.type === 'number' ? (e.target.value === '' ? '' : +e.target.value) : e.target.value)}
+                />
+              </label>
+            );
+          })}
+
           <hr />
 
           <label>
@@ -252,7 +310,7 @@ export function NewBooking() {
                 <label>{t('booking.count')} <input type="number" min={1} max={100} value={count}
                   onChange={(e) => setCount(+e.target.value)} disabled={!!until} /></label>
                 <span className="muted">{t('booking.or')}</span>
-                <label>{t('booking.until')} <input type="date" value={until}
+                <label>{t('booking.until')} <input type="date" value={until} min={when.date}
                   onChange={(e) => setUntil(e.target.value)} /></label>
               </div>
               <small className="muted">{t('booking.seriesCapHelp')}</small>

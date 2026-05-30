@@ -251,7 +251,8 @@
     "edit": "Edit booking",
     "cancelReason": "Reason for cancelling? (optional)",
     "cancelled": "Booking cancelled",
-    "empty": "No bookings yet"
+    "empty": "No bookings yet",
+    "approvalLoadFailed": "Couldn't load approval status — tap to retry"
   },
   "approvals": {
     "title": "Approvals",

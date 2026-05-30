@@ -251,7 +251,8 @@
     "edit": "编辑预约",
     "cancelReason": "取消原因？（可选）",
     "cancelled": "预约已取消",
-    "empty": "尚无预约"
+    "empty": "尚无预约",
+    "approvalLoadFailed": "无法加载审批状态 — 点击重试"
   },
   "approvals": {
     "title": "审批",

@@ -13,6 +13,7 @@ import { Modal } from '../components/Modal';
 import { ApprovalTimeline } from '../components/ApprovalTimeline';
 import { promptDialog } from '../stores/confirm';
 import { useTimezone } from '../hooks/useTimezone';
+import { utcToZonedDatetimeLocal, zonedDatetimeLocalToUtcIso } from '../utils/datetime';
 
 // Direct port of v1's MyBookings.vue: header actions, stat strip, filter
 // tabs (Upcoming / Pending / Past) with counts, status-strip cards with
@@ -41,6 +42,10 @@ export function MyBookings() {
   const [items, setItems] = useState<any[]>([]);
   const [resources, setResources] = useState<any[]>([]);
   const [chains, setChains] = useState<Record<string, any[]>>({});
+  // Tracks pending bookings whose approval chain failed to load, so the UI can
+  // show "couldn't load" instead of silently hiding the timeline (which made a
+  // Pending booking look like it had no approvers).
+  const [chainErrors, setChainErrors] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Bucket>('upcoming');
@@ -60,13 +65,17 @@ export function MyBookings() {
       // Pull chain progress for anything still awaiting approval so the
       // requester can see exactly where it is stuck.
       const next: Record<string, any[]> = {};
+      const errs: Record<string, boolean> = {};
       await Promise.all((list || [])
         .filter((b: any) => b.status === 'Pending Approval')
         .map(async (b: any) => {
+          // Distinguish a genuinely empty chain from a failed fetch: on error
+          // flag it so the card can say so rather than render nothing.
           try { next[b.id] = (await api.approvalChain(b.id)) || []; }
-          catch { next[b.id] = []; }
+          catch { errs[b.id] = true; }
         }));
       setChains(next);
+      setChainErrors(errs);
     } catch (e: any) {
       toast.error('Could not load', e.displayMessage || e.message);
     } finally { setLoading(false); }
@@ -100,8 +109,11 @@ export function MyBookings() {
     try {
       await api.updateBooking(editing.id, {
         title: editing.title,
-        startTime: new Date(editing.start).toISOString(),
-        endTime: new Date(editing.end).toISOString(),
+        // editing.start/end are wall-clock 'YYYY-MM-DDTHH:mm' in the TENANT
+        // zone (see the edit button) — convert back through the same zone, not
+        // the browser's, so the saved instant matches what the user edited.
+        startTime: zonedDatetimeLocalToUtcIso(editing.start, tz.tz),
+        endTime: zonedDatetimeLocalToUtcIso(editing.end, tz.tz),
         meetingUrl: editing.meetingUrl,
       });
       toast.success(t('common.saved'));
@@ -199,6 +211,7 @@ export function MyBookings() {
       {!loading && filtered.map((b) => {
         const canMutate = b.status !== 'Cancelled' && b.status !== 'No Show' && new Date(b.endTime) > new Date();
         const steps = chains[b.id] || [];
+        const chainFailed = !!chainErrors[b.id];
         return (
           <article key={b.id} className="fsd-card my-card">
             <div className="strip" style={{ background: stripColor(b.status) }} />
@@ -218,12 +231,19 @@ export function MyBookings() {
               {steps.length > 0 && (
                 <div style={{ marginTop: 8 }}><ApprovalTimeline compact steps={steps}/></div>
               )}
+              {b.status === 'Pending Approval' && steps.length === 0 && chainFailed && (
+                <div className="muted text-sm" style={{ marginTop: 8 }}>
+                  <button className="btn-fsd ghost" style={{ padding: '2px 8px' }} onClick={() => load()}>
+                    {t('myBookings.approvalLoadFailed')}
+                  </button>
+                </div>
+              )}
             </div>
             <div className="row gap-sm" style={{ flexShrink: 0 }}>
               {canMutate && (
                 <button className="btn-fsd ghost" aria-label={t('myBookings.edit')} title={t('myBookings.edit')} onClick={() => setEditing({
                   id: b.id, title: b.title || '',
-                  start: toLocal(b.startTime), end: toLocal(b.endTime), meetingUrl: b.meetingUrl || '',
+                  start: utcToZonedDatetimeLocal(b.startTime, tz.tz), end: utcToZonedDatetimeLocal(b.endTime, tz.tz), meetingUrl: b.meetingUrl || '',
                   resourceName: resourceName(b), status: b.status, startISO: b.startTime,
                 })}><Pencil size={13}/></button>
               )}
@@ -293,9 +313,4 @@ function stripColor(s: string) {
   if (s === 'Pending Approval') return 'var(--warning)';
   if (s === 'Cancelled' || s === 'No Show') return 'var(--text-muted)';
   return 'var(--brand-primary)';
-}
-function toLocal(iso: string) {
-  const d = new Date(iso);
-  const tz = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - tz).toISOString().slice(0, 16);
 }

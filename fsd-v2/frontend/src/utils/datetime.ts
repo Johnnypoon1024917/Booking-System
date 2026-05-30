@@ -40,6 +40,32 @@ export function zonedWallTimeToUtcIso(dateStr: string, timeStr: string, timeZone
   return new Date(utc).toISOString();
 }
 
+// Format a UTC instant as a 'YYYY-MM-DDTHH:mm' string in `timeZone`, suitable
+// for an <input type="datetime-local"> value. Like zonedWallTimeToUtcIso, this
+// is locked to the tenant zone, NOT the browser's — so the value the user edits
+// matches the time shown on the booking card (a user in London editing a Hong
+// Kong room sees the Hong Kong wall-clock, not 8 hours off).
+export function utcToZonedDatetimeLocal(iso: string | Date, timeZone: string): string {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+  const map: Record<string, string> = {};
+  for (const p of dtf.formatToParts(new Date(iso))) {
+    if (p.type !== 'literal') map[p.type] = p.value;
+  }
+  return `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}`;
+}
+
+// Inverse of the above: parse a datetime-local 'YYYY-MM-DDTHH:mm' value the user
+// entered *in the tenant zone* back to a UTC ISO string.
+export function zonedDatetimeLocalToUtcIso(value: string, timeZone: string): string {
+  const [dateStr, timeStr = '00:00'] = value.split('T');
+  return zonedWallTimeToUtcIso(dateStr, timeStr, timeZone);
+}
+
 // Weekday (0=Sun … 6=Sat) of a 'YYYY-MM-DD' calendar date. A calendar date
 // has a single weekday independent of timezone, so we read it at noon-UTC to
 // avoid the browser-local-midnight rollover that `new Date(dateStr)` risks.

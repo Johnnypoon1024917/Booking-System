@@ -104,7 +104,14 @@ export const api = {
   // because its interceptor would attach a stale JWT.
   redeemCheckinToken: (token: string) =>
     fetch(`/api/v1/checkin/${encodeURIComponent(token)}`, { method: 'POST' })
-      .then((r) => r.json()),
+      .then(async (r) => {
+        // Native fetch (unlike axios) resolves on 4xx/5xx — so an expired QR
+        // (400) would otherwise look like a successful check-in. Surface the
+        // server message as a real rejection instead.
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.message || 'Check-in failed');
+        return data;
+      }),
 
   // Free/busy — PII-free intervals (resourceId, start, end, status)
   busyIntervals: (start: string, end: string, resourceIds?: string[]) =>

@@ -51,18 +51,36 @@ export class CheckinService {
 
   // Public kiosk path: redeem a token without auth. The token itself is
   // the bearer credential; once consumed it can't be reused.
+  //
+  // The token is consumed ATOMICALLY: a single UPDATE nulls the token in the
+  // same statement that matches it, so only one of N concurrent scans (hardware
+  // scanners and double-taps routinely fire the same QR twice within a few ms)
+  // can win. The previous findOne-then-save pattern was a TOCTOU race where two
+  // scans both read a valid token and both checked in. The WHERE clause also
+  // enforces not-expired and a check-in-able status, so the claim and all its
+  // preconditions are evaluated under the row lock the UPDATE takes.
   async redeemToken(token: string) {
     if (!token) throw new BadRequestException('missing token');
-    const b = await this.bookings.findOne({ where: { checkinToken: token } });
-    if (!b) throw new NotFoundException('invalid token');
-    if (b.checkinTokenExpiresAt && b.checkinTokenExpiresAt < new Date()) {
-      throw new BadRequestException('token expired');
+    const now = new Date();
+    const claim = await this.bookings.createQueryBuilder()
+      .update(Booking)
+      .set({ checkinToken: null as unknown as undefined, checkinTokenExpiresAt: null as unknown as undefined })
+      .where('checkin_token = :token', { token })
+      .andWhere('(checkin_token_expires_at IS NULL OR checkin_token_expires_at > :now)', { now })
+      .andWhere(`status NOT IN ('Cancelled','No Show')`)
+      .returning(['id'])
+      .execute();
+
+    // affected === 0 ⇒ token never existed, already consumed by a concurrent
+    // scan, expired, or the booking is in a terminal state. All look identical
+    // to the caller by design (no oracle for guessing tokens).
+    if (!claim.affected) {
+      throw new BadRequestException('token invalid, already used, or expired');
     }
+    const id = (claim.raw as Array<{ id: string }>)[0]?.id;
+    const b = await this.bookings.findOne({ where: { id } });
+    if (!b) throw new NotFoundException('booking not found');
     const saved = await this.applyCheckin(b);
-    // Consume: blank the token so a second scan fails.
-    saved.checkinToken = undefined;
-    saved.checkinTokenExpiresAt = undefined;
-    await this.bookings.save(saved);
     return { bookingId: saved.id, checkedInAt: saved.checkedInAt };
   }
 
