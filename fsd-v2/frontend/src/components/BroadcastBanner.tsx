@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Megaphone, X } from 'lucide-react';
 import { api } from '../api/client';
+import { useRealtimeStore } from '../stores/realtime';
 
 // R13 broadcast banner — single news-ticker bar shared by ALL active
 // broadcasts, scrolling right-to-left. We render two identical streams
@@ -38,19 +39,30 @@ export function BroadcastBanner() {
   const marqueeRef = useRef<HTMLDivElement | null>(null);
   const [marqueeWidth, setMarqueeWidth] = useState(1024);
 
-  // Poll every 60s. The endpoint is cheap and the cadence matches v1.
+  const load = useCallback(async () => {
+    try {
+      const data = await api.activeBroadcasts();
+      setItems(Array.isArray(data) ? data : []);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  // Poll every 60s as a safety net (covers a dropped SSE connection or a
+  // broadcast that expires while the tab is backgrounded). The realtime
+  // trigger below is what makes emergency broadcasts appear on the dot.
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const data = await api.activeBroadcasts();
-        if (!cancelled) setItems(Array.isArray(data) ? data : []);
-      } catch { /* non-fatal */ }
-    };
     load();
     const t = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
+    return () => clearInterval(t);
+  }, [load]);
+
+  // Realtime push: the backend emits `broadcast.published` the instant a
+  // broadcast goes live (or expires/is deleted). The global useRealtime in
+  // Layout feeds every SSE event into this store, so we re-fetch the moment
+  // one arrives — no extra EventSource, no waiting out the 60s poll cycle.
+  const lastEvent = useRealtimeStore((s) => s.lastEvent);
+  useEffect(() => {
+    if (lastEvent?.type === 'broadcast.published') load();
+  }, [lastEvent, load]);
 
   const live = useMemo(
     () => items.filter((b) => !dismissed.has(b.id)),

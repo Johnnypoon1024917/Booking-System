@@ -34,15 +34,30 @@ interface Resource {
 interface Props {
   resource?: Resource;       // pre-selected room (optional — Teams-style: pick inside the dialog)
   resources?: Resource[];    // full list to choose from when no room is pre-selected
-  date: string;          // YYYY-MM-DD
-  start: string;         // HH:MM
-  end: string;           // HH:MM
+  bookings?: any[];          // existing bookings (any room) — drives free/busy filtering
+  date: string;          // YYYY-MM-DD  (initial; editable in the dialog)
+  start: string;         // HH:MM       (initial; editable in the dialog)
+  end: string;           // HH:MM       (initial; editable in the dialog)
   onClose: () => void;
   onBooked?: (booking: any) => void;
 }
 
 function rId(r: Resource) { return r.id || r.ID || ''; }
 function rName(r: Resource) { return r.name || r.Name || ''; }
+
+// The nth occurrence date (YYYY-MM-DD) of a recurrence starting at `dateStr`.
+// Mirrors the backend's stepping so the modal can preview conflicts before the
+// series is submitted. n=0 is the first booking. Monthly keeps the day-of-month
+// (overflow rolls forward, e.g. Jan 31 → Mar 3) — a close-enough preview; the
+// server is the source of truth for the materialised dates.
+function pad2(n: number) { return String(n).padStart(2, '0'); }
+function occurrenceDate(dateStr: string, pattern: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const base = pattern === 'monthly'
+    ? new Date(y, m - 1 + n, d)
+    : new Date(y, m - 1, d + n * (pattern === 'daily' ? 1 : pattern === 'bi-weekly' ? 14 : 7));
+  return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
+}
 
 // Dedicated booking dialog — replaces the inline calendar prompt.
 // Surfaces title, recurrence, services add-ons, the private flag and
@@ -51,7 +66,7 @@ function rName(r: Resource) { return r.name || r.Name || ''; }
 // matches the server-side guard. When no room is pre-selected the dialog
 // shows a resource picker so the user can drag any open slot and choose
 // the room here (Teams-style), rather than filtering first.
-export function BookingModal({ resource, resources, date, start, end, onClose, onBooked }: Props) {
+export function BookingModal({ resource, resources, bookings, date, start, end, onClose, onBooked }: Props) {
   const toast = useToast();
   const { validate, allowsPattern } = useBookingRules();
   const tz = useTimezone();
@@ -59,6 +74,12 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
 
   const choices = resources ?? (resource ? [resource] : []);
   const [selResId, setSelResId] = useState(resource ? rId(resource) : '');
+
+  // Date/time are editable in the dialog (seeded from the calendar drag) so a
+  // slightly-off drag can be corrected here instead of re-dragging the grid.
+  const [bDate, setBDate] = useState(date);
+  const [bStart, setBStart] = useState(start);
+  const [bEnd, setBEnd] = useState(end);
 
   const [title, setTitle] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
@@ -78,12 +99,66 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   const customization = useTenant((s) => s.customization);
   const costCenters: string[] = Array.isArray(customization?.cost_centers) ? customization!.cost_centers : [];
 
-  const ruleError = useMemo(() => validate({ date, start, end }), [date, start, end, validate]);
+  const ruleError = useMemo(() => validate({ date: bDate, start: bStart, end: bEnd }), [bDate, bStart, bEnd, validate]);
 
   const selected = useMemo(
     () => choices.find((r) => rId(r) === selResId),
     [choices, selResId]
   );
+
+  // Free/busy: a room is "busy" if any non-cancelled booking overlaps the
+  // chosen slot. We compare against the tenant-zone UTC instants (the same
+  // conversion submit uses) so a traveller's browser zone can't skew it.
+  const [slotStartMs, slotEndMs] = useMemo(() => {
+    try {
+      return [new Date(tz.toUtcIso(bDate, bStart)).getTime(), new Date(tz.toUtcIso(bDate, bEnd)).getTime()];
+    } catch { return [NaN, NaN]; }
+  }, [tz, bDate, bStart, bEnd]);
+
+  const roomBusy = useMemo(() => {
+    return (roomId: string) => {
+      // Only meaningful for a valid forward slot; an inverted/zero slot is
+      // caught by ruleError instead, so don't flag every room as busy.
+      if (!(slotEndMs > slotStartMs)) return false;
+      return (bookings || []).some((b) =>
+        b.resourceId === roomId &&
+        b.status !== 'Cancelled' &&
+        new Date(b.startTime).getTime() < slotEndMs &&
+        new Date(b.endTime).getTime() > slotStartMs);
+    };
+  }, [bookings, slotStartMs, slotEndMs]);
+
+  // The currently-selected room conflicting with the (possibly edited) slot —
+  // pre-empts the backend 409 before the user fills out the whole form.
+  const selectedBusy = !!selResId && roomBusy(selResId);
+
+  // Recurrence conflict preview (Outlook-style): expand the series client-side
+  // and flag which occurrences land on a slot the chosen room is already booked
+  // for. The backend still skips/handles conflicts on submit — this only warns
+  // the user up front ("free for 3 of 4 dates") so they can adjust first.
+  const recurPreview = useMemo(() => {
+    if (!recur || !selResId) return [] as { date: string; conflict: boolean }[];
+    const dates: string[] = [];
+    const cap = 100;
+    for (let i = 0; i < cap; i++) {
+      const ds = occurrenceDate(bDate, pattern, i);
+      if (until) { if (ds > until) break; } else if (i >= count) break;
+      dates.push(ds);
+    }
+    return dates.map((ds) => {
+      let sMs: number, eMs: number;
+      try { sMs = new Date(tz.toUtcIso(ds, bStart)).getTime(); eMs = new Date(tz.toUtcIso(ds, bEnd)).getTime(); }
+      catch { return { date: ds, conflict: false }; }
+      if (!(eMs > sMs)) return { date: ds, conflict: false };
+      const conflict = (bookings || []).some((b) =>
+        b.resourceId === selResId &&
+        b.status !== 'Cancelled' &&
+        new Date(b.startTime).getTime() < eMs &&
+        new Date(b.endTime).getTime() > sMs);
+      return { date: ds, conflict };
+    });
+  }, [recur, selResId, bDate, pattern, count, until, tz, bStart, bEnd, bookings]);
+  const recurConflicts = recurPreview.filter((o) => o.conflict).length;
 
   const resName  = selected ? rName(selected) : '';
   const resLoc   = selected ? (selected.location || selected.Location || '') : '';
@@ -114,16 +189,10 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
     setServices((arr) => (arr.includes(opt) ? arr.filter((x) => x !== opt) : [...arr, opt]));
   }
 
-  function formatDate(d: string) {
-    if (!d) return '';
-    return new Date(`${d}T00:00:00`).toLocaleDateString(undefined, {
-      weekday: 'long', month: 'short', day: 'numeric',
-    });
-  }
-
   async function submit() {
     if (ruleError) { toast.error(t('bookingModal.cannotBook'), ruleError); return; }
     if (!resId) { toast.warning(t('bookingModal.pickResource')); return; }
+    if (selectedBusy) { toast.error(t('bookingModal.cannotBook'), t('bookingModal.roomBusyConflict', { room: resName })); return; }
     if (!title.trim()) { toast.warning(t('bookingModal.titleRequired')); return; }
     // Enforce required custom fields client-side (the server re-checks).
     for (const f of customFields) {
@@ -141,8 +210,8 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
       // Lock the wall-clock slot to the tenant zone (not the browser's) so a
       // traveller doesn't silently book a different instant than the labelled
       // "times shown in <zone>" (QA #1).
-      const startIso = tz.toUtcIso(date, start);
-      const endIso = tz.toUtcIso(date, end);
+      const startIso = tz.toUtcIso(bDate, bStart);
+      const endIso = tz.toUtcIso(bDate, bEnd);
       let r: any;
       if (recur) {
         // Recurring bookings go to the dedicated /bookings/recurring
@@ -197,7 +266,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
       </> : <>
         <span className="spacer" />
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
-        <button className="btn primary" disabled={busy || !!ruleError || !resId} onClick={submit}>
+        <button className="btn primary" disabled={busy || !!ruleError || !resId || selectedBusy} onClick={submit}>
           {busy && <Loader2 size={14} className="spin" />} {t('bookingModal.confirm')}
         </button>
       </>}
@@ -209,11 +278,17 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
             <label style={{ margin: 0 }}>{t('bookingModal.resource')}*
               <select value={selResId} onChange={(e) => setSelResId(e.target.value)}>
                 <option value="">{t('bookingModal.chooseResource')}</option>
-                {choices.map((r) => (
-                  <option key={rId(r)} value={rId(r)}>
-                    {rName(r)}{(r.location || r.Location) ? ` · ${r.location || r.Location}` : ''}
-                  </option>
-                ))}
+                {choices.map((r) => {
+                  // Room Finder-style: rooms already booked for this slot are
+                  // disabled and tagged "Busy" so they can't be chosen blind.
+                  const busy = roomBusy(rId(r));
+                  return (
+                    <option key={rId(r)} value={rId(r)} disabled={busy}>
+                      {rName(r)}{(r.location || r.Location) ? ` · ${r.location || r.Location}` : ''}
+                      {busy ? ` · ${t('bookingModal.busy')}` : ''}
+                    </option>
+                  );
+                })}
               </select>
             </label>
           ) : (
@@ -225,9 +300,19 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
         </div>
       </div>
 
-      <div className="bm-timerow">
-        <span><Calendar size={14} /> {formatDate(date)}</span>
-        <span><Clock size={14} /> {start} – {end}</span>
+      <div className="bm-timerow bm-timerow-edit">
+        <label className="bm-when" aria-label={t('bookingModal.dateLabel')}>
+          <Calendar size={14} />
+          <input type="date" value={bDate} onChange={(e) => setBDate(e.target.value)} />
+        </label>
+        <label className="bm-when">
+          <Clock size={14} />
+          <input type="time" step={300} value={bStart} aria-label={t('bookingModal.startLabel')}
+                 onChange={(e) => setBStart(e.target.value)} />
+          <span className="bm-dash">–</span>
+          <input type="time" step={300} value={bEnd} aria-label={t('bookingModal.endLabel')}
+                 onChange={(e) => setBEnd(e.target.value)} />
+        </label>
         <span className={`tag ${needsApproval ? 'warning' : 'ok'}`}>
           {needsApproval ? t('bookingModal.requiresApproval') : t('bookingModal.autoApproved')}
         </span>
@@ -328,6 +413,29 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
             </label>
           </div>
         )}
+        {recur && selResId && recurPreview.length > 0 && (
+          <div className="mt">
+            <small className={recurConflicts ? '' : 'muted'}
+                   style={{ display: 'block', marginBottom: 6, color: recurConflicts ? '#d97706' : undefined, fontWeight: recurConflicts ? 600 : undefined }}>
+              {recurConflicts
+                ? t('bookingModal.recurAvailable', { room: resName, ok: recurPreview.length - recurConflicts, total: recurPreview.length })
+                : t('bookingModal.recurAllClear', { room: resName, total: recurPreview.length })}
+            </small>
+            <div className="chip-grid">
+              {recurPreview.map((o) => (
+                <span key={o.date} className={`tag ${o.conflict ? 'warning' : 'ok'}`}
+                      title={o.conflict ? t('bookingModal.roomBusyConflict', { room: resName }) : ''}>
+                  {o.date}{o.conflict ? ' ⚠' : ''}
+                </span>
+              ))}
+            </div>
+            {recurConflicts > 0 && (
+              <small className="muted" style={{ display: 'block', marginTop: 6 }}>
+                {t('bookingModal.recurConflictHint')}
+              </small>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="row gap mt" style={{ alignItems: 'center' }}>
@@ -350,6 +458,9 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
       )}
 
       {ruleError && <div className="err mt">{ruleError}</div>}
+      {!ruleError && selectedBusy && (
+        <div className="err mt">{t('bookingModal.roomBusyConflict', { room: resName })}</div>
+      )}
     </Modal>
   );
 }

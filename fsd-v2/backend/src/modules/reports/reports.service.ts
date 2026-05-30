@@ -27,6 +27,15 @@ const fmtDate = (col: string) =>
 const fmtTime = (col: string) =>
   `TO_CHAR(${col} AT TIME ZONE 'UTC' AT TIME ZONE '${reportTZ()}', 'HH24:MI')`;
 
+// dateInTZ buckets a timestamptz to a *calendar date in reportTZ()* for range
+// filtering. A bare `col::date` casts in the DB's zone (UTC), so a 07:00
+// Hong Kong booking — 23:00 UTC the previous day — lands on the wrong date and
+// silently shifts into the prior period's tally. AT TIME ZONE pins it to the
+// report zone first, matching what fmtDate displays so filtered rows and the
+// dates shown for them always agree.
+const dateInTZ = (col: string) =>
+  `(${col} AT TIME ZONE 'UTC' AT TIME ZONE '${reportTZ()}')::date`;
+
 export type DashboardScope = 'all' | 'region' | 'mine';
 
 export interface DashboardFilter {
@@ -61,7 +70,7 @@ export class ReportsService {
         // otherwise the chart totals (active only) didn't match the headline
         // total and looked broken (e.g. 60 vs 71). The Cancelled % tile shows
         // the cancelled share.
-        .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end });
+        .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end });
       if (filter.scope === 'mine' && filter.userId) {
         qb.andWhere('b.user_id = :u', { u: filter.userId });
       } else if (filter.scope === 'region' && filter.regions?.length) {
@@ -81,19 +90,24 @@ export class ReportsService {
         .addSelect('COUNT(b.id)', 'count'),
     ).groupBy('r.name').orderBy('count', 'DESC').getRawMany();
 
-    // 2) By department/region rollup.
-    const regionRows = await applyScope(
+    // 2) By department rollup. The chart is titled "Utilization by Dept" and
+    // resources carry a real department_id → departments.name, so group by the
+    // department (LEFT JOIN — department_id is nullable) rather than r.region,
+    // which had been masquerading as the department. Rooms with no department
+    // fall into "Unassigned".
+    const deptRows = await applyScope(
       this.bookings.createQueryBuilder('b')
         .innerJoin('resources', 'r', 'r.id = b.resource_id')
-        .select(`COALESCE(NULLIF(r.region,''),'Unassigned')`, 'name')
+        .leftJoin('departments', 'd', 'd.id = r.department_id')
+        .select(`COALESCE(NULLIF(d.name,''),'Unassigned')`, 'name')
         .addSelect('COUNT(b.id)', 'count'),
     )
-      // Group by the region EXPRESSION, not the output alias "name":
+      // Group by the department EXPRESSION, not the output alias "name":
       // Postgres resolves an unqualified `GROUP BY name` to the resources.name
-      // *column* (which exists), leaving r.region ungrouped and throwing
-      // "column r.region must appear in the GROUP BY clause" — which 500'd the
+      // *column* (which exists), leaving d.name ungrouped and throwing
+      // "column d.name must appear in the GROUP BY clause" — which 500'd the
       // whole dashboard once real data was present.
-      .groupBy(`COALESCE(NULLIF(r.region,''),'Unassigned')`)
+      .groupBy(`COALESCE(NULLIF(d.name,''),'Unassigned')`)
       .orderBy('count', 'DESC').getRawMany();
 
     // 3) Stats — single query, multiple FILTER aggregates. Don't
@@ -108,7 +122,7 @@ export class ReportsService {
       .addSelect(`COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM b.start_time) < 9 OR EXTRACT(HOUR FROM b.start_time) >= 18)::int`, 'non_office')
       .addSelect(`COUNT(*) FILTER (WHERE b.start_time - b.created_at <= INTERVAL '5 minutes')::int`, 'walk_in')
       .where('b.tenant_id = :t', { t: tenantId })
-      .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end });
+      .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end });
     if (filter.scope === 'mine' && filter.userId) {
       statsQB.andWhere('b.user_id = :u', { u: filter.userId });
     } else if (filter.scope === 'region' && filter.regions?.length) {
@@ -135,9 +149,13 @@ export class ReportsService {
     const nsRows = await applyScope(
       this.bookings.createQueryBuilder('b')
         .innerJoin('resources', 'r', 'r.id = b.resource_id')
+        .leftJoin('departments', 'd', 'd.id = r.department_id')
         .innerJoin('users', 'u', 'u.id = b.user_id')
         .select('u.username', 'name')
-        .addSelect(`COALESCE(NULLIF(r.region,''),'-')`, 'dept')
+        // The "Department" column must show the room's department, not its
+        // region (which had stood in for it). LEFT JOIN: department_id is null
+        // for unassigned rooms.
+        .addSelect(`COALESCE(NULLIF(d.name,''),'-')`, 'dept')
         .addSelect('r.name', 'room')
         .addSelect(`${fmtDateTime('b.start_time')}`, 'when'),
     )
@@ -149,7 +167,7 @@ export class ReportsService {
     return {
       scope: filter.scope,
       roomUtilisation: roomRows.map((r: any) => ({ name: r.name, count: +r.count })),
-      byDepartment: regionRows.map((r: any) => ({ name: r.name, count: +r.count })),
+      byDepartment: deptRows.map((r: any) => ({ name: r.name, count: +r.count })),
       stats: {
         total,
         avgMin: Number(statsRaw.avg_min ?? 0),
@@ -189,7 +207,7 @@ export class ReportsService {
           .addSelect(`COALESCE(a.target_entity,'')`, 'tgt')
           .addSelect(`COALESCE(a.target_id,'')`, 'tid')
           .where('a.tenant_id = :t', { t: tenantId })
-          .andWhere('a.created_at::date >= :s::date AND a.created_at::date <= :e::date', { s: start, e: end })
+          .andWhere(`${dateInTZ('a.created_at')} >= :s::date AND ${dateInTZ('a.created_at')} <= :e::date`, { s: start, e: end })
           .orderBy('a.created_at', 'DESC')
           .limit(1000)
           .getRawMany();
@@ -208,7 +226,7 @@ export class ReportsService {
           )
           .where('b.tenant_id = :t', { t: tenantId })
           .andWhere(`b.status <> 'Cancelled'`)
-          .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end })
+          .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end })
           .groupBy('u.username')
           .orderBy('COUNT(b.id)', 'DESC')
           .limit(1000)
@@ -234,7 +252,7 @@ export class ReportsService {
           )
           .where('b.tenant_id = :t', { t: tenantId })
           .andWhere(`b.status <> 'Cancelled'`)
-          .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end })
+          .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end })
           .groupBy('r.name').addGroupBy('r.location')
           .orderBy('COUNT(b.id)', 'DESC')
           .limit(1000)
@@ -257,7 +275,7 @@ export class ReportsService {
           .addSelect('u.username', 'username')
           .addSelect('b.status', 'status')
           .where('b.tenant_id = :t', { t: tenantId })
-          .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end })
+          .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end })
           .orderBy('b.start_time', 'DESC')
           .limit(1000)
           .getRawMany();
@@ -276,7 +294,7 @@ export class ReportsService {
           .addSelect('u.username', 'username')
           .where('b.tenant_id = :t', { t: tenantId })
           .andWhere(`b.status = 'No Show'`)
-          .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end })
+          .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end })
           .orderBy('b.start_time', 'DESC')
           .limit(1000)
           .getRawMany();
@@ -300,7 +318,7 @@ export class ReportsService {
           .addSelect('u.username', 'username')
           .addSelect('b.status', 'status')
           .where('b.tenant_id = :t', { t: tenantId })
-          .andWhere('b.start_time::date >= :s::date AND b.start_time::date <= :e::date', { s: start, e: end })
+          .andWhere(`${dateInTZ('b.start_time')} >= :s::date AND ${dateInTZ('b.start_time')} <= :e::date`, { s: start, e: end })
           .orderBy('b.start_time', 'DESC')
           .limit(1000)
           .getRawMany();

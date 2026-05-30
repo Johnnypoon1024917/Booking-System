@@ -22,6 +22,14 @@ export function Modal({ title, onClose, children, footer }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
+  // Callers pass a fresh inline onClose every render (e.g. () => setEditing(null)).
+  // Keep the latest one in a ref so the focus-trap effect can be mount-only:
+  // listing onClose as a dependency tore the effect down and re-ran it on every
+  // keystroke, and the re-run's `(first ?? dialog).focus()` yanked the cursor
+  // out of the input back to the header's close button mid-typing.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     // Remember the trigger so we can hand focus back when the modal closes.
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -33,7 +41,7 @@ export function Modal({ title, onClose, children, footer }: Props) {
     (first ?? dialog)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key === 'Escape') { onCloseRef.current(); return; }
       if (e.key !== 'Tab' || !dialog) return;
       const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE))
         .filter((el) => el.offsetParent !== null || el === document.activeElement);
@@ -54,7 +62,7 @@ export function Modal({ title, onClose, children, footer }: Props) {
       // Restore focus to the trigger element on unmount.
       previouslyFocused?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

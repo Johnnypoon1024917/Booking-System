@@ -237,7 +237,15 @@
     "bookingFailed": "Booking failed",
     "until": "Until",
     "or": "or",
-    "done": "Done"
+    "done": "Done",
+    "dateLabel": "Date",
+    "startLabel": "Start time",
+    "endLabel": "End time",
+    "busy": "Busy",
+    "roomBusyConflict": "{{room}} is already booked for this time. Pick another room or adjust the time.",
+    "recurAvailable": "{{room}} is free for {{ok}} of {{total}} dates",
+    "recurAllClear": "{{room}} is free for all {{total}} dates",
+    "recurConflictHint": "Dates marked ⚠ are already booked — change the time or room, or book anyway to skip them."
   },
   "myBookings": {
     "title": "My Bookings",
@@ -1180,6 +1188,8 @@
     "sevUrgent": "Urgent (e.g. Typhoon No.8 closure)",
     "bannerColour": "Banner colour (optional)",
     "colourPlaceholder": "(default by severity)",
+    "sevDefault": "Default by severity",
+    "useDefault": "Use default",
     "message": "Message",
     "startsAt": "Starts at",
     "endsAt": "Ends at",

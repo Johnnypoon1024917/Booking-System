@@ -237,7 +237,15 @@
     "bookingFailed": "預訂失敗",
     "until": "直到",
     "or": "或",
-    "done": "完成"
+    "done": "完成",
+    "dateLabel": "日期",
+    "startLabel": "開始時間",
+    "endLabel": "結束時間",
+    "busy": "已預約",
+    "roomBusyConflict": "{{room}} 在此時段已被預約。請選擇其他場地或調整時間。",
+    "recurAvailable": "{{room}} 在 {{total}} 個日期中有 {{ok}} 個可用",
+    "recurAllClear": "{{room}} 在全部 {{total}} 個日期均可用",
+    "recurConflictHint": "標有 ⚠ 的日期已被預約 —— 請更改時間或場地，或仍然預訂以略過這些日期。"
   },
   "myBookings": {
     "title": "我的預約",
@@ -1180,6 +1188,8 @@
     "sevUrgent": "緊急（例如八號風球停運）",
     "bannerColour": "橫幅顏色（可選）",
     "colourPlaceholder": "（按嚴重程度預設）",
+    "sevDefault": "按嚴重程度預設",
+    "useDefault": "使用預設",
     "message": "訊息",
     "startsAt": "開始時間",
     "endsAt": "結束時間",

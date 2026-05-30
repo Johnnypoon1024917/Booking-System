@@ -1879,6 +1879,14 @@ table.dt th .caret, .caret { color: #5f6875; }
 .modal section .switch input,
 .modal section label.toggle input { width: auto; min-height: 0; }
 
+/* ---- Banner colour picker: swatch + label + reset, inline ---- */
+.modal section .color-field { display: flex; align-items: center; gap: 10px; }
+.modal section .color-field input[type=color] {
+  width: 40px; min-width: 40px; height: 32px; min-height: 0; flex: none;
+  padding: 2px; cursor: pointer; border-radius: 6px;
+}
+.modal section .color-field .btn { flex: none; }
+
 /* ---- Inline chip / checkbox / toggle labels stay horizontal ---- */
 .modal section label.dep-chip,
 .modal section label.chip,
@@ -1924,3 +1932,18 @@ table.dt th .caret, .caret { color: #5f6875; }
 .modal section .bm-summary { padding: 14px; border-radius: 12px; gap: 14px; }
 .modal section .bm-summary label { width: 100%; }
 .modal section .bm-timerow { border-radius: 10px; }
+
+/* Editable date/time row: inline, compact inputs (the uniform control rule
+   above would otherwise stretch each input full-width and stack them). */
+.modal section .bm-timerow-edit { gap: 10px 14px; }
+.modal section .bm-timerow-edit .bm-when {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0;
+  font-weight: 500; color: var(--text-muted);
+}
+.modal section .bm-timerow-edit .bm-when input {
+  display: inline-block; width: auto; min-width: 0; min-height: 0;
+  padding: 7px 9px; font-size: 13px;
+}
+.modal section .bm-timerow-edit .bm-when input[type=time] { width: 96px; }
+.modal section .bm-timerow-edit .bm-when input[type=date] { width: 158px; }
+.modal section .bm-timerow-edit .bm-dash { color: var(--text-muted); }

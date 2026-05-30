@@ -1,0 +1,76 @@
+# Production compose for the Node (fsd-v2) stack.
+#
+# Usage:
+#   cd fsd-v2
+#   cp .env.example .env          # then fill in real secrets
+#   # FIRST deploy only — create the schema (no migrations ship with the app):
+#   DB_SYNCHRONIZE=true docker compose -f docker-compose.prod.yml up -d --build
+#   # ...wait for the api to be healthy, then lock the schema and redeploy:
+#   docker compose -f docker-compose.prod.yml up -d --build   # DB_SYNCHRONIZE=false (default)
+#
+# Only the frontend publishes a host port. Terminate TLS in front of it
+# (nginx/Caddy/Traefik) — nothing here speaks HTTPS.
+services:
+  postgres_db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - pg_v2_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # No host port published — Postgres stays on the internal network only.
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres_db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:?}
+      DB_PASS: ${POSTGRES_PASSWORD:?}
+      DB_NAME: ${POSTGRES_DB:?}
+      # First boot: true to create the schema; then back to false (default).
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-false}
+      JWT_SECRET: ${JWT_SECRET:?set a 32+ byte JWT_SECRET in .env}
+      JWT_TTL: ${JWT_TTL:-12h}
+      PORT: 3000
+      # Production hard-offs — never enable these on a live deploy.
+      ALLOW_DEV_LOGIN: "false"
+      ALLOW_DEV_INTEGRATION_EPHEMERAL: "false"
+      SEED_DEMO: "false"
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@fsd-mrbs.local}
+      SMTP_TLS: ${SMTP_TLS:-false}
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    # No host port published — the frontend nginx proxies to api:3000 on the
+    # internal network. To reach it directly, add "127.0.0.1:3000:3000".
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        # Empty → SPA uses same-origin /api via the bundled nginx proxy.
+        VITE_API_URL: ${VITE_API_URL:-}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  pg_v2_prod:

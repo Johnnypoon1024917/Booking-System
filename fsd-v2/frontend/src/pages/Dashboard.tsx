@@ -59,6 +59,7 @@ export function Dashboard() {
   const [location, setLocation] = useState('');
   const [stats, setStats] = useState({
     total: 0, avgMin: 0, checkInPct: 0, cancelPct: 0, noShowPct: 0, walkInPct: 0, nonOfficePct: 0,
+    outcomeTotal: 0,
   });
 
   // Admin-curated dashboard layout — empty/absent list shows everything,
@@ -126,6 +127,7 @@ export function Dashboard() {
         noShowPct: d.stats?.noShowPct || 0,
         walkInPct: d.stats?.walkInPct || 0,
         nonOfficePct: d.stats?.nonOfficePct || 0,
+        outcomeTotal: d.stats?.outcomeTotal || 0,
       });
     } catch { /* surfaced via toast elsewhere */ }
     finally { setLoading(false); }
@@ -269,10 +271,25 @@ export function Dashboard() {
             <div className="item"><Calendar size={22} color="#3498db" /><strong>{stats.total}</strong><span>{t('dashboard.bookings')}</span></div>
             <div className="item"><Clock size={22} color="#3498db" /><strong>{stats.avgMin} {t('dashboard.mins')}</strong><span>{t('dashboard.avgMeetingDuration')}</span></div>
           </div>
+          {/* Segment widths must track the data, not split into fixed thirds:
+              .fsd-seg defaults to flex:1, so without an inline flex a 2% no-show
+              still rendered a full third. Drive each width from its percentage
+              (0% outcomes drop out), and show a single grey bar when the period
+              has no terminal outcomes at all. */}
           <div className="fsd-segrow">
-            <div className="fsd-seg green"><span className="pct">{stats.checkInPct}%</span>{t('dashboard.checkIn')}</div>
-            <div className="fsd-seg orange"><span className="pct">{stats.cancelPct}%</span>{t('dashboard.cancelled')}</div>
-            <div className="fsd-seg red"><span className="pct">{stats.noShowPct}%</span>{t('dashboard.noShow')}</div>
+            {stats.outcomeTotal === 0 ? (
+              <div className="fsd-seg grey" style={{ flex: 1 }}>{t('dashboard.noBookingsPeriod')}</div>
+            ) : (
+              [
+                { cls: 'green',  pct: stats.checkInPct, label: t('dashboard.checkIn') },
+                { cls: 'orange', pct: stats.cancelPct,  label: t('dashboard.cancelled') },
+                { cls: 'red',    pct: stats.noShowPct,  label: t('dashboard.noShow') },
+              ].filter((s) => s.pct > 0).map((s) => (
+                <div key={s.cls} className={`fsd-seg ${s.cls}`} style={{ flex: s.pct, minWidth: 0 }}>
+                  <span className="pct">{s.pct}%</span>{s.label}
+                </div>
+              ))
+            )}
           </div>
         </div>
         )}

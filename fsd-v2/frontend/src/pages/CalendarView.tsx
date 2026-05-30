@@ -80,7 +80,13 @@ export function CalendarView() {
     // If a room filter is active we pre-select it; otherwise the modal shows
     // a resource picker so the user can pick from the full list (QA #12).
     const resource = roomFilter ? rooms.find((r) => r.id === roomFilter) : undefined;
-    setModal({ resource, date: isoDate(info.start), start: hhmm(info.start), end: hhmm(info.end) });
+    // Month view (dayGridMonth) hands back an all-day selection running
+    // midnight→midnight, which formats to "00:00 – 00:00" and a 0-minute
+    // booking the validator rejects. Default to a sensible 09:00–10:00 working
+    // hour (Teams-style) — the user can fine-tune it in the modal.
+    const start = info.allDay ? '09:00' : hhmm(info.start);
+    const end = info.allDay ? '10:00' : hhmm(info.end);
+    setModal({ resource, date: isoDate(info.start), start, end });
     fcRef.current?.getApi()?.unselect();
   }
 
@@ -101,6 +107,31 @@ export function CalendarView() {
       });
       reload();
     } catch (e: any) { toast.error('Reschedule failed', e.displayMessage || e.message); info.revert(); }
+  }
+
+  // Resize is a distinct gesture from a move: the start usually stays put and
+  // only the duration changes, so onDrop's "Move to <time>?" copy reads as
+  // confusing ("Move to 09:00?" when 09:00 never moved). Prompt about the new
+  // duration instead.
+  async function onResize(info: any) {
+    if (info.event.extendedProps?.subjectHidden) { info.revert(); return; }
+    const start: Date = info.event.start;
+    const end: Date = info.event.end;
+    const mins = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+    const human = mins % 60 === 0 ? `${mins / 60}h` : mins > 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+    const ok = await confirmDialog({
+      title: 'Change duration',
+      message: `Change duration of "${info.event.title}" to ${human} (${hhmm(start)}–${hhmm(end)})?`,
+      confirmText: 'Change duration',
+    });
+    if (!ok) { info.revert(); return; }
+    try {
+      await api.updateBooking(info.event.id, {
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+      });
+      reload();
+    } catch (e: any) { toast.error('Update failed', e.displayMessage || e.message); info.revert(); }
   }
 
   async function onEventClick(info: any) {
@@ -154,7 +185,7 @@ export function CalendarView() {
             events={events}
             select={onSelect}
             eventDrop={onDrop}
-            eventResize={onDrop}
+            eventResize={onResize}
             eventClick={onEventClick}
             viewDidMount={hideDecorativeIcons}
             datesSet={hideDecorativeIcons}
@@ -172,7 +203,7 @@ export function CalendarView() {
       </div>
 
       {modal && (
-        <BookingModal resource={modal.resource} resources={rooms} date={modal.date} start={modal.start} end={modal.end}
+        <BookingModal resource={modal.resource} resources={rooms} bookings={bookings} date={modal.date} start={modal.start} end={modal.end}
           onClose={() => setModal(null)} onBooked={() => { setModal(null); reload(); }} />
       )}
     </div>

@@ -42,6 +42,15 @@ function isLive(b: Broadcast) {
   return new Date(b.startsAt).getTime() <= n && n <= new Date(b.endsAt).getTime();
 }
 
+// Severity → default banner colour, kept in sync with BroadcastBanner's
+// bannerColor(). Shown in the picker when no override is set so the swatch
+// reflects what the banner will actually render.
+function sevColor(severity: string) {
+  if (severity === 'urgent') return '#dc2626';
+  if (severity === 'warning') return '#d97706';
+  return '#1e2a44';
+}
+
 export function AdminBroadcasts() {
   const { t } = useT();
   const [items, setItems] = useState<Broadcast[]>([]);
@@ -154,8 +163,16 @@ export function AdminBroadcasts() {
               </select>
             </label>
             <label>{t('adminBroadcasts.bannerColour')}
-              <input type="text" placeholder={t('adminBroadcasts.colourPlaceholder')} value={editing.color || ''}
-                     onChange={(e) => setEditing({ ...editing, color: e.target.value })} />
+              <div className="color-field">
+                <input type="color" value={editing.color || sevColor(editing.severity)}
+                       onChange={(e) => setEditing({ ...editing, color: e.target.value })} />
+                <span className="muted small">{editing.color || `${t('adminBroadcasts.sevDefault')} (${sevColor(editing.severity)})`}</span>
+                {editing.color && (
+                  <button type="button" className="btn ghost" onClick={() => setEditing({ ...editing, color: '' })}>
+                    {t('adminBroadcasts.useDefault')}
+                  </button>
+                )}
+              </div>
             </label>
           </div>
           <label>{t('adminBroadcasts.colTitle')}
