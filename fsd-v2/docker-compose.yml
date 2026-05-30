@@ -1,0 +1,67 @@
+services:
+  postgres_db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mrbs_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-mrbs_db_v2}
+    volumes:
+      - pg_v2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mrbs_admin}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Bumped to 5434 — 5432 is v1's port and 5433 is occupied on this host.
+    ports: ["5434:5432"]
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      DB_HOST: postgres_db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-mrbs_admin}
+      DB_PASS: ${POSTGRES_PASSWORD:-changeme}
+      DB_NAME: ${POSTGRES_DB:-mrbs_db_v2}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-change-me-32-bytes-min}
+      JWT_TTL: ${JWT_TTL:-12h}
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      ALLOW_DEV_LOGIN: ${ALLOW_DEV_LOGIN:-true}
+      # Set SEED_DEMO=true to generate ~500 users, 130+ resources, approval
+      # chains and bookings on first boot (idempotent). DEMO_PASSWORD sets the
+      # shared password for every demo account (default "password").
+      SEED_DEMO: ${SEED_DEMO:-false}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-password}
+      # Dev escape hatches mirroring v1: ephemeral keys for any
+      # production-grade secret that hasn't been provisioned yet so
+      # the SPA + Swagger boot without 32-byte-keygen ceremony.
+      ALLOW_DEV_INTEGRATION_EPHEMERAL: ${ALLOW_DEV_INTEGRATION_EPHEMERAL:-true}
+      # SMTP email notifications (booking confirmation / cancellation /
+      # approval outcome). Leave SMTP_HOST unset for local dev — the
+      # notification outbox falls back to a log-only sender and prints
+      # message metadata instead of delivering mail. Port 587 uses
+      # STARTTLS; 465 (or SMTP_TLS=true) uses implicit TLS.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@fsd-mrbs.local}
+      SMTP_TLS: ${SMTP_TLS:-false}
+    ports: ["3000:3000"]
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_URL: http://localhost:3000
+    ports: ["5173:5173"]
+    depends_on:
+      - api
+
+volumes:
+  pg_v2:

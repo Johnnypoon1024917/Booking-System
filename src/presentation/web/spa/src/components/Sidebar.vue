@@ -1,97 +1,49 @@
 <template>
-  <aside class="sidebar" :class="{ open }">
-    <div class="brand">
+  <aside class="sidebar fsd-side fsd-side-light" :class="{ open }">
+    <div class="fsd-brand" :class="{ 'has-image': !!brand.brand_logo_url }">
       <div class="logo">
-        <Flame :size="18" v-if="!brand.brand_logo_url" />
-        <img v-else :src="brand.brand_logo_url" alt="" style="width:100%;height:100%;border-radius:9px;object-fit:cover;" />
-      </div>
-      <div class="name">
-        {{ brand.brand_name || $t('app.title') }}
-        <small>{{ $t('app.tagline') }}</small>
+        <Flame :size="16" v-if="!brand.brand_logo_url" />
+        <img v-else :src="brand.brand_logo_url" alt="logo" class="brand-img" />
       </div>
     </div>
 
-    <div class="nav-section">
-      <div class="nav-section-label">{{ $t('sidebar.workspace') }}</div>
-      <div class="nav">
-        <router-link v-if="show('dashboard')" to="/" @click="$emit('navigate')">
-          <LayoutGrid :size="16" /> {{ $t('nav.dashboard') }}
-        </router-link>
-        <router-link v-if="show('search')" to="/search" @click="$emit('navigate')">
-          <CalendarSearch :size="16" /> {{ $t('nav.search') }}
-        </router-link>
-        <router-link v-if="show('my-bookings')" to="/my" @click="$emit('navigate')">
-          <Calendar :size="16" /> {{ $t('nav.myBookings') }}
-        </router-link>
-        <router-link v-if="show('approvals') && canApprove" to="/approvals" @click="$emit('navigate')">
-          <ShieldCheck :size="16" /> {{ $t('nav.approvals') }}
-        </router-link>
-      </div>
-    </div>
-
-    <div class="nav-section" v-if="canAdmin">
-      <div class="nav-section-label">{{ $t('sidebar.management') }}</div>
-      <div class="nav">
-        <router-link v-if="show('reports')" to="/reports" @click="$emit('navigate')">
-          <BarChart3 :size="16" /> {{ $t('nav.reports') }}
-        </router-link>
-        <router-link v-if="show('admin')" to="/admin" @click="$emit('navigate')">
-          <Sliders :size="16" /> {{ $t('nav.admin') }}
-        </router-link>
-        <router-link to="/admin/resources" @click="$emit('navigate')" class="sub">
-          <Boxes :size="14" /> {{ $t('nav.resources') }}
-        </router-link>
-        <router-link to="/admin/bookings" @click="$emit('navigate')" class="sub">
-          <Calendar :size="14" /> {{ $t('nav.bookings') }}
-        </router-link>
-        <router-link to="/admin/resource-types" @click="$emit('navigate')" class="sub">
-          <Tag :size="14" /> {{ $t('nav.resourceTypes') }}
-        </router-link>
-        <router-link to="/admin/users" @click="$emit('navigate')" class="sub">
-          <UsersIcon :size="14" /> {{ $t('nav.users') }}
-        </router-link>
-        <router-link to="/admin/departments" @click="$emit('navigate')" class="sub">
-          <Building :size="14" /> {{ $t('nav.departments') }}
-        </router-link>
-        <router-link to="/admin/holidays" @click="$emit('navigate')" class="sub">
-          <CalendarDays :size="14" /> {{ $t('nav.holidays') }}
-        </router-link>
-        <router-link to="/admin/approval-chain" @click="$emit('navigate')" class="sub">
-          <GitBranch :size="14" /> {{ $t('nav.approvalChain') }}
-        </router-link>
-        <router-link to="/admin/webhooks" @click="$emit('navigate')" class="sub">
-          <Webhook :size="14" /> {{ $t('nav.webhooks') }}
-        </router-link>
-        <router-link to="/admin/integrations" @click="$emit('navigate')" class="sub">
-          <Plug :size="14" /> {{ $t('nav.integrations') }}
-        </router-link>
-        <router-link to="/admin/permissions" @click="$emit('navigate')" class="sub">
-          <Lock :size="14" /> {{ $t('nav.permissions') }}
-        </router-link>
-        <router-link to="/admin/scim" @click="$emit('navigate')" class="sub">
-          <KeyRound :size="14" /> {{ $t('nav.scim') }}
-        </router-link>
-      </div>
-    </div>
-
-    <div class="footer">
-      <a class="nav" href="/api/docs" target="_blank" style="font-size: 12px; color: var(--text-muted); padding: 6px 12px;">
-        <BookOpen :size="14" style="margin-right: 6px;" /> {{ $t('topbar.apiDocs') }}
-      </a>
-      <div class="row" style="padding: 6px 12px; gap: 8px; color: var(--text-muted); font-size: 11px;">
-        <Cloud :size="12" /> {{ status }}
-      </div>
-    </div>
+    <nav class="fsd-nav">
+      <router-link v-if="show('dashboard')" to="/" @click="$emit('navigate')">
+        <Gauge :size="22" /><span>Dashboard</span>
+      </router-link>
+      <router-link v-if="show('calendar')" to="/calendar" @click="$emit('navigate')">
+        <Calendar :size="22" /><span>Schedule</span>
+      </router-link>
+      <router-link v-if="show('search')" to="/search" @click="$emit('navigate')">
+        <Plus :size="22" /><span>New&nbsp;Booking</span>
+      </router-link>
+      <router-link v-if="show('my-bookings')" to="/my" @click="$emit('navigate')">
+        <Menu :size="22" /><span>My&nbsp;Bookings</span>
+      </router-link>
+      <!-- Approvals: surfaced for approver roles so a pending booking can
+           actually be acted on. Without this link the Approvals page (and
+           the approve/reject buttons it hosts) was unreachable (QA #15). -->
+      <router-link v-if="canApprove" to="/approvals" @click="$emit('navigate')">
+        <CheckCircle :size="22" /><span>Approvals</span>
+      </router-link>
+      <router-link v-if="show('reports') && canAdmin" to="/reports" @click="$emit('navigate')">
+        <BarChart3 :size="22" /><span>Reports</span>
+      </router-link>
+      <!-- Broadcasts intentionally moved off the top-level sidebar.
+           Still reachable via Settings → Workspace → Broadcasts to
+           keep the top-level nav focused on the 7 client items. -->
+      <router-link v-if="show('admin') && canAdmin" to="/admin" @click="$emit('navigate')">
+        <Settings :size="22" /><span>Settings</span>
+      </router-link>
+    </nav>
   </aside>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import {
-  Flame, LayoutGrid, CalendarSearch, Calendar, ShieldCheck,
-  BarChart3, Sliders, BookOpen, Cloud,
-  Boxes, Users as UsersIcon, Building, CalendarDays,
-  GitBranch, Webhook, Plug, Lock, KeyRound, Tag
+  Flame, Gauge, Calendar, Plus, Menu,
+  BarChart3, Settings, CheckCircle
 } from 'lucide-vue-next'
 import { useTenantStore } from '../stores/tenant'
 
@@ -100,18 +52,14 @@ defineEmits(['navigate'])
 
 const tenant = useTenantStore()
 const brand = computed(() => tenant.customization || {})
-const modules = computed(() => brand.value.sidebar_modules || ['dashboard', 'search', 'my-bookings', 'approvals', 'reports', 'admin'])
-const show = (k) => modules.value.includes(k)
+const modules = computed(() => brand.value.sidebar_modules || [])
+const show = (k) => !modules.value.length || modules.value.includes(k)
 
 const role = computed(() => {
   try { return JSON.parse(atob(localStorage.getItem('fsd_jwt').split('.')[1])).role } catch { return '' }
 })
-const canAdmin   = computed(() => ['System Admin', 'Security Admin', 'Room Admin'].includes(role.value))
-const canApprove = computed(() => ['System Admin', 'Security Admin', 'Room Admin', 'Secretary'].includes(role.value))
-
-const status = 'Connected · v1.0'
+const canAdmin = computed(() => ['System Admin', 'Security Admin', 'Room Admin'].includes(role.value))
+// Approvers = admins + Secretary (SDO). They need the Approvals link to act
+// on pending bookings; general users don't see it to avoid nav clutter.
+const canApprove = computed(() => canAdmin.value || role.value === 'Secretary')
 </script>
-
-<style scoped>
-.nav a.sub { padding-left: 32px; font-size: 12.5px; }
-</style>

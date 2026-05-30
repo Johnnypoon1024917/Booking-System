@@ -50,8 +50,50 @@ func Spec() map[string]any {
 						"resource_id":  map[string]any{"type": "string", "format": "uuid"},
 						"start_time":   map[string]any{"type": "string", "format": "date-time"},
 						"end_time":     map[string]any{"type": "string", "format": "date-time"},
+						"title":        map[string]any{"type": "string", "description": "Meeting subject. Shown on calendars to roles allowed by the resource's details ACL."},
 						"meeting_url":  map[string]any{"type": "string"},
+						"is_private":   map[string]any{"type": "boolean", "description": "Outlook-style privacy flag. When true, only owner + System Admin see organiser/subject; everyone else sees 'Reserved'."},
 						"custom_data":  map[string]any{"type": "object"},
+					},
+				},
+				"FreeBusyRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"subjects", "start_time", "end_time"},
+					"properties": map[string]any{
+						"subjects": map[string]any{
+							"type":        "array",
+							"description": "Mix of resource UUIDs and user emails/usernames. Max 100.",
+							"maxItems":    100,
+							"items":       map[string]any{"type": "string"},
+						},
+						"start_time": map[string]any{"type": "string", "format": "date-time"},
+						"end_time":   map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"FreeBusyResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"subjects": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"id":   map[string]any{"type": "string"},
+									"kind": map[string]any{"type": "string", "enum": []string{"user", "resource"}},
+									"intervals": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"properties": map[string]any{
+												"start_time": map[string]any{"type": "string", "format": "date-time"},
+												"end_time":   map[string]any{"type": "string", "format": "date-time"},
+												"status":     map[string]any{"type": "string", "enum": []string{"busy", "tentative"}},
+											},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 				"Customization": map[string]any{
@@ -98,6 +140,66 @@ func Spec() map[string]any {
 					"responses": map[string]any{
 						"201": map[string]any{"description": "Created"},
 						"409": map[string]any{"description": "Conflict / approval required"},
+					},
+				},
+			},
+			"/bookings/busy": map[string]any{
+				"get": map[string]any{
+					"summary":     "Tenant-wide busy intervals (PII-free)",
+					"description": "Returns blocking time ranges across every resource the caller can see, with no organiser or subject. Use for calendar greying-out. Free/busy follows resource visibility one-for-one; details require an admin grant. See domain/booking/visibility.go for the policy.",
+					"parameters": []map[string]any{
+						{"name": "date", "in": "query", "schema": map[string]any{"type": "string", "format": "date"}, "description": "Single date to query; defaults to today + upcoming."},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Array of busy intervals",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"properties": map[string]any{
+												"resource_id": map[string]any{"type": "string", "format": "uuid"},
+												"start_time":  map[string]any{"type": "string", "format": "date-time"},
+												"end_time":    map[string]any{"type": "string", "format": "date-time"},
+												"status":      map[string]any{"type": "string", "enum": []string{"Confirmed", "Pending Approval", "Checked In"}},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/freebusy": map[string]any{
+				"post": map[string]any{
+					"summary":     "Federated free/busy probe",
+					"description": "Scheduling-assistant compatible endpoint. Same wire shape as Microsoft Graph getSchedule and Google Calendar freeBusy.query so external connectors can drop in unchanged. Accepts a mix of resource UUIDs and user emails/usernames (up to 100); returns busy/tentative intervals only, never PII. Unknown subjects are silently dropped (no enumeration via 404 timing). Caller may probe a resource only if domain/booking/visibility.ResourceVisible would return true.",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/FreeBusyRequest"},
+								"example": map[string]any{
+									"subjects":   []string{"aeca9d2b-6341-4072-8dda-2957110470db", "alice@fsd.gov.hk"},
+									"start_time": "2026-05-27T09:00:00+08:00",
+									"end_time":   "2026-05-27T18:00:00+08:00",
+								},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Busy intervals grouped per subject",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/FreeBusyResponse"},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid window or subjects list"},
 					},
 				},
 			},

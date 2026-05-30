@@ -12,11 +12,13 @@
   </div>
   <EmptyState v-else-if="!items.length" :icon="Building" :title="$t('admin.departments.empty')"/>
   <div v-else>
-    <div class="card hover dept-row" v-for="d in items" :key="d.ID" @click="open(d)">
-      <div class="badge" :style="{ background: hue(d.Name) }">{{ initials(d.Name) }}</div>
+    <div v-for="row in tree" :key="row.ID"
+         class="card hover dept-row" :style="{ marginLeft: row._depth * 28 + 'px' }" @click="open(row)">
+      <CornerDownRight v-if="row._depth" :size="14" class="muted" style="margin-right:-6px;"/>
+      <div class="badge" :style="{ background: hue(row.Name) }">{{ initials(row.Name) }}</div>
       <div class="space">
-        <div style="font-weight: 500;">{{ d.Name }}</div>
-        <small class="muted">{{ d.Code || '—' }}</small>
+        <div style="font-weight: 500;">{{ row.Name }}</div>
+        <small class="muted">{{ row.Code || '—' }}<span v-if="row._childCount"> · {{ row._childCount }} sub-unit(s)</span></small>
       </div>
       <ChevronRight :size="16" class="muted"/>
     </div>
@@ -42,8 +44,8 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { Plus, Building, ChevronRight, Save, Trash2 } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
+import { Plus, Building, ChevronRight, CornerDownRight, Save, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import Skeleton from '../components/Skeleton.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -57,6 +59,30 @@ const loading = ref(true)
 const items = ref([])
 const editing = ref(null)
 const busy = ref(false)
+
+// Flatten the parent/child graph into a depth-tagged, pre-ordered list so
+// the template can render an indented hierarchy without recursion.
+const tree = computed(() => {
+  const byParent = {}
+  for (const d of items.value) {
+    const p = d.ParentID || ''
+    ;(byParent[p] = byParent[p] || []).push(d)
+  }
+  const out = []
+  const seen = new Set()
+  const walk = (parentId, depth) => {
+    for (const d of (byParent[parentId] || []).sort((a, b) => (a.Name || '').localeCompare(b.Name || ''))) {
+      if (seen.has(d.ID)) continue
+      seen.add(d.ID)
+      out.push({ ...d, _depth: depth, _childCount: (byParent[d.ID] || []).length })
+      walk(d.ID, depth + 1)
+    }
+  }
+  walk('', 0)
+  // Orphans (parent id points to a missing/filtered dept) still surface.
+  for (const d of items.value) if (!seen.has(d.ID)) out.push({ ...d, _depth: 0, _childCount: 0 })
+  return out
+})
 
 onMounted(load)
 async function load() {

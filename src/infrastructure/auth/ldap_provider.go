@@ -28,34 +28,17 @@ func NewLDAPProvider(config LDAPConfig) *LDAPProvider {
 	}
 }
 
-// Authenticate validates user credentials against LDAP/Active Directory
-// This implementation refactors the existing ldap_service.go to use the IdentityProvider interface
+// Authenticate validates user credentials against LDAP/Active Directory.
+// This provider is a placeholder for tenants that select ProviderTypeLDAP via
+// tenant config. The real wire-level LDAP bind path lives in infrastructure/ad,
+// driven by env (LDAP_URL, LDAP_BASE_DN, ...). Until this provider is wired to
+// a configured directory it MUST refuse all credentials so a misconfigured
+// deploy fails closed rather than presenting a usable login surface.
 func (p *LDAPProvider) Authenticate(ctx context.Context, username, password string) (*user.User, error) {
-	// Simulated LDAP Bind & Search...
-	// In production, this would use go-ldap package to perform actual LDAP operations
-	// The original implementation in ldap_service.go simulated FSD Active Directory SSO
-
-	if username == "admin" && password == "admin123" {
-		return &user.User{
-			ID:       "AD-9981",
-			Username: username,
-			DN:       "CN=System Admin,OU=IT,DC=fsd,DC=gov,DC=hk",
-			Role:     user.RoleSystemAdmin,
-			IsActive: true,
-		}, nil
+	if p.config.ServerURL == "" {
+		return nil, errors.New("ldap provider not configured")
 	}
-
-	if username == "officer" && password == "pass" {
-		return &user.User{
-			ID:       "AD-1024",
-			Username: username,
-			DN:       "CN=Fire Officer,OU=Operations,DC=fsd,DC=gov,DC=hk",
-			Role:     user.RoleGeneralUser,
-			IsActive: true,
-		}, nil
-	}
-
-	return nil, errors.New("invalid active directory credentials")
+	return nil, auth.ErrNotImplemented
 }
 
 // SyncUser synchronizes user data from LDAP to the local system

@@ -122,9 +122,8 @@ func (r *holidayRepo) Save(ctx context.Context, h holiday.Holiday) error {
 	query := `
 		INSERT INTO holidays (id, tenant_id, holiday_date, description, is_blocker, created_by, created_at)
 		VALUES ($1, $2, $3, $4, $5, NULLIF($6,'')::uuid, $7)
-		ON CONFLICT (id) DO UPDATE
-		SET holiday_date = EXCLUDED.holiday_date,
-			description = EXCLUDED.description,
+		ON CONFLICT (tenant_id, holiday_date) DO UPDATE
+		SET description = EXCLUDED.description,
 			is_blocker = EXCLUDED.is_blocker
 	`
 

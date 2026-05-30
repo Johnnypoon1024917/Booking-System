@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5e7eb" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="800" height="600" fill="#f8fafc"/>
+  <rect width="800" height="600" fill="url(#grid)"/>
+
+  <!-- Outer walls -->
+  <rect x="40" y="40" width="720" height="520" fill="none" stroke="#94a3b8" stroke-width="3"/>
+
+  <!-- Rooms -->
+  <g fill="#ffffff" stroke="#cbd5e1" stroke-width="2">
+    <rect x="60" y="60" width="200" height="160"/>
+    <rect x="280" y="60" width="240" height="160"/>
+    <rect x="540" y="60" width="200" height="160"/>
+    <rect x="60" y="240" width="160" height="180"/>
+    <rect x="240" y="240" width="320" height="180"/>
+    <rect x="580" y="240" width="160" height="180"/>
+    <rect x="60" y="440" width="280" height="100"/>
+    <rect x="360" y="440" width="200" height="100"/>
+    <rect x="580" y="440" width="160" height="100"/>
+  </g>
+
+  <!-- Room labels -->
+  <g font-family="-apple-system, Segoe UI, sans-serif" font-size="13" fill="#64748b" text-anchor="middle">
+    <text x="160" y="145">Meeting Room A</text>
+    <text x="400" y="145">Boardroom</text>
+    <text x="640" y="145">Meeting Room B</text>
+    <text x="140" y="335">Phone Booth</text>
+    <text x="400" y="335">Open Office</text>
+    <text x="660" y="335">Lounge</text>
+    <text x="200" y="495">Cafeteria</text>
+    <text x="460" y="495">Kitchen</text>
+    <text x="660" y="495">Storage</text>
+  </g>
+
+  <!-- Compass -->
+  <g transform="translate(720, 540)" font-family="-apple-system, Segoe UI, sans-serif" font-size="10" fill="#94a3b8">
+    <circle r="18" fill="#ffffff" stroke="#cbd5e1"/>
+    <path d="M 0 -12 L 4 0 L 0 12 L -4 0 Z" fill="#94a3b8"/>
+    <text x="0" y="-20" text-anchor="middle">N</text>
+  </g>
+</svg>

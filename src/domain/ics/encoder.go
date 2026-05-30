@@ -51,6 +51,52 @@ type Attendee struct {
 // control. Tenants can override via TenantID below.
 const ProductID = "-//FSD MRBS Platform//Booking Engine 1.0//EN"
 
+// EncodeFeed renders a complete iCalendar document containing multiple
+// events under METHOD:PUBLISH. This is the form calendar clients expect
+// for a subscribable feed (Apple Calendar, Outlook "Subscribed
+// Calendars", Google "Add by URL"). The feed should be served at a
+// stable URL; clients re-fetch periodically.
+func EncodeFeed(name string, events []Event) []byte {
+	var b strings.Builder
+	w := writer{b: &b}
+
+	w.line("BEGIN:VCALENDAR")
+	w.line("VERSION:2.0")
+	w.line("PRODID:" + ProductID)
+	w.line("CALSCALE:GREGORIAN")
+	w.line("METHOD:PUBLISH")
+	if name != "" {
+		w.kv("X-WR-CALNAME", name)
+		w.kv("X-WR-CALDESC", "FSD MRBS bookings")
+	}
+	for _, ev := range events {
+		if ev.UID == "" {
+			ev.UID = fingerprint(ev)
+		}
+		w.line("BEGIN:VEVENT")
+		w.line("UID:" + ev.UID)
+		w.line("SEQUENCE:" + fmt.Sprintf("%d", ev.Sequence))
+		w.line("DTSTAMP:" + utc(time.Now()))
+		w.line("DTSTART:" + utc(ev.Start))
+		w.line("DTEND:" + utc(ev.End))
+		w.kv("SUMMARY", ev.Summary)
+		if ev.Description != "" {
+			w.kv("DESCRIPTION", ev.Description)
+		}
+		if ev.Location != "" {
+			w.kv("LOCATION", ev.Location)
+		}
+		if ev.URL != "" {
+			w.kv("URL", ev.URL)
+		}
+		w.line("STATUS:CONFIRMED")
+		w.line("TRANSP:OPAQUE")
+		w.line("END:VEVENT")
+	}
+	w.line("END:VCALENDAR")
+	return []byte(b.String())
+}
+
 // Encode renders a complete iCalendar document. The returned bytes are
 // CRLF-terminated as required by RFC 5545 §3.1.
 func Encode(ev Event) []byte {

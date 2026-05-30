@@ -20,12 +20,13 @@
     </div>
 
     <div class="card" style="padding: 0; overflow-x: auto;">
-      <table class="matrix">
+      <table class="matrix" :aria-label="$t('permissions.title')">
+        <caption class="sr-only">{{ $t('permissions.subtitle') }}</caption>
         <thead>
           <tr>
-            <th class="left">{{ $t('permissions.permission') }}</th>
-            <th v-for="r in roles" :key="r" class="role">
-              <Avatar :name="r"/>
+            <th class="left" scope="col">{{ $t('permissions.permission') }}</th>
+            <th v-for="r in roles" :key="r" class="role" scope="col" :aria-label="r">
+              <Avatar :name="r" aria-hidden="true"/>
               <span>{{ r }}</span>
             </th>
           </tr>
@@ -33,26 +34,34 @@
         <tbody>
           <template v-for="g in mergedCatalog" :key="g.title">
             <tr class="group-row">
-              <td colspan="99">
+              <th colspan="99" scope="colgroup">
                 <span class="group-title">{{ g.title }}</span>
                 <span v-if="g.custom" class="tag info" style="margin-left: 8px;">Custom</span>
-                <button v-if="g.custom" class="icon-btn" style="float: right;"
-                        @click="deleteGroup(g)" title="Delete custom group">
-                  <Trash2 :size="13"/>
+                <button v-if="g.custom" class="icon-btn" style="float: right;" type="button"
+                        :aria-label="`Delete custom group ${g.title}`"
+                        @click="deleteGroup(g)">
+                  <Trash2 :size="13" aria-hidden="true"/>
                 </button>
-              </td>
+              </th>
             </tr>
             <tr v-for="p in g.permissions" :key="p.key">
-              <td class="left">
+              <th class="left" scope="row">
                 <code class="perm-key">{{ p.key }}</code>
                 <small class="muted block">{{ p.label }}</small>
-              </td>
+              </th>
               <td v-for="r in roles" :key="r" class="check">
-                <input type="checkbox" :checked="has(r, p.key)" @change="toggle(r, p.key)"/>
+                <input
+                  type="checkbox"
+                  :checked="has(r, p.key)"
+                  :aria-label="`${r}: ${p.label || p.key}`"
+                  @change="toggle(r, p.key)"
+                />
               </td>
               <td v-if="p.custom" class="check" style="width: 32px;">
-                <button class="icon-btn" @click="deletePermission(p)" title="Delete custom permission">
-                  <Trash2 :size="12"/>
+                <button class="icon-btn" type="button"
+                        :aria-label="`Delete custom permission ${p.key}`"
+                        @click="deletePermission(p)">
+                  <Trash2 :size="12" aria-hidden="true"/>
                 </button>
               </td>
             </tr>
@@ -317,6 +326,7 @@ const labels = {
   'resource.update':      'Edit resource configuration',
   'resource.delete':      'Deactivate resources',
   'resource.split':       'Split a resource into sub-resources',
+  'service.manage':       'Manage catering & services catalog',
   'user.create':          'Add users',
   'user.update':          'Edit user attributes',
   'user.deactivate':      'Deactivate users',

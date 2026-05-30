@@ -51,30 +51,9 @@ CREATE TABLE IF NOT EXISTS holidays (
 );
 
 -- ============================================================================
--- 4. INITIAL SEED DATA (For Immediate Testing)
+-- 4. INITIAL SEED DATA
 -- ============================================================================
--- Seed a standard meeting room
-INSERT INTO resources (id, name, asset_type, region, location, capacity, metadata, is_restricted) 
-VALUES (
-    uuid_generate_v4(), 
-    'Command Center Alpha', 
-    'Room', 
-    'Hong Kong', 
-    'FTLife Tower 18/F', 
-    20, 
-    '{"equipment": ["Video Conferencing", "Projector"]}', 
-    FALSE
-);
-
--- Seed a restricted Top Management schedule
-INSERT INTO resources (id, name, asset_type, region, location, capacity, metadata, is_restricted) 
-VALUES (
-    uuid_generate_v4(), 
-    'Director General Schedule', 
-    'Top Management', 
-    'Hong Kong', 
-    'HQ', 
-    1, 
-    '{}', 
-    TRUE
-);
+-- Intentionally empty: no sample rooms or bookings are seeded. Accounts
+-- (System Admin + General User) are seeded by migration
+-- 003_seed_default_tenant.up.sql; the resource catalog is populated by the
+-- admin through the Tenant Studio.

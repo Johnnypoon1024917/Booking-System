@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"strings"
 
+	"fsd-mrbs/src/domain/audit"
+	"fsd-mrbs/src/infrastructure/auditlog"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -47,7 +50,7 @@ func (h *AdminWebhooksHandler) Dispatch(w http.ResponseWriter, r *http.Request) 
 	case r.Method == http.MethodPut || r.Method == http.MethodPatch:
 		h.update(w, r, path, tenantID.String())
 	case r.Method == http.MethodDelete:
-		h.delete(w, r, path)
+		h.delete(w, r, path, tenantID.String())
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -91,6 +94,10 @@ func (h *AdminWebhooksHandler) create(w http.ResponseWriter, r *http.Request, te
 		http.Error(w, "target_url and events required", http.StatusBadRequest)
 		return
 	}
+	if err := ValidateWebhookTargetURL(p.TargetURL); err != nil {
+		http.Error(w, "target_url rejected: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if len(p.Events) == 0 {
 		p.Events = []string{
 			"booking.created", "booking.updated", "booking.cancelled",
@@ -103,9 +110,17 @@ func (h *AdminWebhooksHandler) create(w http.ResponseWriter, r *http.Request, te
 INSERT INTO webhook_subscriptions (id, tenant_id, target_url, secret, events, is_active)
 VALUES ($1, $2, $3, $4, $5, TRUE)`, id, tenantID, p.TargetURL, secret, p.Events)
 	if err != nil {
+		auditlog.Failure(r, audit.ActionWebhookCreated, "webhook", id, err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	auditlog.Record(r, auditlog.Event{
+		Action:       audit.ActionWebhookCreated,
+		Severity:     audit.SeverityWarning,
+		TargetEntity: "webhook",
+		TargetID:     id,
+		Next:         map[string]interface{}{"target_url": p.TargetURL, "events": p.Events},
+	})
 	// Return the secret EXACTLY ONCE — admin must store it.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         id,
@@ -127,6 +142,12 @@ func (h *AdminWebhooksHandler) update(w http.ResponseWriter, r *http.Request, id
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
+	if p.TargetURL != nil {
+		if err := ValidateWebhookTargetURL(*p.TargetURL); err != nil {
+			http.Error(w, "target_url rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	_, err := h.pool.Exec(r.Context(), `
 UPDATE webhook_subscriptions
    SET target_url = COALESCE($3, target_url),
@@ -141,12 +162,23 @@ UPDATE webhook_subscriptions
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminWebhooksHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
-	_, err := h.pool.Exec(r.Context(), `DELETE FROM webhook_subscriptions WHERE id = $1`, id)
+func (h *AdminWebhooksHandler) delete(w http.ResponseWriter, r *http.Request, id, tenantID string) {
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM webhook_subscriptions WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if tag.RowsAffected() == 0 {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	auditlog.Record(r, auditlog.Event{
+		Action:       audit.ActionWebhookDeleted,
+		Severity:     audit.SeverityWarning,
+		TargetEntity: "webhook",
+		TargetID:     id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -155,7 +187,7 @@ func (h *AdminWebhooksHandler) deliveries(w http.ResponseWriter, r *http.Request
 SELECT d.id, d.subscription_id, d.event, d.attempt_count, d.last_status, COALESCE(d.last_error,''),
        d.delivered_at, d.created_at, s.target_url
 FROM webhook_deliveries d
-JOIN webhook_subscriptions s ON s.id = d.subscription_id
+JOIN webhook_subscriptions s ON s.id = d.subscription_id AND s.tenant_id = d.tenant_id
 WHERE d.tenant_id = $1
 ORDER BY d.created_at DESC LIMIT 100`, tenantID)
 	if err != nil {

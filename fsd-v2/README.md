@@ -1,0 +1,105 @@
+# FSD MRBS — v2 (NestJS + React)
+
+Client-recommended stack rewrite of the Go + Vue platform that ships under
+`../src`. Both stacks are kept side-by-side so a phased cut-over can run
+in parallel.
+
+## Stack
+
+| Layer            | Choice                              |
+|------------------|-------------------------------------|
+| Backend          | NestJS 10 (TypeScript)              |
+| API style        | REST                                |
+| API docs         | Swagger / OpenAPI (auto-generated)  |
+| ORM              | TypeORM 0.3                         |
+| Database         | PostgreSQL 16 + Row-Level Security  |
+| Auth             | JWT (HS256) — same shape as v1      |
+| Frontend         | React 18 + Vite 5 (TypeScript)      |
+| State            | TanStack Query + Zustand            |
+| Calendar         | FullCalendar 6                      |
+| Batch / Scheduler| NestJS `@nestjs/schedule` cron jobs |
+| Container        | Docker compose                      |
+
+## What's in this version
+
+Spine of the platform — enough to log in, browse rooms, make and manage
+bookings, and administer users / departments / tenant settings.
+
+* **Backend modules** — `auth`, `tenants`, `users`, `departments`,
+  `resources`, `bookings`, `customization`, `audit`, `dashboard`.
+* **RLS** is engaged on every request via the `RlsInterceptor` (sets
+  `app.current_tenant_id` for the request transaction, identical
+  policy semantics to v1).
+* **Swagger UI** at `/api/docs`.
+* **Frontend pages** — Login, Dashboard, Calendar (Day/Week/Month),
+  Search, My Bookings, Admin → Users (with department M2M), Admin →
+  Resources, Tenant Studio (branding + layout).
+
+## What's deferred from v1
+
+These exist in the Go codebase but are deliberately out of scope for
+the initial port. Each is a multi-day effort and is best done in
+follow-up sprints once the spine is proven.
+
+* MFA / TOTP, WebAuthn passkeys, SAML, OAuth2, LDAP providers
+* Recurring bookings & exception handling
+* Approval chains (multi-step approver routing)
+* Microsoft Graph, Bot Framework, Outlook add-in integrations
+* Push notifications (VAPID), ICS feed encoder
+* Broadcast banner (news ticker) — UI is also a future port
+* Reports CSV/XLSX export
+* HK Observatory weather + GovHK holidays sync
+* Audit-chain tamper-evident SHA-256 (basic audit_log table is in;
+  hash-chain is deferred)
+* SCIM provisioning
+
+The shapes of every deferred module mirror v1 so porting them is
+mostly mechanical translation.
+
+## Quick start
+
+```bash
+cd fsd-v2
+docker compose up -d --build
+# Backend:  http://localhost:3000        Swagger: http://localhost:3000/api/docs
+# Frontend: http://localhost:5173
+# Login:    admin / admin (seeded — change immediately in production)
+```
+
+## Layout
+
+```
+fsd-v2/
+├── backend/                  NestJS API + scheduler
+│   ├── src/
+│   │   ├── common/           Interceptors, guards, decorators, errors
+│   │   ├── config/           Env, TypeORM, JWT config
+│   │   ├── modules/
+│   │   │   ├── auth/
+│   │   │   ├── tenants/
+│   │   │   ├── users/
+│   │   │   ├── departments/
+│   │   │   ├── resources/
+│   │   │   ├── bookings/
+│   │   │   ├── customization/
+│   │   │   ├── audit/
+│   │   │   └── dashboard/
+│   │   ├── app.module.ts
+│   │   └── main.ts
+│   ├── package.json
+│   └── Dockerfile
+├── frontend/                 React + Vite SPA
+│   ├── src/
+│   │   ├── api/              Generated client + axios wrapper
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── pages/
+│   │   ├── styles/
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── Dockerfile
+├── docker-compose.yml
+└── README.md
+```

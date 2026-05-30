@@ -21,7 +21,8 @@
               :title="$t('approvals.empty')"
               :description="$t('approvals.emptyDesc')"/>
   <div v-else>
-    <article v-for="b in items" :key="b.ID" class="card approval-card mb">
+    <article v-for="b in sortedItems" :key="b.ID" class="card approval-card mb"
+             :class="{ overdue: isOverdue(b) }">
       <div class="thumb">
         <Clock :size="18" color="white"/>
       </div>
@@ -40,16 +41,9 @@
           <span><User :size="11"/> {{ requester(b) }}</span>
         </div>
 
-        <!-- Chain progress strip -->
-        <div v-if="(chains[b.ID] || []).length > 0" class="chain-strip mt">
-          <div v-for="(s, i) in chains[b.ID]" :key="s.ID" class="chain-step" :class="s.Status">
-            <div class="dot">
-              <Check v-if="s.Status === 'approved'" :size="10"/>
-              <X v-else-if="s.Status === 'rejected'" :size="10"/>
-              <span v-else>{{ i + 1 }}</span>
-            </div>
-            <span class="label">{{ s.LevelName }}</span>
-          </div>
+        <!-- Chain progress timeline -->
+        <div v-if="(chains[b.ID] || []).length > 0" class="mt">
+          <ApprovalTimeline :steps="chains[b.ID]" :submitted-at="b.CreatedAt" />
         </div>
 
         <div v-if="b.MeetingURL" class="muted text-sm mt-sm">
@@ -57,6 +51,9 @@
         </div>
       </div>
       <div class="row gap-sm" style="flex-shrink: 0;">
+        <button class="btn ghost" :disabled="busyId === b.ID" @click="onDelegate(b)" title="Delegate to another approver">
+          <UserCog :size="13"/> Delegate
+        </button>
         <button class="btn ghost danger" :disabled="busyId === b.ID" @click="onReject(b)">
           <X :size="13"/> {{ $t('approvals.reject') }}
         </button>
@@ -66,6 +63,32 @@
       </div>
     </article>
   </div>
+
+  <Modal v-if="delegating" @close="delegating = null" title="Delegate approval">
+    <p class="muted text-sm mb">
+      Reassign the current pending step to another approver. This is recorded
+      on the approval timeline (it is not a silent reassignment).
+    </p>
+    <label class="field">
+      <span>Delegate to</span>
+      <select v-model="delegateTo">
+        <option value="" disabled>Select an approver…</option>
+        <option v-for="u in users" :key="u.ID" :value="u.ID">
+          {{ u.Username || u.ID }}<span v-if="u.Role"> — {{ u.Role }}</span>
+        </option>
+      </select>
+    </label>
+    <label class="field mt">
+      <span>Reason (optional)</span>
+      <textarea rows="2" v-model="delegateReason" placeholder="e.g. On leave — please cover"></textarea>
+    </label>
+    <template #footer>
+      <button class="btn ghost" @click="delegating = null">{{ $t('common.cancel') }}</button>
+      <button class="btn" :disabled="!delegateTo || busy" @click="confirmDelegate">
+        <UserCog :size="13"/> Delegate
+      </button>
+    </template>
+  </Modal>
 
   <Modal v-if="rejecting" @close="rejecting = null" :title="$t('approvals.rejectTitle')">
     <p class="muted text-sm mb">{{ $t('approvals.rejectHelp') }}</p>
@@ -86,11 +109,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  RefreshCcw, ShieldCheck, Clock, CalendarDays, User, Check, X, Link, GitBranch
+  RefreshCcw, ShieldCheck, Clock, CalendarDays, User, Check, X, Link, GitBranch, UserCog
 } from 'lucide-vue-next'
 import Skeleton from '../components/Skeleton.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Modal from '../components/Modal.vue'
+import ApprovalTimeline from '../components/ApprovalTimeline.vue'
 import { api } from '../api'
 import { useToastStore } from '../stores/toast'
 
@@ -106,6 +130,27 @@ const busy = ref(false)
 const busyId = ref(null)
 const rejecting = ref(null)
 const rejectReason = ref('')
+const delegating = ref(null)
+const delegateTo = ref('')
+const delegateReason = ref('')
+
+// Earliest pending-step due time for a booking (ms epoch), or Infinity.
+function dueFor(b) {
+  const steps = chains.value[b.ID] || []
+  for (const s of steps) {
+    if ((s.Status || '').toLowerCase() === 'pending' && (s.DueAt || s.due_at)) {
+      return new Date(s.DueAt || s.due_at).getTime()
+    }
+  }
+  return Infinity
+}
+function isOverdue(b) {
+  const d = dueFor(b)
+  return d !== Infinity && d < Date.now()
+}
+// SLA-priority order: closest-to-breach (and overdue) first.
+const sortedItems = computed(() =>
+  [...items.value].sort((a, b) => dueFor(a) - dueFor(b)))
 
 const resourceMap = computed(() => Object.fromEntries(resources.value.map(r => [r.ID, r])))
 const userMap = computed(() => Object.fromEntries(users.value.map(u => [u.ID, u])))
@@ -177,6 +222,20 @@ async function onApprove(b) {
   finally { busyId.value = null }
 }
 
+function onDelegate(b) { delegating.value = b; delegateTo.value = ''; delegateReason.value = '' }
+
+async function confirmDelegate() {
+  busy.value = true
+  busyId.value = delegating.value.ID
+  try {
+    await api.delegateBooking(delegating.value.ID, delegateTo.value, delegateReason.value)
+    toasts.success('Delegated', 'The pending step was reassigned.')
+    delegating.value = null
+    await load()
+  } catch (e) { toasts.error('Delegate failed', e.message) }
+  finally { busy.value = false; busyId.value = null }
+}
+
 function onReject(b) { rejecting.value = b; rejectReason.value = '' }
 
 async function confirmReject() {
@@ -197,6 +256,10 @@ async function confirmReject() {
 .approval-card {
   display: grid; grid-template-columns: 44px 1fr auto;
   gap: 14px; align-items: center;
+}
+.approval-card.overdue {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 .thumb {
   width: 44px; height: 44px; border-radius: 12px;

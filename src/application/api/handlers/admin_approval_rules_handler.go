@@ -51,7 +51,10 @@ func (h *AdminApprovalRulesHandler) Dispatch(w http.ResponseWriter, r *http.Requ
 		if ru.Priority == 0 {
 			ru.Priority = 100
 		}
-		ru.IsActive = true
+		// Respect the IsActive value the admin sent — drafting a rule
+		// (inactive) before activating it is a normal workflow. The
+		// previous code always forced active = true and silently
+		// overrode the checkbox.
 		if err := h.repo.Save(r.Context(), ru); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

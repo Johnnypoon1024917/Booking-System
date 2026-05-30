@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -26,11 +27,17 @@ type Service interface {
 }
 
 // NewLDAPService returns a directory-backed authenticator when LDAP_URL is
-// set, falling back to the dev simulator otherwise. The legacy pointer
-// signature is preserved via the LDAPService type alias below so existing
-// call sites compile unchanged.
+// set. When LDAP_URL is empty, the dev simulator is only returned if
+// ALLOW_DEV_LOGIN=true is explicitly set; otherwise a closed-mode service is
+// returned that refuses all logins (fail-closed). This prevents the demo
+// backdoor accounts from ever being reachable in production by accident.
+// The legacy pointer signature is preserved via the LDAPService type alias
+// below so existing call sites compile unchanged.
 func NewLDAPService(_ string) Service {
 	if url := os.Getenv("LDAP_URL"); url != "" {
+		if envBool("LDAP_INSECURE_SKIP_VERIFY", false) {
+			log.Println("WARNING: LDAP_INSECURE_SKIP_VERIFY=true disables TLS verification — not acceptable for production.")
+		}
 		return &realLDAP{
 			url:          url,
 			baseDN:       os.Getenv("LDAP_BASE_DN"),
@@ -44,7 +51,20 @@ func NewLDAPService(_ string) Service {
 			dialTimeout:  envDuration("LDAP_DIAL_TIMEOUT", 5*time.Second),
 		}
 	}
-	return &simulator{}
+	if envBool("ALLOW_DEV_LOGIN", false) {
+		log.Println("WARNING: ALLOW_DEV_LOGIN=true — built-in demo accounts are active. DO NOT USE IN PRODUCTION.")
+		return &simulator{}
+	}
+	log.Println("LDAP_URL is empty and ALLOW_DEV_LOGIN is not set; authentication is disabled (fail-closed).")
+	return &closedService{}
+}
+
+// closedService refuses every authentication attempt. It is used when no LDAP
+// backend is configured and ALLOW_DEV_LOGIN is not explicitly set.
+type closedService struct{}
+
+func (closedService) Authenticate(_ context.Context, _, _ string) (*user.User, error) {
+	return nil, errors.New("authentication backend not configured")
 }
 
 // LDAPService is a backwards-compat alias for the previous concrete type.

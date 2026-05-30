@@ -25,6 +25,21 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,woff2}'],
+        // cleanupOutdatedCaches removes precache entries from previous
+        // builds so the new SW doesn't try to refetch hashed asset
+        // filenames that no longer exist on the server — the source of
+        // the "Failed to fetch" Workbox PrecacheStrategy errors after
+        // every redeploy. skipWaiting + clientsClaim make the new SW
+        // take over immediately instead of sitting in "waiting" while
+        // the old one keeps serving 404s for the previous build's
+        // chunks.
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
+        // Treat a missing precached chunk as a non-fatal recoverable
+        // condition (fetch from network) rather than a hard error that
+        // bubbles up to the page console.
+        navigateFallback: '/app/index.html',
         runtimeCaching: [
           {
             urlPattern: /^\/api\/v1\/(bookings\/search|admin\/customization)/,

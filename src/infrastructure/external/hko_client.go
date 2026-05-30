@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"fsd-mrbs/src/infrastructure/safehttp"
 )
 
 // HKO publishes a JSON warning summary at this stable endpoint.
@@ -25,8 +27,8 @@ const hkoWarningURL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.p
 // "TC10", "WRAINB" (Black Rainstorm). We collapse to a shape useful for
 // the exception workflow.
 type WeatherSignal struct {
-	Code        string    // "T1" / "T3" / "T8" / "T10" / "BLACK_RAIN" / "RED_RAIN" / "AMBER_RAIN"
-	Severity    int       // 1 (mild) … 10 (extreme)
+	Code        string // "T1" / "T3" / "T8" / "T10" / "BLACK_RAIN" / "RED_RAIN" / "AMBER_RAIN"
+	Severity    int    // 1 (mild) … 10 (extreme)
 	Description string
 	IssuedAt    time.Time
 }
@@ -40,7 +42,7 @@ func NewHKOClient(timeout time.Duration) *HKOClient {
 	if timeout == 0 {
 		timeout = 8 * time.Second
 	}
-	return &HKOClient{http: &http.Client{Timeout: timeout}}
+	return &HKOClient{http: safehttp.NewExternalClient(timeout)}
 }
 
 // CurrentSignals fetches the active weather signals. The HKO response
@@ -121,4 +123,67 @@ func classify(code, name string) (WeatherSignal, bool) {
 // penalties should be auto-suspended (T8+, Black Rain).
 func (s WeatherSignal) SuspendsBookings() bool {
 	return s.Severity >= 8
+}
+
+// hkoCurrentURL is the HKO "current weather report" feed (temperature etc).
+const hkoCurrentURL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=en"
+
+// WeatherReport is the small projection the UI/scheduler need: the current
+// representative temperature plus any active warning signals.
+type WeatherReport struct {
+	TempC     float64         `json:"temp_c"`
+	Signals   []WeatherSignal `json:"signals"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// CurrentWeather fetches the current temperature (max across reporting
+// stations — the hottest reading is the safety-relevant one) plus the
+// active warning signals. Best-effort; partial failures degrade to zero.
+func (c *HKOClient) CurrentWeather(ctx context.Context) (WeatherReport, error) {
+	out := WeatherReport{Signals: []WeatherSignal{}}
+
+	if sigs, err := c.CurrentSignals(ctx); err == nil {
+		out.Signals = sigs
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hkoCurrentURL, nil)
+	if err != nil {
+		return out, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return out, fmt.Errorf("hko: unexpected status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return out, err
+	}
+	var raw struct {
+		Temperature struct {
+			Data []struct {
+				Place string  `json:"place"`
+				Value float64 `json:"value"`
+				Unit  string  `json:"unit"`
+			} `json:"data"`
+			RecordTime string `json:"recordTime"`
+		} `json:"temperature"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return out, err
+	}
+	for _, d := range raw.Temperature.Data {
+		if d.Value > out.TempC {
+			out.TempC = d.Value
+		}
+	}
+	if t, err := time.Parse(time.RFC3339, raw.Temperature.RecordTime); err == nil {
+		out.UpdatedAt = t
+	} else {
+		out.UpdatedAt = time.Now()
+	}
+	return out, nil
 }

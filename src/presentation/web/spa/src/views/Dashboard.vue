@@ -1,301 +1,395 @@
 <template>
-  <div class="page-header mb-lg">
-    <div>
-      <h1>{{ greeting }}, {{ firstName }}</h1>
-      <p class="muted text-md mt-sm">{{ $t('dashboard.subtitle') }}</p>
-    </div>
-    <div class="row gap-sm">
-      <span class="tag info"><Cloud :size="12" /> {{ weather.label }} · {{ weather.temp }}°</span>
-      <span class="tag" v-if="hkoSignal"><AlertTriangle :size="12" /> {{ hkoSignal }}</span>
-    </div>
-  </div>
-
-  <!-- Broadcast banner (shows only when broadcast is active) -->
-  <div v-if="broadcast" class="banner danger" role="alert">
-    <AlertTriangle :size="16" />
-    <div class="space"><b>{{ broadcast.title }}</b> · <span>{{ broadcast.body }}</span></div>
-    <button class="icon-btn" @click="broadcast = null" aria-label="dismiss"><X :size="14" /></button>
-  </div>
-
-  <!-- KPI strip -->
-  <div class="kpi-grid mb-lg">
-    <div class="kpi" v-if="hasWidget('kpi-active')">
-      <small>{{ $t('dashboard.kpi.active') }}</small>
-      <h3 v-if="!loading">{{ kpis.active }}</h3>
-      <Skeleton v-else height="30px" width="60px" />
-    </div>
-    <div class="kpi success" v-if="hasWidget('kpi-utilisation')">
-      <small>{{ $t('dashboard.kpi.utilisation') }}</small>
-      <h3 v-if="!loading">{{ kpis.utilisation === null ? '—' : kpis.utilisation + '%' }}</h3>
-      <Skeleton v-else height="30px" width="80px" />
-    </div>
-    <div class="kpi warning" v-if="hasWidget('kpi-pending')">
-      <small>{{ $t('dashboard.kpi.pending') }}</small>
-      <h3 v-if="!loading">{{ kpis.pending }}</h3>
-      <Skeleton v-else height="30px" width="60px" />
-    </div>
-    <div class="kpi danger" v-if="hasWidget('kpi-noshow')">
-      <small>{{ $t('dashboard.kpi.noShow') }}</small>
-      <h3 v-if="!loading">{{ kpis.noShow }}</h3>
-      <Skeleton v-else height="30px" width="60px" />
-    </div>
-  </div>
-
-  <div class="dashboard-grid">
-    <!-- Calendar -->
-    <section class="card" style="grid-area: calendar;">
-      <div class="card-title">
-        <h3>{{ $t('dashboard.thisWeek') }}</h3>
-        <button class="btn ghost sm" @click="$router.push('/search')">
-          <Plus :size="14" /> {{ $t('dashboard.newBooking') }}
-        </button>
+  <div>
+    <div class="row mb" style="justify-content: space-between; align-items: center;">
+      <div>
+        <h1 class="fsd-page-title" style="margin-bottom:4px;">
+          {{ scopeTitle }}
+        </h1>
+        <p class="muted text-sm" style="margin:0;">{{ scopeSubtitle }}</p>
       </div>
-      <FullCalendar :options="calendarOptions" />
-    </section>
-
-    <!-- Today's agenda -->
-    <section class="card" style="grid-area: agenda;">
-      <div class="card-title">
-        <h3>{{ $t('dashboard.todayAgenda') }}</h3>
-        <span class="tag">{{ today }}</span>
+      <div class="row gap-sm" style="align-items:center;">
+        <div v-if="weather" class="wx-chip" :title="'HK Observatory · updated ' + wxUpdated">
+          <CloudSun :size="15" />
+          <b>{{ weather.temp_c }}°C</b>
+          <span v-for="s in (weather.signals || [])" :key="s.Code || s.code"
+                class="wx-sig" :class="{ hot: (s.Severity || s.severity) >= 8 }">
+            {{ s.Code || s.code }}
+          </span>
+        </div>
+        <select v-model="range" class="range-sel" @change="load">
+          <option value="week">This Week</option>
+          <option value="month">This Month</option>
+          <option value="quarter">This Quarter</option>
+        </select>
       </div>
-      <div v-if="loading">
-        <div v-for="n in 3" :key="n" class="row mb gap" style="padding: 8px 0;">
-          <Skeleton height="40px" width="40px" radius="10px" />
-          <div class="space col gap-sm"><Skeleton width="70%" /><Skeleton width="40%" height="11px" /></div>
+    </div>
+
+    <div v-if="broadcast" class="fsd-alert danger" role="alert"
+         style="display:flex; align-items:center; gap:12px;">
+      <AlertTriangle :size="16" />
+      <div class="space"><b>{{ broadcast.title }}</b> · <span>{{ broadcast.body }}</span></div>
+      <button class="icon-btn" @click="broadcast = null" aria-label="dismiss"><X :size="14" /></button>
+    </div>
+
+    <!-- Room Utilization bar chart -->
+    <div v-if="hasWidget('room-utilisation')" class="fsd-card" ref="chartHostRef">
+      <div class="fsd-card-title">Room Utilization <span class="picker">{{ rangeLabel }}</span></div>
+      <div v-if="loading"><Skeleton height="240px" /></div>
+      <EmptyState v-else-if="util.length === 0" :icon="BarChart3" title="No bookings in this period" />
+      <!-- chart-version helps operators verify a rebuild actually
+           landed; check the rendered DOM for data-chart-ver="3" after
+           docker compose build --no-cache mrbs_api. -->
+      <svg v-else class="barchart" data-chart-ver="3"
+           :viewBox="`0 0 ${chartW} 260`" preserveAspectRatio="xMinYMin meet" role="img"
+           :aria-label="`Room utilisation — ${util.length} resource(s), max ${yMax} bookings`">
+        <!-- yTicks is computed to avoid repeated integer labels when yMax is small.
+             For yMax=1 we draw [0,1]; for yMax<=5 we draw every integer;
+             above that we step in evenly-spaced chunks. -->
+        <line v-for="t in yTicks" :key="'g'+t.value" :x1="0" :x2="chartW"
+              :y1="200 - t.y" :y2="200 - t.y" class="grid" />
+        <text v-for="t in yTicks" :key="'l'+t.value" x="0" :y="204 - t.y" class="axis">{{ t.value }}</text>
+        <g v-for="(b, i) in util" :key="b.name">
+          <!-- Bar — uses dynamicBarX/dynamicBarWidth so single-bar
+               charts centre the bar instead of stranding it at the
+               left edge. -->
+          <rect :x="dynamicBarX(i)" :y="200 - barH(b.count)"
+                :width="dynamicBarWidth" :height="barH(b.count)" class="bar"
+                rx="3" ry="3">
+            <title>{{ b.name }} — {{ b.count }} booking(s)</title>
+          </rect>
+          <!-- Count label INSIDE the bar (above its top edge) so the
+               actual value is visible even if the Y-axis somehow scales
+               wrong. Falls back to ABOVE the bar for tiny bars where
+               the label wouldn't fit inside. -->
+          <text
+            :x="dynamicBarX(i) + dynamicBarWidth / 2"
+            :y="barH(b.count) >= 24 ? (200 - barH(b.count) + 14) : (200 - barH(b.count) - 6)"
+            :class="barH(b.count) >= 24 ? 'bar-value-inside' : 'bar-value-above'">
+            {{ b.count }}
+          </text>
+          <text :x="dynamicBarX(i) + dynamicBarWidth / 2" y="218"
+                class="xlab" :transform="`rotate(35 ${dynamicBarX(i) + dynamicBarWidth / 2} 218)`">{{ b.short }}</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="dash-2col">
+      <!-- Utilization by Departments (pie) -->
+      <div v-if="hasWidget('usage-by-dept')" class="fsd-card">
+        <div class="fsd-card-title">Utilization by Departments <span class="picker">{{ rangeLabel }}</span></div>
+        <div v-if="loading"><Skeleton height="180px" /></div>
+        <EmptyState v-else-if="byDept.length === 0" :icon="PieChart" title="No department data" />
+        <div v-else class="pie-wrap">
+          <svg viewBox="0 0 120 120" class="pie">
+            <circle v-if="byDept.length === 1" cx="60" cy="60" r="54" :fill="palette[0]" />
+            <path v-for="(s, i) in pieSlices" :key="i" :d="s.d" :fill="palette[i % palette.length]" />
+          </svg>
+          <ul class="legend">
+            <li v-for="(d, i) in byDept" :key="d.name">
+              <span class="sw" :style="{ background: palette[i % palette.length] }" />
+              <span class="space">{{ d.name }}</span>
+              <b>{{ d.count }}</b>
+            </li>
+          </ul>
         </div>
       </div>
-      <EmptyState v-else-if="agenda.length === 0" :icon="CalendarOff" :title="$t('dashboard.noAgenda')">
-        <template #actions>
-          <button class="btn sm" @click="$router.push('/search')">{{ $t('dashboard.createFirst') }}</button>
-        </template>
-      </EmptyState>
-      <div v-else>
-        <div v-for="a in agenda" :key="a.id" class="agenda-row">
-          <div class="time">
-            <b>{{ a.time }}</b>
-            <small class="muted">{{ a.duration }}</small>
+
+      <!-- Stat Box (replaces Core Indicators) -->
+      <div v-if="hasWidget('core-indicators')" class="fsd-card">
+        <div class="fsd-card-title">Stat Box <span class="picker">{{ rangeLabel }}</span></div>
+        <div class="fsd-bigstats">
+          <div class="item">
+            <Calendar :size="22" color="#3498db" />
+            <strong>{{ stats.total }}</strong>
+            <span>Bookings</span>
           </div>
-          <div class="dot" :style="{ background: a.color }" />
-          <div class="space">
-            <div style="font-weight: 500;">{{ a.title }}</div>
-            <small class="muted">{{ a.room }} · {{ a.attendees }} attendees</small>
+          <div class="item">
+            <Clock :size="22" color="#3498db" />
+            <strong>{{ stats.avgMin }} mins</strong>
+            <span>Avg. Meeting Duration</span>
           </div>
-          <span class="tag" :class="a.status === 'Pending' ? 'warning' : 'success'">{{ a.status }}</span>
+        </div>
+        <div class="fsd-segrow">
+          <div class="fsd-seg green"><span class="pct">{{ stats.checkInPct }}%</span>Check-in</div>
+          <div class="fsd-seg orange"><span class="pct">{{ stats.cancelPct }}%</span>Cancelled</div>
+          <div class="fsd-seg red"><span class="pct">{{ stats.noShowPct }}%</span>No Show</div>
+          <div class="fsd-seg blue"><span class="pct">{{ stats.walkInPct }}%</span>Walk In</div>
+          <div class="fsd-seg grey"><span class="pct">{{ stats.nonOfficePct }}%</span>Non-office</div>
         </div>
       </div>
-    </section>
+    </div>
 
-    <!-- Quick actions -->
-    <section class="card" style="grid-area: quick;">
-      <h3 class="mb">{{ $t('dashboard.quickActions') }}</h3>
-      <div class="quick-grid">
-        <button class="quick-btn" @click="$router.push('/search')">
-          <CalendarPlus :size="20" />
-          <span>{{ $t('dashboard.newBooking') }}</span>
-        </button>
-        <button class="quick-btn" @click="syncCal">
-          <RefreshCcw :size="20" />
-          <span>{{ $t('dashboard.syncCalendar') }}</span>
-        </button>
-        <button class="quick-btn" @click="$router.push('/reports')" v-if="canAdmin">
-          <BarChart3 :size="20" />
-          <span>{{ $t('dashboard.viewReports') }}</span>
-        </button>
-        <button class="quick-btn" @click="$router.push('/admin')" v-if="canAdmin">
-          <Sliders :size="20" />
-          <span>{{ $t('nav.admin') }}</span>
-        </button>
-      </div>
-    </section>
-
-    <!-- Activity -->
-    <section class="card" style="grid-area: activity;">
-      <h3 class="mb">{{ $t('dashboard.recentActivity') }}</h3>
-      <div v-if="loading">
-        <Skeleton class="mb" v-for="n in 4" :key="n" height="36px" />
-      </div>
-      <EmptyState v-else-if="activity.length === 0" :icon="History" :title="$t('dashboard.noActivity')" />
-      <div v-else>
-        <div v-for="a in activity" :key="a.id" class="activity-row">
-          <Avatar :name="a.user" />
-          <div class="space" style="min-width: 0;">
-            <div class="text-sm">
-              <b>{{ a.user }}</b> {{ a.action }} <span class="muted">{{ a.target }}</span>
-            </div>
-            <small class="muted">{{ a.time }}</small>
-          </div>
-          <component :is="a.icon" :size="14" class="muted" />
-        </div>
-      </div>
-    </section>
+    <!-- No Show table — server-scoped (mine / region / all) to match the
+         other panels. -->
+    <div v-if="hasWidget('activity-log')" class="fsd-card">
+      <div class="fsd-card-title">No Show <span class="picker">{{ rangeLabel }}</span></div>
+      <div v-if="loading"><Skeleton height="160px" /></div>
+      <EmptyState v-else-if="noShow.length === 0" :icon="CheckCircle2" title="No no-shows in this period" />
+      <table v-else class="dt">
+        <thead><tr>
+          <th>Name <span class="caret">▲▼</span></th>
+          <th>Department <span class="caret">▲▼</span></th>
+          <th>Room <span class="caret">▲▼</span></th>
+          <th>Date/Time <span class="caret">▲▼</span></th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="(a, i) in noShow" :key="i">
+            <td>{{ a.name }}</td>
+            <td>{{ a.dept }}</td>
+            <td>{{ a.room }}</td>
+            <td>{{ a.when }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
-import FullCalendar from '@fullcalendar/vue3'
-import timeGridPlugin from '@fullcalendar/timegrid'
-import dayGridPlugin from '@fullcalendar/daygrid'
-import interactionPlugin from '@fullcalendar/interaction'
-import {
-  Cloud, AlertTriangle, X, Plus,
-  CalendarOff, CalendarPlus, RefreshCcw, BarChart3, Sliders, History,
-  CheckCircle2, Clock
-} from 'lucide-vue-next'
+import { AlertTriangle, X, BarChart3, PieChart, CheckCircle2, CloudSun, Calendar, Clock } from 'lucide-vue-next'
 import Skeleton from '../components/Skeleton.vue'
 import EmptyState from '../components/EmptyState.vue'
-import Avatar from '../components/Avatar.vue'
-import { useTenantStore } from '../stores/tenant'
 import { useToastStore } from '../stores/toast'
-import { useI18n } from 'vue-i18n'
+import { useTenantStore } from '../stores/tenant'
 import { openRealtime, api } from '../api'
 
-const tenant = useTenantStore()
 const toasts = useToastStore()
-const { t, locale } = useI18n()
+const tenant = useTenantStore()
+
+// Admin-curated dashboard layout. Empty/absent list = show everything;
+// otherwise the panel only renders if its key is in dashboard_widgets.
+const widgets = computed(() => tenant.customization?.dashboard_widgets || [])
+const hasWidget = (k) => !widgets.value.length || widgets.value.includes(k)
 
 const loading = ref(true)
-const kpis = ref({ active: 0, utilisation: null, pending: 0, noShow: 0 })
-const agenda = ref([])
+const range = ref('week')
+const weather = ref(null)
+const wxUpdated = computed(() =>
+  weather.value?.updated_at ? new Date(weather.value.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
+const util = ref([])
+const byDept = ref([])
 const activity = ref([])
+const noShow = ref([])
+const stats = ref({ total: 0, avgMin: 0, checkInPct: 0, cancelPct: 0, noShowPct: 0, walkInPct: 0, nonOfficePct: 0 })
 const broadcast = ref(null)
-const resourceMap = ref({})
-const weather = ref({ label: 'Sunny', temp: 27 })
-const hkoSignal = ref(null)
+// Scope is set by the server based on the caller's role — the SPA cannot
+// widen it by sending a different query. "mine" = own bookings only,
+// "region" = rooms the user manages, "all" = full tenant view.
+const scope = ref('all')
+const scopeTitle = computed(() => ({
+  mine:   'My Dashboard',
+  region: 'Regional Dashboard',
+  all:    'Dashboard'
+}[scope.value] || 'Dashboard'))
+const scopeSubtitle = computed(() => ({
+  mine:   'Your own bookings only.',
+  region: 'Bookings in the regions you manage.',
+  all:    'Operational summary across every room.'
+}[scope.value] || ''))
 let ws
 
-const today = new Date().toLocaleDateString(locale.value, { weekday: 'short', month: 'short', day: 'numeric' })
+const palette = ['#059669', '#2563eb', '#dc2626', '#d97706', '#7c3aed', '#0891b2', '#65a30d', '#db2777']
+const today = new Date().toISOString().slice(0, 10)
+const rangeLabel = computed(() => ({ week: 'This Week', month: 'This Month', quarter: 'This Quarter' }[range.value]))
 
-const widgets = computed(() => tenant.customization?.dashboard_widgets || ['kpi-active','kpi-utilisation','kpi-pending','kpi-noshow','calendar-week','agenda','activity'])
-const hasWidget = (k) => widgets.value.length === 0 || widgets.value.includes(k) || k.startsWith('kpi-')
+const barStep = 56
+// chartW used to be a fixed Math.max(640, …) — with preserveAspectRatio
+// "meet", anything wider than 640 was rendered top-left-aligned, leaving
+// blank space on the right. Track the chart container's real pixel width
+// instead so the bars spread across whatever the layout gives us.
+const containerW = ref(640)
+const chartW = computed(() => Math.max(containerW.value, 40 + util.value.length * barStep + 20))
+let chartResizeObs = null
+const chartHostRef = ref(null)
 
-const greeting = computed(() => {
-  const h = new Date().getHours()
-  if (h < 12) return t('dashboard.title')
-  if (h < 18) return locale.value === 'en' ? 'Good afternoon' : t('dashboard.title')
-  return locale.value === 'en' ? 'Good evening' : t('dashboard.title')
+// Dynamic bar layout. Two motivations:
+//
+//   1. A single bar at x=40 with width 42 leaves the rest of the 640px
+//      canvas blank — looks like the chart broke. We give a lone bar a
+//      generous width and centre it.
+//   2. With 2-3 bars we widen them slightly so the chart fills more of
+//      the canvas without becoming cartoonish.
+//   4 bars and above keep the original 42px-wide bars.
+//
+// dynamicBarX returns the left edge for bar i; dynamicBarWidth returns
+// its width. Both depend on util.value.length so they recompute when
+// the data set changes.
+const dynamicBarWidth = computed(() => {
+  const n = util.value.length
+  if (n <= 1) return 180
+  if (n === 2) return 100
+  if (n === 3) return 72
+  return barStep - 14 // 42 — preserves old look for many-room charts
 })
-
-const firstName = computed(() => {
-  try {
-    const tok = localStorage.getItem('fsd_jwt')
-    if (!tok) return 'there'
-    return (localStorage.getItem('fsd_user') || 'there').split(/[ .]/)[0]
-  } catch { return 'there' }
-})
-
-const canAdmin = computed(() => {
-  try {
-    const tok = localStorage.getItem('fsd_jwt')
-    if (!tok) return false
-    return ['System Admin', 'Security Admin'].includes(JSON.parse(atob(tok.split('.')[1])).role)
-  } catch { return false }
-})
-
-const calendarOptions = computed(() => ({
-  plugins: [timeGridPlugin, dayGridPlugin, interactionPlugin],
-  initialView: 'timeGridWeek',
-  height: 460,
-  selectable: true,
-  events: events.value,
-  locale: locale.value === 'zh-Hant' ? 'zh-tw' : locale.value === 'zh-Hans' ? 'zh-cn' : 'en',
-  headerToolbar: { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' },
-  slotMinTime: '07:00:00',
-  slotMaxTime: '21:00:00',
-  nowIndicator: true,
-  eventClassNames(arg) {
-    const s = (arg.event.extendedProps?.status || '').toLowerCase()
-    if (s.includes('pending')) return ['pending']
-    if (s.includes('exception')) return ['exception']
-    return []
+function dynamicBarX(i) {
+  const n = util.value.length
+  if (n <= 1) {
+    // Centre a lone bar between the y-axis labels and the right edge.
+    return (chartW.value - dynamicBarWidth.value) / 2
   }
-}))
+  if (n <= 3) {
+    // Spread 2-3 bars evenly across the canvas.
+    const usable = chartW.value - 60
+    const slot = usable / n
+    return 40 + i * slot + (slot - dynamicBarWidth.value) / 2
+  }
+  return 40 + i * barStep + 6
+}
 
-const events = ref([])
+// Dynamic Y-axis: previously the floor was hardcoded to 4, so a room
+// with a single booking rendered as a quarter-height bar against a 0-4
+// axis. That looked broken (the bar appeared idle even when it was the
+// only thing happening that period). Now the axis scales to the true
+// max, with a minimum of 1 so a chart with a single 1-booking room
+// still draws meaningfully.
+const yMax = computed(() => {
+  const max = util.value.reduce((m, u) => Math.max(m, u.count || 0), 0)
+  return Math.max(1, max)
+})
+const barH = (c) => yMax.value === 0 ? 0 : Math.round((c / yMax.value) * 180)
+
+// Y-axis ticks. For small counts (1–5) we show every integer so the
+// scale feels honest. Above 5 we step in roughly evenly-spaced chunks
+// (5 ticks total) to keep the axis readable on a 180px tall chart.
+const yTicks = computed(() => {
+  const m = yMax.value
+  const ticks = []
+  if (m <= 5) {
+    for (let v = 0; v <= m; v++) {
+      ticks.push({ value: v, y: Math.round((v / m) * 180) })
+    }
+  } else {
+    for (let i = 0; i <= 4; i++) {
+      const v = Math.round((i / 4) * m)
+      ticks.push({ value: v, y: Math.round((v / m) * 180) })
+    }
+  }
+  return ticks
+})
+
+const noShows = computed(() => activity.value.filter(a => a.label === 'No Show' || a.label === 'Missed'))
+
+const pieSlices = computed(() => {
+  const total = byDept.value.reduce((s, d) => s + d.count, 0)
+  if (total === 0 || byDept.value.length <= 1) return []
+  let a0 = -Math.PI / 2
+  return byDept.value.map(d => {
+    const a1 = a0 + (d.count / total) * Math.PI * 2
+    const x0 = 60 + 54 * Math.cos(a0), y0 = 60 + 54 * Math.sin(a0)
+    const x1 = 60 + 54 * Math.cos(a1), y1 = 60 + 54 * Math.sin(a1)
+    const large = a1 - a0 > Math.PI ? 1 : 0
+    const d2 = `M60,60 L${x0.toFixed(2)},${y0.toFixed(2)} A54,54 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} Z`
+    a0 = a1
+    return { d: d2 }
+  })
+})
 
 onMounted(async () => {
-  ws = openRealtime((ev) => {
-    if (ev.type === 'weather.signal') hkoSignal.value = ev.payload?.code
-    if (ev.type?.startsWith('booking.')) {
-      toasts.info('Live update', ev.type.replace('booking.', 'Booking '))
-      load()
+  ws = openRealtime((ev) => { if (ev.type?.startsWith('booking.')) load() })
+  api.getWeather().then(w => { weather.value = w }).catch(() => {})
+  // Observe the chart card width so chartW tracks the live layout.
+  // Subtract horizontal padding (.fsd-card uses 18px 20px) so the SVG
+  // viewBox covers only the inner content area — otherwise text labels
+  // get cropped at the right edge on tight viewports.
+  if (chartHostRef.value && typeof ResizeObserver !== 'undefined') {
+    const updateW = () => {
+      const cs = getComputedStyle(chartHostRef.value)
+      const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+      containerW.value = Math.max(320, chartHostRef.value.clientWidth - padX)
     }
-  })
+    updateW()
+    chartResizeObs = new ResizeObserver(updateW)
+    chartResizeObs.observe(chartHostRef.value)
+  }
   await load()
 })
-onBeforeUnmount(() => ws?.close())
+onBeforeUnmount(() => {
+  ws?.close()
+  chartResizeObs?.disconnect()
+})
+
+// rangePeriod returns the inclusive [start, end] calendar boundary for
+// the active "This Week / Month / Quarter" filter. Previously this was
+// a "past 7 days ending today" sliding window — a booking made for
+// *tomorrow* fell outside the range and showed up as zero on the
+// dashboard. Calendar-aligned boundaries match user intent ("show me
+// this week's activity, including the booking I just made for Friday")
+// and stay in lockstep with the backend `b.start_time::date >= start
+// AND <= end` aggregate.
+function pad2(n) { return String(n).padStart(2, '0') }
+function iso(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}` }
+function rangePeriod() {
+  const now = new Date()
+  if (range.value === 'week') {
+    // Calendar week, Sun→Sat. getDay() returns 0=Sun..6=Sat.
+    const s = new Date(now); s.setDate(now.getDate() - now.getDay())
+    const e = new Date(s);   e.setDate(s.getDate() + 6)
+    return { start: iso(s), end: iso(e) }
+  }
+  if (range.value === 'month') {
+    const s = new Date(now.getFullYear(), now.getMonth(), 1)
+    const e = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    return { start: iso(s), end: iso(e) }
+  }
+  // Quarter — month-3 .. month+2 ranges to the calendar quarter
+  // containing today (Q1=Jan-Mar, Q2=Apr-Jun, …).
+  const q = Math.floor(now.getMonth() / 3)
+  const s = new Date(now.getFullYear(), q * 3, 1)
+  const e = new Date(now.getFullYear(), q * 3 + 3, 0)
+  return { start: iso(s), end: iso(e) }
+}
 
 async function load() {
   loading.value = true
   try {
-    const [bookings, approvals, resources] = await Promise.all([
-      api.myBookings().catch(() => []),
-      api.listApprovals().catch(() => []),
-      api.listResources().catch(() => [])
+    const { start, end } = rangePeriod()
+    const [d, todays, resources, users] = await Promise.all([
+      api.getDashboard(start, end),
+      api.listAllBookings(today).catch(() => api.myBookings().catch(() => [])),
+      api.listResources().catch(() => []),
+      api.listUsers().catch(() => [])
     ])
 
-    resourceMap.value = Object.fromEntries((resources || []).map(r => [r.ID || r.id, r]))
-    const now = new Date()
-    const todayStr = now.toDateString()
-    const weekAgo = new Date(now.getTime() - 7 * 86400000)
-
-    const upcoming = (bookings || []).filter(b =>
-      b.Status !== 'Cancelled' && b.Status !== 'No Show' && new Date(b.EndTime) > now)
-    const noShowRecent = (bookings || []).filter(b =>
-      b.Status === 'No Show' && new Date(b.StartTime) >= weekAgo)
-    const todays = (bookings || []).filter(b => new Date(b.StartTime).toDateString() === todayStr)
-
-    const activeResources = (resources || []).filter(r => r.IsActive !== false).length
-    const utilisation = activeResources > 0
-      ? Math.min(100, Math.round((upcoming.length / activeResources) * 100))
-      : null
-
-    kpis.value = {
-      active: upcoming.length,
-      utilisation,
-      pending: (approvals || []).length,
-      noShow: noShowRecent.length
+    scope.value = d.scope || 'all'
+    util.value = (d.roomUtilisation || []).map(x => ({
+      name: x.name, short: x.name && x.name.length > 10 ? x.name.slice(0, 9) + '…' : x.name, count: x.count
+    }))
+    byDept.value = d.byDepartment || []
+    noShow.value = d.noShow || []
+    stats.value = {
+      total: d.stats?.total || 0, avgMin: d.stats?.avgMin || 0,
+      checkInPct: d.stats?.checkInPct || 0, cancelPct: d.stats?.cancelPct || 0,
+      noShowPct: d.stats?.noShowPct || 0, walkInPct: d.stats?.walkInPct || 0,
+      nonOfficePct: d.stats?.nonOfficePct || 0
     }
 
-    agenda.value = todays
-      .sort((a, b) => new Date(a.StartTime) - new Date(b.StartTime))
-      .map(b => ({
-        id: b.ID,
-        time: formatTime(b.StartTime),
-        duration: formatDuration(b.StartTime, b.EndTime),
-        title: resourceMap.value[b.ResourceID]?.Name || 'Booking',
-        room: resourceMap.value[b.ResourceID]?.Location || '',
-        attendees: b.AttendeeCount || 0,
-        color: b.Status === 'Pending Approval' ? 'var(--warning)' : 'var(--brand-primary)',
-        status: b.Status
-      }))
-
-    activity.value = (bookings || [])
-      .slice()
-      .sort((a, b) => new Date(b.CreatedAt || b.StartTime) - new Date(a.CreatedAt || a.StartTime))
-      .slice(0, 6)
-      .map(b => ({
-        id: b.ID,
-        user: 'You',
-        action: b.Status === 'Cancelled' ? 'cancelled'
-              : b.Status === 'Pending Approval' ? 'requested'
-              : 'booked',
-        target: resourceMap.value[b.ResourceID]?.Name || b.ResourceID,
-        time: relativeTime(b.CreatedAt || b.StartTime),
-        icon: b.Status === 'Cancelled' ? X
-            : b.Status === 'Pending Approval' ? Clock
-            : CheckCircle2
-      }))
-
-    events.value = (bookings || [])
+    const resMap = Object.fromEntries((resources || []).map(r => [r.ID || r.id, r]))
+    const userMap = Object.fromEntries((users || []).map(u => [u.ID || u.id, u]))
+    const now = Date.now()
+    activity.value = (todays || [])
       .filter(b => b.Status !== 'Cancelled')
-      .map(b => ({
-        title: resourceMap.value[b.ResourceID]?.Name || 'Booking',
-        start: b.StartTime,
-        end: b.EndTime,
-        extendedProps: { status: b.Status }
-      }))
+      .sort((a, b) => new Date(a.StartTime) - new Date(b.StartTime))
+      .slice(0, 15)
+      .map(b => {
+        const start = new Date(b.StartTime).getTime()
+        const end = new Date(b.EndTime).getTime()
+        const r = resMap[b.ResourceID]
+        const u = userMap[b.UserID]
+        let pill = 'navy', label = 'Upcoming', canCheckIn = false
+        if (b.Status === 'Checked In') { pill = 'ok'; label = 'Checked In' }
+        else if (b.Status === 'No Show') { pill = 'bad'; label = 'No Show' }
+        else if (now >= start && now <= end) { pill = 'amber'; label = 'Awaiting Check-in'; canCheckIn = true }
+        else if (now > end) { pill = 'bad'; label = 'Missed'; canCheckIn = true }
+        return {
+          id: b.ID,
+          user: u?.Username || u?.username || b.UserID,
+          dept: r?.Region || r?.region || r?.Department || '—',
+          room: r?.Name || r?.name || b.ResourceID,
+          time: fmtRange(b.StartTime, b.EndTime),
+          pill, label, canCheckIn, busy: false
+        }
+      })
 
     broadcast.value = null
   } catch (e) {
@@ -305,69 +399,55 @@ async function load() {
   }
 }
 
-function formatTime(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-function formatDuration(s, e) {
-  const min = Math.round((new Date(e) - new Date(s)) / 60000)
-  if (min >= 60 && min % 60 === 0) return `${min / 60}h`
-  if (min >= 60) return `${Math.floor(min / 60)}h ${min % 60}m`
-  return `${min}m`
-}
-function relativeTime(iso) {
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+async function checkIn(a) {
+  a.busy = true
+  try {
+    await api.checkInBooking(a.id)
+    a.pill = 'ok'; a.label = 'Checked In'; a.canCheckIn = false
+    toasts.success('Checked in', a.room)
+  } catch (e) {
+    toasts.error('Check-in failed', e.message)
+  } finally { a.busy = false }
 }
 
-function syncCal() { toasts.success('Calendar sync triggered', 'Outlook & Google will refresh shortly.') }
+function fmtRange(s, e) {
+  const o = { hour: '2-digit', minute: '2-digit', hour12: false }
+  return new Date(s).toLocaleTimeString([], o) + ' – ' + new Date(e).toLocaleTimeString([], o)
+}
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
-
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  grid-template-areas:
-    "calendar agenda"
-    "calendar quick"
-    "activity activity";
-  gap: 18px;
+.range-sel { padding: 6px 10px; border: 1px solid var(--asl-line); border-radius: 3px; font: inherit; font-size: 13px; background: #fff; }
+.wx-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--asl-line); border-radius: 999px; font-size: 13px; color: var(--asl-grey); background: #fff; }
+.wx-chip b { color: #33414e; }
+.wx-sig { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--asl-amber-bg, #fef3c7); color: var(--asl-amber, #d97706); }
+.wx-sig.hot { background: var(--asl-bad-bg, #fee2e2); color: var(--asl-bad, #dc2626); }
+.rng { font-weight: 400; font-size: 12px; color: var(--asl-grey); }
+.dash-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 920px) { .dash-2col { grid-template-columns: 1fr; } }
+.barchart { width: 100%; height: 260px; }
+.barchart .grid { stroke: #e6eaee; stroke-width: 1; }
+.barchart .axis { fill: var(--asl-grey); font-size: 10px; }
+.barchart .bar { fill: var(--asl-blue); transition: fill .15s ease; }
+.barchart .bar:hover { fill: var(--asl-blue-dark); }
+.barchart .xlab { fill: var(--asl-grey); font-size: 9px; text-anchor: middle; }
+/* Bar value labels. .bar-value-inside renders WHITE on the bar for
+   tall enough bars (>=24 SVG units). .bar-value-above renders BLUE
+   floating above the bar when the bar is too short to host text. Both
+   ensure the actual count is always legible — even if the Y-axis is
+   somehow miscalibrated. */
+.barchart .bar-value-inside {
+  fill: #ffffff; font-size: 11px; font-weight: 600;
+  text-anchor: middle; pointer-events: none;
 }
-@media (max-width: 980px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-    grid-template-areas: "calendar" "agenda" "quick" "activity";
-  }
+.barchart .bar-value-above {
+  fill: var(--asl-blue-dark, #0b3060); font-size: 11px; font-weight: 600;
+  text-anchor: middle; pointer-events: none;
 }
-
-.agenda-row {
-  display: grid; grid-template-columns: 64px 8px 1fr auto;
-  gap: 12px; align-items: center;
-  padding: 10px 0; border-top: 1px solid var(--divider);
-}
-.agenda-row:first-of-type { border-top: 0; }
-.agenda-row .time b { display: block; font-size: 14px; }
-.agenda-row .dot { width: 8px; height: 36px; border-radius: 4px; }
-
-.activity-row {
-  display: grid; grid-template-columns: 32px 1fr auto;
-  gap: 12px; align-items: center;
-  padding: 10px 0; border-top: 1px solid var(--divider);
-}
-.activity-row:first-of-type { border-top: 0; }
-
-.quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.quick-btn {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-  padding: 14px; background: var(--surface-inset); color: var(--text);
-  border: 1px solid transparent; border-radius: var(--radius);
-  cursor: pointer; text-align: left; transition: all var(--dur);
-}
-.quick-btn:hover { background: var(--surface-pressed); border-color: var(--border); transform: translateY(-1px); }
-.quick-btn span { font-size: 13px; font-weight: 500; }
-.quick-btn :deep(svg) { color: var(--brand-primary); }
+.pie-wrap { display: flex; gap: 18px; align-items: center; }
+.pie { width: 140px; height: 140px; flex: 0 0 auto; }
+.legend { list-style: none; margin: 0; padding: 0; flex: 1; font-size: 13px; }
+.legend li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--asl-line); }
+.legend li:last-child { border-bottom: 0; }
+.legend .sw { width: 12px; height: 12px; border-radius: 2px; flex: 0 0 auto; }
 </style>

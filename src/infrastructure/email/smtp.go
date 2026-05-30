@@ -37,7 +37,18 @@ type Message struct {
 	ICSFilename  string
 }
 
-// SMTPSender ships messages through a classic SMTP relay (STARTTLS optional).
+// SMTPSender ships messages through a classic SMTP relay.
+//
+// Transport mode is auto-selected by port to avoid the historical
+// "tls.Dial against 587" mistake:
+//
+//   - 465 → implicit TLS (tls.Dial), used by submissions-over-TLS
+//   - 587 → STARTTLS on a plain TCP connection (the modern standard)
+//   - other → plain TCP, STARTTLS attempted opportunistically
+//
+// SMTP_TLS=true forces TLS regardless of port. SMTP_TLS=false on 587 is
+// rejected at Send-time so credentials never leave the process in plain
+// text by accident.
 type SMTPSender struct {
 	Host     string
 	Port     string
@@ -93,24 +104,52 @@ func (s *SMTPSender) Send(msg Message) error {
 
 	addr := s.Host + ":" + s.Port
 	auth := smtp.PlainAuth("", s.Username, s.Password, s.Host)
-	if !s.UseTLS {
-		return smtp.SendMail(addr, auth, msg.From, append(msg.To, msg.Cc...), raw)
-	}
-	// Explicit TLS handshake when SMTP_TLS=true.
-	tlsConfig := &tls.Config{ServerName: s.Host}
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	c, err := smtp.NewClient(conn, s.Host)
-	if err != nil {
-		return err
+	tlsConfig := &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}
+
+	// Pick transport by port; SMTP_TLS=true overrides to implicit TLS.
+	useImplicitTLS := s.UseTLS || s.Port == "465"
+	mustStartTLS := s.Port == "587" // refuse to authenticate in plaintext on submission port
+
+	var c *smtp.Client
+	if useImplicitTLS {
+		conn, err := tls.Dial("tcp", addr, tlsConfig)
+		if err != nil {
+			return fmt.Errorf("smtp tls dial: %w", err)
+		}
+		c, err = smtp.NewClient(conn, s.Host)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("smtp client: %w", err)
+		}
+	} else {
+		var err error
+		c, err = smtp.Dial(addr)
+		if err != nil {
+			return fmt.Errorf("smtp dial: %w", err)
+		}
+		// Issue EHLO + STARTTLS handshake. If the server doesn't advertise
+		// STARTTLS but the port mandates it (587), fail closed.
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(tlsConfig); err != nil {
+				c.Close()
+				return fmt.Errorf("smtp starttls: %w", err)
+			}
+		} else if mustStartTLS {
+			c.Close()
+			return fmt.Errorf("smtp server on port %s did not advertise STARTTLS — refusing to send credentials in plaintext", s.Port)
+		}
 	}
 	defer c.Close()
+
 	if s.Username != "" {
+		// Refuse PLAIN auth over a plaintext channel (defensive: c.Auth
+		// already does this, but the explicit check fails earlier and with
+		// a clearer message).
+		if ok, _ := c.Extension("AUTH"); !ok {
+			return fmt.Errorf("smtp server does not advertise AUTH")
+		}
 		if err := c.Auth(auth); err != nil {
-			return err
+			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
 	if err := c.Mail(msg.From); err != nil {

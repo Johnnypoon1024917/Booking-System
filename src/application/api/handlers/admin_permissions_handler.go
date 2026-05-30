@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	"fsd-mrbs/src/domain/audit"
 	"fsd-mrbs/src/domain/permission"
+	"fsd-mrbs/src/infrastructure/auditlog"
 )
 
 // AdminPermissionsHandler exposes the per-tenant role × permission matrix.
@@ -62,10 +64,25 @@ func (h *AdminPermissionsHandler) Dispatch(w http.ResponseWriter, r *http.Reques
 			seen[p] = struct{}{}
 			clean = append(clean, p)
 		}
+		var previous []string
+		if cur, err := h.repo.Get(r.Context(), tenantID.String()); err == nil {
+			if list, ok := cur.Roles[path]; ok {
+				previous = list
+			}
+		}
 		if err := h.repo.Set(r.Context(), tenantID.String(), path, clean); err != nil {
+			auditlog.Failure(r, audit.ActionPermissionChanged, "role", path, err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		auditlog.Record(r, auditlog.Event{
+			Action:       audit.ActionPermissionChanged,
+			Severity:     audit.SeverityWarning,
+			TargetEntity: "role",
+			TargetID:     path,
+			Previous:     map[string]interface{}{"permissions": previous},
+			Next:         map[string]interface{}{"permissions": clean},
+		})
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)

@@ -84,16 +84,19 @@ onMounted(async () => {
 onBeforeUnmount(() => { clearInterval(clock); clearInterval(poll) })
 
 async function refresh() {
-  // Endpoint to be added: GET /api/v1/kiosk/{resourceId}/agenda
-  // For demo purposes we render plausible data so the kiosk looks alive.
-  events.value = [
-    { start: t(9), end: t(10), summary: 'Morning Briefing' },
-    { start: t(11.5), end: t(12), summary: 'Equipment Check' },
-    { start: t(14), end: t(16), summary: 'Recruit Training' }
-  ]
+  if (!resourceId) { events.value = []; return }
+  try {
+    const r = await fetch(`/api/v1/kiosk/${encodeURIComponent(resourceId)}/agenda`, { cache: 'no-store' })
+    if (!r.ok) throw new Error(`agenda ${r.status}`)
+    const body = await r.json()
+    resourceName.value = body.resource_name || resourceName.value
+    events.value = body.events || []
+  } catch (e) {
+    // Keep showing the last good agenda — the kiosk should degrade
+    // gracefully when the network blips, not flash an error to the room.
+    console.warn('kiosk refresh failed', e)
+  }
 }
-
-function t(h) { const d = new Date(); d.setHours(Math.floor(h), (h % 1) * 60, 0, 0); return d.toISOString() }
 function withinNow(e) { const n = new Date(); return new Date(e.start) <= n && n < new Date(e.end) }
 function formatTime(t) { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
 function formatNow()    { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }

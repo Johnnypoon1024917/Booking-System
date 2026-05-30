@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"fsd-mrbs/src/infrastructure/safehttp"
 )
 
 // ProactiveBotClient sends Bot Framework messages to a Teams user without
@@ -28,7 +30,7 @@ type ProactiveBotClient struct {
 }
 
 func NewProactiveBotClient() *ProactiveBotClient {
-	return &ProactiveBotClient{http: &http.Client{Timeout: 10 * time.Second}}
+	return &ProactiveBotClient{http: safehttp.NewExternalClient(10 * time.Second)}
 }
 
 // Token returns a cached or fresh app token.

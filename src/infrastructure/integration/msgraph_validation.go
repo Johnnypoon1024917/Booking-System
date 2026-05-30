@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"fsd-mrbs/src/infrastructure/safehttp"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -34,7 +36,7 @@ type GraphTokenValidator struct {
 
 func NewGraphTokenValidator() *GraphTokenValidator {
 	return &GraphTokenValidator{
-		http: &http.Client{Timeout: 10 * time.Second},
+		http: safehttp.NewExternalClient(10 * time.Second),
 		keys: map[string]*rsa.PublicKey{},
 	}
 }

@@ -36,7 +36,7 @@
     <div class="strip" :style="{ background: stripColor(b.Status) }"></div>
     <div class="space" style="min-width:0;">
       <div class="row gap-sm" style="align-items: baseline;">
-        <h3 class="truncate">{{ resourceName(b.ResourceID) }}</h3>
+        <h3 class="truncate">{{ resourceName(b) }}</h3>
         <span class="tag" :class="statusClass(b.Status)">{{ b.Status }}</span>
         <span v-if="b.IsRecurring" class="tag info"><Repeat :size="11"/> {{ $t('myBookings.recurring') }}</span>
       </div>
@@ -47,6 +47,9 @@
           <a :href="b.RedirectURL" target="_blank">{{ $t('myBookings.joinMeeting') }}</a>
         </span>
       </div>
+      <div v-if="(chains[b.ID] || []).length" class="mt-sm">
+        <ApprovalTimeline compact :steps="chains[b.ID]" />
+      </div>
     </div>
     <div class="row gap-sm" style="flex-shrink: 0;">
       <button class="btn ghost sm" v-if="canMutate(b)" @click="open(b)"><Pencil :size="13"/></button>
@@ -55,7 +58,20 @@
   </article>
 
   <Modal v-if="editing" @close="editing = null" :title="$t('myBookings.edit')">
-    <div class="grid-2">
+    <!-- Read-only context so the edit modal isn't a bare date/URL form with
+         no indication of what's being edited (QA #6). -->
+    <div class="edit-context muted text-sm mb">
+      <div><strong>{{ editing.resourceName }}</strong></div>
+      <div class="row gap-sm" style="flex-wrap:wrap;">
+        <span><CalendarDays :size="11"/> {{ formatDate(editing.startISO) }}</span>
+        <span class="tag" :class="statusClass(editing.status)">{{ editing.status }}</span>
+      </div>
+    </div>
+    <label class="field">
+      <span>{{ $t('booking.title') }}</span>
+      <input v-model="editing.title" placeholder="e.g. Weekly Team Sync"/>
+    </label>
+    <div class="grid-2 mt">
       <label class="field">
         <span>{{ $t('search.start') }}</span>
         <input type="datetime-local" v-model="editing.start"/>
@@ -85,6 +101,7 @@ import {
 import Skeleton from '../components/Skeleton.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Modal from '../components/Modal.vue'
+import ApprovalTimeline from '../components/ApprovalTimeline.vue'
 import { api } from '../api'
 import { useToastStore } from '../stores/toast'
 
@@ -92,6 +109,7 @@ const { t, locale } = useI18n()
 const toasts = useToastStore()
 const items = ref([])
 const resources = ref([])
+const chains = ref({})
 const loading = ref(true)
 const busy = ref(false)
 const filter = ref('upcoming')
@@ -118,6 +136,14 @@ async function load() {
     ])
     items.value = list || []
     resources.value = res || []
+    // Pull chain progress for anything still awaiting approval so the
+    // requester can see exactly where it is stuck.
+    await Promise.all((items.value || [])
+      .filter(b => b.Status === 'Pending Approval')
+      .map(async b => {
+        try { chains.value[b.ID] = await api.approvalChain(b.ID) || [] }
+        catch { chains.value[b.ID] = [] }
+      }))
   } catch (e) { toasts.error('Could not load', e.message) }
   finally { loading.value = false }
 }
@@ -132,6 +158,10 @@ const stats = computed(() => {
 })
 
 function bucket(b) {
+  // Cancelled / No Show bookings are inactive — they must never count as
+  // "upcoming" even when their slot is still in the future. Group them with
+  // past/historical so the Upcoming tab only shows actionable reservations.
+  if (b.Status === 'Cancelled' || b.Status === 'No Show') return 'past'
   if (b.Status === 'Pending Approval') return 'pending'
   if (new Date(b.EndTime) < new Date()) return 'past'
   return 'upcoming'
@@ -140,9 +170,14 @@ function bucket(b) {
 function open(b) {
   editing.value = {
     ID: b.ID,
+    title: b.Title || '',
     start: toLocal(b.StartTime),
     end: toLocal(b.EndTime),
-    meeting_url: b.MeetingURL || ''
+    meeting_url: b.MeetingURL || '',
+    // Read-only context for the modal header (QA #6).
+    resourceName: resourceName(b),
+    status: b.Status,
+    startISO: b.StartTime
   }
 }
 
@@ -150,6 +185,7 @@ async function save() {
   busy.value = true
   try {
     await api.updateBooking(editing.value.ID, {
+      title: editing.value.title,
       start_time: new Date(editing.value.start).toISOString(),
       end_time: new Date(editing.value.end).toISOString(),
       meeting_url: editing.value.meeting_url
@@ -172,7 +208,14 @@ async function onCancel(b) {
 }
 
 function canMutate(b) { return b.Status !== 'Cancelled' && b.Status !== 'No Show' && new Date(b.EndTime) > new Date() }
-function resourceName(id) { return resourceMap.value[id]?.Name || resourceMap.value[id]?.name || id }
+// Prefer the resource name the API now denormalises onto the booking, then
+// the locally-loaded resource catalogue. Never fall back to the raw resource
+// UUID — an officer who cannot list every resource would otherwise see a
+// meaningless GUID as the booking heading (QA #7).
+function resourceName(b) {
+  const id = b.ResourceID
+  return b.ResourceName || resourceMap.value[id]?.Name || resourceMap.value[id]?.name || t('booking.untitled')
+}
 function statusClass(s) {
   if (s === 'Confirmed' || s === 'Checked In') return 'success'
   if (s === 'Pending Approval')                 return 'warning'

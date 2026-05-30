@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"fsd-mrbs/src/infrastructure/rabbitmq"
+	"fsd-mrbs/src/infrastructure/safehttp"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -81,7 +82,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	d := &dispatcher{pool: pool, http: &http.Client{Timeout: 10 * time.Second}, log: logger}
+	d := &dispatcher{pool: pool, http: safehttp.NewSafeClient(10 * time.Second), log: logger}
 
 	go d.retryLoop(context.Background())
 
@@ -166,12 +167,25 @@ RETURNING id`, tenantID, s.ID, event, payload).Scan(&deliveryID)
 
 // attempt sends one HTTP POST. On non-2xx or transport error, the row is
 // updated with the next retry time. On success, delivered_at is set.
+//
+// The signature is computed over `timestamp.body` (Stripe convention) so
+// receivers can reject replays by enforcing a small clock-skew window on
+// X-MRBS-Timestamp.
 func (d *dispatcher) attempt(ctx context.Context, id, target, secret, event string, payload []byte, priorAttempts int) {
+	// Re-validate the target URL at dispatch time. The transport ALSO
+	// re-checks IPs at TCP dial to close any DNS-rebind window between
+	// admin-create and now.
+	if err := safehttp.ValidateExternalURL(target); err != nil {
+		d.scheduleRetry(ctx, id, priorAttempts+1, 0, "ssrf: "+err.Error(), time.Now())
+		return
+	}
+	ts := fmt.Sprintf("%d", time.Now().Unix())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-MRBS-Event", event)
 	req.Header.Set("X-MRBS-Delivery", id)
-	req.Header.Set("X-MRBS-Signature", sign(secret, payload))
+	req.Header.Set("X-MRBS-Timestamp", ts)
+	req.Header.Set("X-MRBS-Signature", sign(secret, ts, payload))
 	req.Header.Set("User-Agent", "fsd-mrbs-webhook/1.0")
 
 	resp, err := d.http.Do(req)
@@ -249,11 +263,14 @@ ORDER BY d.next_attempt_at ASC LIMIT 100`)
 	}
 }
 
-// sign returns the HMAC-SHA256 of the body using the subscription secret,
-// hex-encoded with the v1 prefix (Stripe-style format so receivers can
-// rotate or version their verification logic).
-func sign(secret string, body []byte) string {
+// sign returns the HMAC-SHA256 of `timestamp.body` using the subscription
+// secret, hex-encoded with the v1 prefix (Stripe-style format so receivers
+// can rotate or version their verification logic, and reject replays by
+// enforcing a freshness window on the timestamp header).
+func sign(secret, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte{'.'})
 	mac.Write(body)
 	return "v1=" + hex.EncodeToString(mac.Sum(nil))
 }

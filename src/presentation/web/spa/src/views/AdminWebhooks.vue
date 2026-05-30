@@ -142,7 +142,7 @@ async function load() {
 
 async function loadDeliveries() {
   loadingDeliveries.value = true
-  try { deliveries.value = await api.webhookDeliveries() || [] }
+  try { deliveries.value = await api.listWebhookDeliveries() || [] }
   catch (e) { toasts.error('Could not load', e.message) }
   finally { loadingDeliveries.value = false }
 }

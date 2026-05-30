@@ -186,6 +186,24 @@
         <div class="err" id="loginError"></div>
       </form>
 
+      <!-- Forced first-login password reset. Hidden until the login
+           response asks for it (admin-issued initial password). -->
+      <form id="changeForm" novalidate style="display:none;">
+        <p data-i18n="mustChangeDesc">Your administrator issued a temporary password. Choose a new one to continue.</p>
+        <label class="field">
+          <span data-i18n="newPassword">New password</span>
+          <input type="password" id="newPassword" autocomplete="new-password" required />
+        </label>
+        <label class="field">
+          <span data-i18n="confirmPassword">Confirm password</span>
+          <input type="password" id="confirmPassword" autocomplete="new-password" required />
+        </label>
+        <button type="submit" class="submit" id="changeBtn">
+          <span data-i18n="setPasswordContinue">Set password &amp; continue</span>
+        </button>
+        <div class="err" id="changeError"></div>
+      </form>
+
       <div class="footer">
         <span data-i18n="footer">Single sign-on protected · Compliant with HK PDPO</span>
       </div>

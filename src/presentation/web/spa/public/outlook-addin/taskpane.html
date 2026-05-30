@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FSD MRBS — Book a Room</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Office.js is required for any add-in; it must come from the CDN. -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; color: #1f2937; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    label { display: block; font-size: 13px; margin: 12px 0 4px; color: #4b5563; }
+    input, select, button { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box;
+                            border: 1px solid #d1d5db; border-radius: 6px; }
+    button { background: #002147; color: white; border: none; cursor: pointer; margin-top: 16px;
+             padding: 10px; font-weight: 600; }
+    button:disabled { background: #9ca3af; cursor: progress; }
+    .room { padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 8px; cursor: pointer; }
+    .room:hover { border-color: #002147; background: #f8fafc; }
+    .room.selected { border-color: #002147; background: #eff6ff; }
+    .status { font-size: 12px; color: #6b7280; margin-top: 8px; }
+    .error { color: #b91c1c; }
+    .ok { color: #047857; }
+    /* Tab bar — switches between "Search a room" and "Scheduling
+       Assistant" views. Tabs are buttons not anchors so they don't
+       trigger the Office.js dialog's navigation guard. */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid #e5e7eb; margin: 0 0 12px; }
+    .tabs button {
+      flex: 1; margin: 0; padding: 8px 10px; font-size: 13px;
+      background: transparent; color: #4b5563; border: 0; border-radius: 0;
+      border-bottom: 2px solid transparent; font-weight: 500;
+    }
+    .tabs button.on {
+      color: #002147; border-bottom-color: #002147; background: transparent;
+    }
+    .tabs button:disabled { background: transparent; cursor: default; }
+    .pane { display: none; }
+    .pane.on { display: block; }
+    /* Mini Gantt grid for the scheduling-assistant view. Each subject
+       is one row; busy/tentative intervals render as positioned blocks.
+       The 09:00–18:00 window matches the most common office day; we
+       expose the window picker so users can widen it if needed. */
+    .sched-row {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .sched-label { font-size: 12px; color: #374151; overflow: hidden; text-overflow: ellipsis; }
+    .sched-track {
+      position: relative; height: 22px;
+      background: linear-gradient(to right, #f3f4f6 1px, transparent 1px) repeat-x,
+                  #fafafa;
+      background-size: calc(100% / 9) 100%;
+      border: 1px solid #e5e7eb; border-radius: 4px;
+    }
+    .sched-block {
+      position: absolute; top: 2px; bottom: 2px;
+      background: #002147; color: white;
+      font-size: 10px; padding: 0 4px; line-height: 18px;
+      border-radius: 3px;
+      overflow: hidden; white-space: nowrap;
+    }
+    .sched-block.tentative { background: repeating-linear-gradient(45deg, #6b7280 0 6px, #9ca3af 6px 12px); }
+    .sched-hours {
+      display: grid; grid-template-columns: 110px 1fr;
+      gap: 8px; margin-top: 12px; font-size: 10px; color: #9ca3af;
+    }
+    .sched-hours span:nth-child(2) {
+      display: grid; grid-template-columns: repeat(9, 1fr);
+    }
+    .pill {
+      display: inline-block; padding: 1px 6px; border-radius: 999px;
+      background: #e5e7eb; color: #374151; font-size: 10px;
+      margin-left: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>FSD MRBS</h1>
+
+  <!-- Two-tab UI: classic "Find a room" search, plus the scheduling
+       assistant that probes /api/v1/freebusy for the meeting's
+       attendees + the picked rooms. The latter is the Outlook /
+       Google equivalent of the side-by-side timeline view. -->
+  <div class="tabs" role="tablist">
+    <button id="tabSearch" type="button" class="on" role="tab" aria-selected="true">Book a Room</button>
+    <button id="tabSched"  type="button"        role="tab" aria-selected="false">Scheduling Assistant</button>
+  </div>
+
+  <!-- ---------- Tab 1: Book a Room ---------- -->
+  <section id="paneSearch" class="pane on" role="tabpanel" aria-labelledby="tabSearch">
+    <p class="status">Searches FSD MRBS resources and inserts the chosen room as a Required attendee.</p>
+
+    <label for="capacity">Minimum capacity</label>
+    <input type="number" id="capacity" min="1" value="4" />
+
+    <label for="location">Location</label>
+    <input type="text" id="location" placeholder="Hong Kong / Kowloon / NT" />
+
+    <button id="searchBtn" type="button">Search available rooms</button>
+
+    <div id="results" aria-live="polite"></div>
+    <div id="status" class="status" role="status"></div>
+  </section>
+
+  <!-- ---------- Tab 2: Scheduling Assistant ---------- -->
+  <section id="paneSched" class="pane" role="tabpanel" aria-labelledby="tabSched">
+    <p class="status">
+      Probe free/busy for the meeting attendees plus any room you've
+      added. No subjects or organisers are revealed — only "busy" or
+      "tentative" intervals.
+    </p>
+
+    <label for="schedExtra">Add rooms (resource UUID, one per line — optional)</label>
+    <textarea id="schedExtra" rows="2"
+              style="resize: vertical; font-family: monospace; font-size: 12px;"
+              placeholder="aeca9d2b-6341-4072-8dda-2957110470db"></textarea>
+
+    <button id="schedBtn" type="button">Show side-by-side timeline</button>
+    <div id="schedStatus" class="status" role="status"></div>
+    <div id="schedGrid" aria-live="polite"></div>
+    <div id="schedHours" class="sched-hours" style="display:none;">
+      <span></span>
+      <span><span>9</span><span>10</span><span>11</span><span>12</span><span>13</span><span>14</span><span>15</span><span>16</span><span>17</span></span>
+    </div>
+  </section>
+
+  <script>
+    /**
+     * The task pane bootstraps inside Outlook's compose-meeting context. We
+     * read Office.context.mailbox.item.start/end to size the search window
+     * and write the chosen room back into the meeting's RequiredAttendees +
+     * body so the booking is anchored to the same calendar event the
+     * organiser is editing.
+     *
+     * Auth uses the same JWT the SPA stores. We re-use it via the dialog
+     * API: on first run we open /app/#outlook-login which redirects
+     * through the existing /api/v1/login flow and posts the token back
+     * with Office.context.messageParent. The token is stored in
+     * Office.context.roamingSettings so it persists across Outlook
+     * sessions on the same mailbox.
+     */
+    const PUBLIC_BASE = window.location.origin; // matches manifest's {PUBLIC_BASE_URL}
+    const SEL = (id) => document.getElementById(id);
+    let token = null;
+
+    Office.onReady((info) => {
+      if (info.host !== Office.HostType.Outlook) {
+        SEL('status').textContent = 'This add-in only runs inside Outlook.';
+        SEL('searchBtn').disabled = true;
+        return;
+      }
+      token = Office.context.roamingSettings.get('mrbsToken');
+      if (!token) signIn();
+      SEL('searchBtn').addEventListener('click', search);
+      SEL('tabSearch').addEventListener('click', () => activateTab('Search'));
+      SEL('tabSched').addEventListener('click', () => activateTab('Sched'));
+      SEL('schedBtn').addEventListener('click', runSchedulingAssistant);
+    });
+
+    function activateTab(which) {
+      const isSearch = which === 'Search';
+      SEL('tabSearch').classList.toggle('on', isSearch);
+      SEL('tabSearch').setAttribute('aria-selected', String(isSearch));
+      SEL('tabSched').classList.toggle('on', !isSearch);
+      SEL('tabSched').setAttribute('aria-selected', String(!isSearch));
+      SEL('paneSearch').classList.toggle('on', isSearch);
+      SEL('paneSched').classList.toggle('on', !isSearch);
+    }
+
+    function signIn() {
+      Office.context.ui.displayDialogAsync(
+        `${PUBLIC_BASE}/app/#outlook-login`,
+        { height: 60, width: 40, promptBeforeOpen: false },
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) return;
+          const dialog = result.value;
+          dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+            try {
+              const msg = JSON.parse(arg.message);
+              if (msg.token) {
+                token = msg.token;
+                Office.context.roamingSettings.set('mrbsToken', token);
+                Office.context.roamingSettings.saveAsync();
+              }
+            } catch (e) { /* malformed message — ignore */ }
+            dialog.close();
+          });
+        }
+      );
+    }
+
+    async function search() {
+      if (!token) { signIn(); return; }
+      SEL('status').textContent = 'Searching…';
+      SEL('results').innerHTML = '';
+      try {
+        const item = Office.context.mailbox.item;
+        const start = await getValue(item.start);
+        const end = await getValue(item.end);
+        const params = new URLSearchParams({
+          capacity: SEL('capacity').value,
+          location: SEL('location').value,
+          start_time: new Date(start).toISOString().substring(11, 16),
+          end_time: new Date(end).toISOString().substring(11, 16),
+          date: new Date(start).toISOString().substring(0, 10),
+        });
+        const r = await fetch(`${PUBLIC_BASE}/api/v1/bookings/search?${params}`, {
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (r.status === 401) { token = null; signIn(); return; }
+        if (!r.ok) throw new Error('search ' + r.status);
+        const rooms = await r.json();
+        renderResults(rooms);
+      } catch (e) {
+        SEL('status').className = 'status error';
+        SEL('status').textContent = 'Search failed: ' + e.message;
+      }
+    }
+
+    function getValue(prop) {
+      return new Promise((resolve, reject) => {
+        prop.getAsync((res) => {
+          if (res.status !== Office.AsyncResultStatus.Succeeded) return reject(res.error);
+          resolve(res.value);
+        });
+      });
+    }
+
+    function renderResults(rooms) {
+      const root = SEL('results');
+      root.innerHTML = '';
+      if (!rooms.length) {
+        SEL('status').textContent = 'No rooms match — try a wider window.';
+        return;
+      }
+      rooms.forEach((r) => {
+        const el = document.createElement('div');
+        el.className = 'room';
+        el.tabIndex = 0;
+        el.innerHTML = `<b>${escape(r.Name || r.name)}</b><br>` +
+          `<small>${escape(r.Location || r.location || '')} · ${r.Capacity || r.capacity || '?'} pax</small>`;
+        el.addEventListener('click', () => insert(r));
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter') insert(r); });
+        root.appendChild(el);
+      });
+      SEL('status').textContent = `${rooms.length} room(s) found — click to attach.`;
+    }
+
+    async function insert(room) {
+      try {
+        const item = Office.context.mailbox.item;
+        // Attach the room mailbox as a required attendee so Exchange
+        // honours the resource booking workflow.
+        const email = room.MailboxEmail || room.mailbox_email || room.email;
+        if (email) {
+          item.requiredAttendees.addAsync([{ displayName: room.Name || room.name, emailAddress: email }]);
+        }
+        const note = `\n— Booked via FSD MRBS (resource_id=${room.ID || room.id}) —\n`;
+        item.body.setSelectedDataAsync(note, { coercionType: Office.CoercionType.Text });
+        SEL('status').className = 'status ok';
+        SEL('status').textContent = `Attached "${room.Name || room.name}" to this meeting.`;
+      } catch (e) {
+        SEL('status').className = 'status error';
+        SEL('status').textContent = 'Insert failed: ' + e.message;
+      }
+    }
+
+    function escape(s) {
+      return String(s || '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    // ---------- Scheduling Assistant ----------
+    //
+    // Reads the meeting's attendees + organiser out of Office.context.
+    // Adds any extra room UUIDs the user pasted into the textarea.
+    // Posts to /api/v1/freebusy, then renders one row per subject with
+    // busy/tentative blocks positioned on a 09:00–18:00 timeline.
+    //
+    // Everything that comes back is opaque — the endpoint strips
+    // organiser names, meeting subjects and URLs server-side, so this
+    // pane never displays PII even when the underlying calendars do.
+    async function runSchedulingAssistant() {
+      if (!token) { signIn(); return; }
+      const statusEl = SEL('schedStatus');
+      const gridEl = SEL('schedGrid');
+      statusEl.className = 'status';
+      statusEl.textContent = 'Loading…';
+      gridEl.innerHTML = '';
+
+      try {
+        // Pull the meeting's currently-staged time window. If the user
+        // hasn't picked one yet, default to today's office hours so the
+        // probe still works.
+        const item = Office.context.mailbox.item;
+        const start = await getValueOrDefault(item.start, todayAt(9));
+        const end = await getValueOrDefault(item.end, todayAt(18));
+        const dayStart = new Date(start); dayStart.setHours(9, 0, 0, 0);
+        const dayEnd = new Date(start); dayEnd.setHours(18, 0, 0, 0);
+
+        // Subjects = required attendees (emails) + extra rooms pasted
+        // into the textarea. We dedupe + cap at 100 to match the API.
+        const attendees = await getRequiredAttendeeEmails(item);
+        const extras = SEL('schedExtra').value
+          .split(/\s+/).map(s => s.trim()).filter(Boolean);
+        const organiserEmail = (Office.context.mailbox.userProfile || {}).emailAddress;
+        const subjects = Array.from(new Set([organiserEmail, ...attendees, ...extras].filter(Boolean))).slice(0, 100);
+        if (!subjects.length) {
+          statusEl.className = 'status error';
+          statusEl.textContent = 'Add at least one attendee or room.';
+          return;
+        }
+
+        const r = await fetch(`${PUBLIC_BASE}/api/v1/freebusy`, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subjects,
+            start_time: dayStart.toISOString(),
+            end_time: dayEnd.toISOString(),
+          }),
+        });
+        if (r.status === 401) { token = null; signIn(); return; }
+        if (!r.ok) throw new Error('freebusy ' + r.status + ': ' + await r.text());
+        const body = await r.json();
+
+        renderSchedGrid(body.subjects || [], dayStart, dayEnd, { meetingStart: new Date(start), meetingEnd: new Date(end) });
+        statusEl.className = 'status ok';
+        statusEl.textContent = `${(body.subjects || []).length} subject(s) returned.`;
+        SEL('schedHours').style.display = 'grid';
+      } catch (e) {
+        statusEl.className = 'status error';
+        statusEl.textContent = 'Could not load: ' + e.message;
+      }
+    }
+
+    // Build the side-by-side timeline. One row per subject; busy
+    // intervals position as absolute blocks against the 9-hour track.
+    // We also draw a vertical highlight where the current meeting
+    // window sits so conflicts pop visually.
+    function renderSchedGrid(subjects, dayStart, dayEnd, meeting) {
+      const grid = SEL('schedGrid');
+      grid.innerHTML = '';
+      const totalMs = dayEnd - dayStart;
+      const pct = (d) => Math.max(0, Math.min(100, ((d - dayStart) / totalMs) * 100));
+
+      subjects.forEach((s) => {
+        const row = document.createElement('div');
+        row.className = 'sched-row';
+        const label = document.createElement('div');
+        label.className = 'sched-label';
+        label.innerHTML = `${escape(s.id)}<span class="pill">${escape(s.kind)}</span>`;
+        const track = document.createElement('div');
+        track.className = 'sched-track';
+
+        // Meeting-window highlight — drawn first so busy blocks sit on top.
+        if (meeting && meeting.meetingStart && meeting.meetingEnd) {
+          const ms = pct(meeting.meetingStart);
+          const me = pct(meeting.meetingEnd);
+          if (me > ms) {
+            const hi = document.createElement('div');
+            hi.style.position = 'absolute';
+            hi.style.top = '0'; hi.style.bottom = '0';
+            hi.style.left = ms + '%';
+            hi.style.width = (me - ms) + '%';
+            hi.style.background = 'rgba(0, 33, 71, 0.08)';
+            hi.style.borderLeft = '1px dashed #002147';
+            hi.style.borderRight = '1px dashed #002147';
+            track.appendChild(hi);
+          }
+        }
+
+        (s.intervals || []).forEach((ival) => {
+          const st = new Date(ival.start_time);
+          const et = new Date(ival.end_time);
+          // Clip to our 9-18 window so off-hours bookings still render
+          // at the edge rather than vanish silently.
+          const left = pct(st);
+          const right = pct(et);
+          if (right <= left) return;
+          const block = document.createElement('div');
+          block.className = 'sched-block' + (ival.status === 'tentative' ? ' tentative' : '');
+          block.style.left = left + '%';
+          block.style.width = Math.max(2, right - left) + '%';
+          block.textContent = ival.status === 'tentative' ? 'tentative' : 'busy';
+          block.title = `${st.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${et.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+          track.appendChild(block);
+        });
+
+        row.appendChild(label);
+        row.appendChild(track);
+        grid.appendChild(row);
+      });
+    }
+
+    // Office.js exposes the meeting's attendees as an async collection.
+    // We pull the required list and filter to email addresses — display
+    // names alone aren't probeable through /freebusy.
+    function getRequiredAttendeeEmails(item) {
+      return new Promise((resolve) => {
+        if (!item.requiredAttendees || typeof item.requiredAttendees.getAsync !== 'function') {
+          resolve([]);
+          return;
+        }
+        item.requiredAttendees.getAsync((res) => {
+          if (res.status !== Office.AsyncResultStatus.Succeeded) { resolve([]); return; }
+          const emails = (res.value || [])
+            .map(a => (a.emailAddress || '').trim().toLowerCase())
+            .filter(Boolean);
+          resolve(emails);
+        });
+      });
+    }
+
+    // getValueOrDefault — same shape as getValue() but falls back to
+    // a supplied default when the property is missing (compose-mode
+    // appointment that hasn't set start/end yet).
+    function getValueOrDefault(prop, fallback) {
+      return new Promise((resolve) => {
+        if (!prop || typeof prop.getAsync !== 'function') { resolve(fallback); return; }
+        prop.getAsync((res) => {
+          if (res.status === Office.AsyncResultStatus.Succeeded && res.value) {
+            resolve(res.value);
+          } else {
+            resolve(fallback);
+          }
+        });
+      });
+    }
+
+    function todayAt(hour) {
+      const d = new Date(); d.setHours(hour, 0, 0, 0);
+      return d.toISOString();
+    }
+  </script>
+</body>
+</html>

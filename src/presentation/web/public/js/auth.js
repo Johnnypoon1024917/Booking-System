@@ -16,6 +16,13 @@ const STRINGS = {
     continue: 'Continue',
     signingIn: 'Signing in…',
     badCreds: 'Invalid credentials. Please try again.',
+    mustChangeDesc: 'Your administrator issued a temporary password. Choose a new one to continue.',
+    newPassword: 'New password',
+    confirmPassword: 'Confirm password',
+    setPasswordContinue: 'Set password & continue',
+    settingPassword: 'Setting password…',
+    passwordsMismatch: 'Passwords do not match.',
+    changeFailed: 'Could not set the new password.',
     footer: 'Single sign-on protected · Compliant with HK PDPO'
   },
   'zh-Hant': {
@@ -32,6 +39,13 @@ const STRINGS = {
     continue: '繼續',
     signingIn: '登入中…',
     badCreds: '帳號或密碼錯誤，請再試。',
+    mustChangeDesc: '管理員為您設定了臨時密碼，請設定新密碼以繼續。',
+    newPassword: '新密碼',
+    confirmPassword: '確認密碼',
+    setPasswordContinue: '設定密碼並繼續',
+    settingPassword: '設定中…',
+    passwordsMismatch: '兩次輸入的密碼不一致。',
+    changeFailed: '無法設定新密碼。',
     footer: '單一登入保護 · 符合香港個人資料條例'
   },
   'zh-Hans': {
@@ -48,6 +62,13 @@ const STRINGS = {
     continue: '继续',
     signingIn: '登录中…',
     badCreds: '账号或密码错误，请重试。',
+    mustChangeDesc: '管理员为您设置了临时密码，请设置新密码以继续。',
+    newPassword: '新密码',
+    confirmPassword: '确认密码',
+    setPasswordContinue: '设置密码并继续',
+    settingPassword: '设置中…',
+    passwordsMismatch: '两次输入的密码不一致。',
+    changeFailed: '无法设置新密码。',
     footer: '单点登录保护 · 符合香港个人资料条例'
   }
 }
@@ -92,6 +113,14 @@ const errBox = document.getElementById('loginError')
 const submit = document.getElementById('submitBtn')
 const submitLabel = submit.querySelector('span')
 
+// Forced first-login password reset state + elements.
+const changeForm = document.getElementById('changeForm')
+const changeErr = document.getElementById('changeError')
+const changeBtn = document.getElementById('changeBtn')
+const changeLabel = changeBtn.querySelector('span')
+let pendingChangeToken = null
+let pendingUser = null
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault()
   errBox.classList.remove('show')
@@ -110,6 +139,19 @@ form.addEventListener('submit', async (e) => {
     })
     if (!res.ok) throw new Error(STRINGS[locale].badCreds)
     const data = await res.json()
+    // Admin-issued initial password: swap to the reset form instead of
+    // completing the session. The change-token gates the next step.
+    if (data.must_change_password) {
+      pendingChangeToken = data.change_token
+      pendingUser = u
+      form.style.display = 'none'
+      changeForm.style.display = ''
+      submit.disabled = false
+      submit.querySelector('svg')?.remove()
+      submitLabel.textContent = STRINGS[locale].continue
+      document.getElementById('newPassword').focus()
+      return
+    }
     localStorage.setItem('fsd_jwt', data.token)
     localStorage.setItem('fsd_role', data.role)
     localStorage.setItem('fsd_user', u)
@@ -121,5 +163,45 @@ form.addEventListener('submit', async (e) => {
     submit.disabled = false
     submit.querySelector('svg')?.remove()
     submitLabel.textContent = STRINGS[locale].continue
+  }
+})
+
+// Complete the forced reset: validate, POST the new password with the
+// scoped change-token, then store the returned session and enter the app.
+changeForm.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  changeErr.classList.remove('show')
+  const np = document.getElementById('newPassword').value
+  const cp = document.getElementById('confirmPassword').value
+  if (np.length < 8) {
+    changeErr.textContent = STRINGS[locale].changeFailed
+    changeErr.classList.add('show')
+    return
+  }
+  if (np !== cp) {
+    changeErr.textContent = STRINGS[locale].passwordsMismatch
+    changeErr.classList.add('show')
+    return
+  }
+  changeBtn.disabled = true
+  changeLabel.textContent = STRINGS[locale].settingPassword
+  try {
+    const res = await fetch('/api/v1/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ change_token: pendingChangeToken, new_password: np })
+    })
+    if (!res.ok) throw new Error(STRINGS[locale].changeFailed)
+    const data = await res.json()
+    localStorage.setItem('fsd_jwt', data.token)
+    localStorage.setItem('fsd_role', data.role)
+    localStorage.setItem('fsd_user', pendingUser)
+    sessionStorage.setItem('fsd_jwt', data.token)
+    window.location.href = '/app/'
+  } catch (err) {
+    changeErr.textContent = err.message || STRINGS[locale].changeFailed
+    changeErr.classList.add('show')
+    changeBtn.disabled = false
+    changeLabel.textContent = STRINGS[locale].setPasswordContinue
   }
 })

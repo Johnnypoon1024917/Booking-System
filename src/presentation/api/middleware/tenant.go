@@ -65,17 +65,12 @@ func (tm *TenantMiddleware) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Extract tenant_id from claims
+		// Extract tenant_id from claims. Every authenticated principal —
+		// including System Admin — MUST present a tenant scope; cross-tenant
+		// operations must be performed by re-issuing a token bound to the
+		// target tenant, never by waving through a tenant-less request.
 		tenantIDStr, ok := claims["tenant_id"].(string)
 		if !ok || tenantIDStr == "" {
-			// If no tenant_id in claims, check if it's a system admin (they might not have tenant_id)
-			userRole, _ := claims["role"].(string)
-			if userRole == "System Admin" {
-				// System admins might operate outside tenant context
-				// Allow the request to proceed without tenant context
-				next.ServeHTTP(w, r)
-				return
-			}
 			http.Error(w, "Tenant ID not found in token claims", http.StatusUnauthorized)
 			return
 		}
@@ -162,10 +157,17 @@ func extractClaimsFromRequest(r *http.Request) jwt.MapClaims {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		return JwtSecretKey, nil
-	})
-
+	token, err := jwt.Parse(
+		tokenStr,
+		func(t *jwt.Token) (interface{}, error) {
+			if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return JwtSecretKey, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithExpirationRequired(),
+	)
 	if err != nil || !token.Valid {
 		return nil
 	}

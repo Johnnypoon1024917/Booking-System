@@ -3,6 +3,8 @@ import { getToken } from './api'
 
 const Dashboard       = () => import('./views/Dashboard.vue')
 const Search          = () => import('./views/Search.vue')
+const NewBooking      = () => import('./views/NewBooking.vue')
+const CalendarView    = () => import('./views/CalendarView.vue')
 const MyBookings      = () => import('./views/MyBookings.vue')
 const Approvals       = () => import('./views/Approvals.vue')
 const Admin           = () => import('./views/Admin.vue')
@@ -16,9 +18,15 @@ const AdminApprovalChain = () => import('./views/AdminApprovalChain.vue')
 const AdminWebhooks      = () => import('./views/AdminWebhooks.vue')
 const AdminIntegrations  = () => import('./views/AdminIntegrations.vue')
 const AdminPermissions   = () => import('./views/AdminPermissions.vue')
+const AdminLocationGroups = () => import('./views/AdminLocationGroups.vue')
+const AdminBroadcasts     = () => import('./views/AdminBroadcasts.vue')
 const AdminScim          = () => import('./views/AdminScim.vue')
 const Reports            = () => import('./views/Reports.vue')
 const Profile            = () => import('./views/Profile.vue')
+const Settings           = () => import('./views/Settings.vue')
+const AdminVisitors      = () => import('./views/AdminVisitors.vue')
+const AdminSensors       = () => import('./views/AdminSensors.vue')
+const AdminInvoices      = () => import('./views/AdminInvoices.vue')
 const Kiosk              = () => import('./views/Kiosk.vue')
 
 const adminRoles = ['System Admin', 'Security Admin']
@@ -29,10 +37,16 @@ export const router = createRouter({
   routes: [
     { path: '/',          name: 'dashboard', component: Dashboard,  meta: { auth: true } },
     { path: '/search',    name: 'search',    component: Search,     meta: { auth: true } },
+    { path: '/book',      name: 'book',      component: NewBooking, meta: { auth: true } },
+    { path: '/calendar',  name: 'calendar',  component: CalendarView, meta: { auth: true } },
     { path: '/my',        name: 'my',        component: MyBookings, meta: { auth: true } },
     { path: '/approvals', name: 'approvals', component: Approvals,  meta: { auth: true } },
     { path: '/reports',   name: 'reports',   component: Reports,    meta: { auth: true, roles: adminRoles } },
     { path: '/me',        name: 'profile',   component: Profile,    meta: { auth: true } },
+    { path: '/settings',  name: 'settings',  component: Settings,   meta: { auth: true } },
+    { path: '/admin/visitors', name: 'admin-visitors', component: AdminVisitors, meta: { auth: true, roles: adminRoles } },
+    { path: '/admin/sensors',  name: 'admin-sensors',  component: AdminSensors,  meta: { auth: true, roles: adminRoles } },
+    { path: '/admin/invoices', name: 'admin-invoices', component: AdminInvoices, meta: { auth: true, roles: adminRoles } },
 
     // Admin module
     { path: '/admin',             name: 'admin',             component: Admin,            meta: { auth: true, roles: adminRoles } },
@@ -46,6 +60,8 @@ export const router = createRouter({
     { path: '/admin/webhooks',        name: 'admin-webhooks',        component: AdminWebhooks,       meta: { auth: true, roles: adminRoles } },
     { path: '/admin/integrations',    name: 'admin-integrations',    component: AdminIntegrations,   meta: { auth: true, roles: adminRoles } },
     { path: '/admin/permissions',     name: 'admin-permissions',     component: AdminPermissions,    meta: { auth: true, roles: adminRoles } },
+    { path: '/admin/location-groups', name: 'admin-location-groups', component: AdminLocationGroups, meta: { auth: true, roles: adminRoles } },
+    { path: '/admin/broadcasts',      name: 'admin-broadcasts',      component: AdminBroadcasts,     meta: { auth: true, roles: adminRoles } },
     { path: '/admin/scim',            name: 'admin-scim',            component: AdminScim,           meta: { auth: true, roles: adminRoles } },
 
     { path: '/kiosk/:resourceId', name: 'kiosk', component: Kiosk, meta: { auth: false } }

@@ -29,6 +29,7 @@ type UpdateRequest struct {
 	NewStart   time.Time
 	NewEnd     time.Time
 	MeetingURL *string // pointer so we can distinguish "unset" from "clear"
+	Title      *string // pointer so we can distinguish "unset" from "clear" (QA #6)
 }
 
 func (uc *UpdateBookingUseCase) Execute(ctx context.Context, req UpdateRequest) (booking.Booking, error) {
@@ -36,7 +37,7 @@ func (uc *UpdateBookingUseCase) Execute(ctx context.Context, req UpdateRequest) 
 	if err != nil {
 		return booking.Booking{}, err
 	}
-	if b.Status == "Cancelled" || b.Status == booking.StatusNoShow {
+	if b.Status == booking.StatusCancelled || b.Status == booking.StatusNoShow {
 		return booking.Booking{}, errors.New("cannot update a cancelled or expired booking")
 	}
 
@@ -61,6 +62,10 @@ func (uc *UpdateBookingUseCase) Execute(ctx context.Context, req UpdateRequest) 
 		b.MeetingURL = *req.MeetingURL
 	}
 
+	if req.Title != nil {
+		b.Title = *req.Title
+	}
+
 	if err := uc.bookings.Save(ctx, b); err != nil {
 		return booking.Booking{}, err
 	}
@@ -75,13 +80,13 @@ func (uc *UpdateBookingUseCase) Cancel(ctx context.Context, bookingID, reason st
 	if err != nil {
 		return err
 	}
-	if b.Status == "Cancelled" {
+	if b.Status == booking.StatusCancelled {
 		return nil // idempotent
 	}
 	if err := uc.bookings.Cancel(ctx, bookingID, reason); err != nil {
 		return err
 	}
-	b.Status = "Cancelled"
+	b.Status = booking.StatusCancelled
 	uc.publish("BOOKING_CANCELLED", b)
 	return nil
 }

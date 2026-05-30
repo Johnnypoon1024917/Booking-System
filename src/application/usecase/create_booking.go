@@ -39,6 +39,14 @@ type ChainMaterializer interface {
 	Materialize(ctx context.Context, b booking.Booking, res *booking.Resource) (int, error)
 }
 
+// PrivilegePolicy enforces the FSD "Room Privilege Setup by Organisation
+// Hierarchy" matrix at booking time: it maps the booker's role to an
+// assigned location scope and an approval workflow. Returns whether the
+// booking must be denied (out of scope) or forced into approval.
+type PrivilegePolicy interface {
+	Evaluate(ctx context.Context, tenantID, userID, resourceLocation string) (forceApproval bool, deny bool, reason string, err error)
+}
+
 type CreateBookingUseCase struct {
 	bookingRepo  booking.Repository
 	adminRepo    admin.AdminRepository
@@ -47,6 +55,7 @@ type CreateBookingUseCase struct {
 	chain        ChainMaterializer
 	broker       MessageBroker
 	zoomMaskBase string
+	privilege    PrivilegePolicy
 }
 
 // NewCreateBookingUseCase wires the booking pipeline. resourceRepo and
@@ -80,6 +89,13 @@ func (uc *CreateBookingUseCase) WithZoomMaskBase(base string) *CreateBookingUseC
 	return uc
 }
 
+// WithPrivilegePolicy attaches the org-hierarchy privilege matrix. When
+// set, the booker's role scope/workflow is enforced before persistence.
+func (uc *CreateBookingUseCase) WithPrivilegePolicy(p PrivilegePolicy) *CreateBookingUseCase {
+	uc.privilege = p
+	return uc
+}
+
 // WithChainMaterializer attaches the approval chain. When set, after a
 // booking is saved the use case asks the chain whether a multi-level
 // rule applies; if so, it materializes the steps and forces the booking
@@ -96,7 +112,17 @@ type Request struct {
 	UserID     string
 	Start, End time.Time
 	MeetingURL string            // optional dynamic Zoom/Teams URL
+	Title      string            // meeting subject shown on calendars
+	IsPrivate  bool              // Outlook-style "Private" flag — strips PII for non-owners
 	CustomData map[string]string // tenant-defined custom fields
+	Services   []ServiceRequest  // ADDED: List of requested services
+}
+
+// ServiceRequest represents a service item to be added to a booking.
+type ServiceRequest struct {
+	ServiceID string `json:"service_id"`
+	Quantity  int    `json:"quantity"`
+	Notes     string `json:"notes"`
 }
 
 // Result describes what was persisted so the caller can decide what to
@@ -208,6 +234,24 @@ func (uc *CreateBookingUseCase) ExecuteRequest(ctx context.Context, req Request)
 		maskedURL = fmt.Sprintf("%s?target=%s", uc.zoomMaskBase, req.MeetingURL)
 	}
 
+	// 4b. Org-hierarchy privilege matrix (Module D). Out-of-scope bookings
+	//     are rejected; restricted/supervisor workflows force approval.
+	if uc.privilege != nil && req.TenantID != "" {
+		loc := ""
+		if resource != nil {
+			loc = resource.Location
+		}
+		force, deny, reason, perr := uc.privilege.Evaluate(ctx, req.TenantID, req.UserID, loc)
+		if perr == nil {
+			if deny {
+				return Result{}, fmt.Errorf("booking rejected: %s", reason)
+			}
+			if force {
+				requiresApproval = true
+			}
+		}
+	}
+
 	status := booking.StatusConfirmed
 	if requiresApproval {
 		status = booking.StatusPendingApproval
@@ -231,12 +275,25 @@ func (uc *CreateBookingUseCase) ExecuteRequest(ctx context.Context, req Request)
 		Version:     1,
 		CreatedAt:   time.Now(),
 		BookingMode: bookingMode,
+		Title:       req.Title,
+		IsPrivate:   req.IsPrivate,
 	}
 	if err := uc.bookingRepo.Save(ctx, newBooking); err != nil {
 		if errors.Is(err, booking.ErrConcurrencyConflict) {
 			return Result{}, err
 		}
 		return Result{}, fmt.Errorf("failed to persist booking: %w", err)
+	}
+
+	// Save associated services, if any.
+	if len(req.Services) > 0 {
+		for _, s := range req.Services {
+			err := uc.bookingRepo.AddServiceToBooking(ctx, newBooking.ID, s.ServiceID, s.Quantity, s.Notes)
+			if err != nil {
+				// Log the error but don't fail the whole booking. Service attachment is non-critical.
+				fmt.Printf("WARN: could not attach service %s to booking %s: %v\n", s.ServiceID, newBooking.ID, err)
+			}
+		}
 	}
 
 	// 6. Multi-level approval chain (best-effort). If a tenant rule

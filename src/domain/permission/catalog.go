@@ -44,6 +44,8 @@ const (
 	CustomizationManage = "customization.manage"
 	AuditView           = "audit.view"
 	TenantManage        = "tenant.manage"
+	ServiceManage       = "service.manage"
+	BroadcastManage     = "broadcast.manage"
 )
 
 // Catalog returns the full set of permission keys grouped for the UI.
@@ -57,11 +59,14 @@ func Catalog() []Group {
 		{Title: "Resources", Keys: []string{
 			ResourceCreate, ResourceUpdate, ResourceDelete, ResourceSplit,
 		}},
+		{Title: "Services", Keys: []string{
+			ServiceManage,
+		}},
 		{Title: "Users", Keys: []string{
 			UserCreate, UserUpdate, UserDeactivate,
 		}},
 		{Title: "Workspace", Keys: []string{
-			DepartmentManage, HolidayManage, HolidayImport,
+			DepartmentManage, HolidayManage, HolidayImport, BroadcastManage,
 		}},
 		{Title: "Approvals", Keys: []string{
 			ApprovalDecide, ApprovalDelegate, ApprovalBypass, ApprovalRuleManage,

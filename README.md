@@ -1,7 +1,7 @@
 Deployment
 
 docker compose down
-docker compose build --progress=plain
+docker compose build mrbs_api --no-cache
 docker compose up -d
 
 Fresh Deploy

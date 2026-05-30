@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"strings"
 	"text/template"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"fsd-mrbs/src/infrastructure/email"
 	"fsd-mrbs/src/infrastructure/postgres"
 	"fsd-mrbs/src/infrastructure/rabbitmq"
+	"fsd-mrbs/src/infrastructure/webpush"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -82,6 +84,14 @@ func main() {
 	}
 
 	sender := pickSender(logger)
+	pushSender, err := webpush.NewSenderFromEnv(os.Getenv)
+	if err != nil {
+		logger.Warn("webpush sender disabled", "err", err)
+	} else if pushSender == nil {
+		logger.Info("VAPID keys unset; web push disabled")
+	} else {
+		logger.Info("webpush sender ready")
+	}
 	logger.Info("notification worker ready")
 
 	for d := range msgs {
@@ -96,8 +106,102 @@ func main() {
 			d.Nack(false, true)
 			continue
 		}
+		// Web push is best-effort: a failure here MUST NOT requeue the
+		// message because email already went out. We just log and move on.
+		if pushSender != nil {
+			fanOutWebPush(context.Background(), pool, pushSender, ev, logger)
+		}
 		d.Ack(false)
 	}
+}
+
+// fanOutWebPush sends an empty-body push to every active subscription
+// owned by the booking's user. A 410/404 from the push service is taken
+// as a signal to delete the dead subscription so the worker doesn't keep
+// retrying it.
+func fanOutWebPush(ctx context.Context, pool *pgxpool.Pool, sender *webpush.Sender, ev bookingEvent, logger *slog.Logger) {
+	if ev.UserID == "" {
+		return
+	}
+	rows, err := pool.Query(ctx,
+		`SELECT id::text, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1::uuid`,
+		ev.UserID)
+	if err != nil {
+		logger.Warn("push subscriptions query", "err", err)
+		return
+	}
+	defer rows.Close()
+	type sub struct {
+		ID, Endpoint, P256dh, Auth string
+	}
+	var subs []sub
+	for rows.Next() {
+		var s sub
+		if rows.Scan(&s.ID, &s.Endpoint, &s.P256dh, &s.Auth) == nil {
+			subs = append(subs, s)
+		}
+	}
+	payload := pushPayloadFor(ev)
+	for _, s := range subs {
+		sub := webpush.Subscription{Endpoint: s.Endpoint, P256dh: s.P256dh, Auth: s.Auth}
+		var (
+			res *webpush.Result
+			err error
+		)
+		// Native push tokens (Capacitor) go through the same endpoint
+		// shape but we can't aes128gcm-encrypt them — the OS push
+		// services don't follow RFC 8291. Detect those and fall back to
+		// the empty-body trigger; the mobile shell fetches content over
+		// the API. Standard Web Push subscriptions get an encrypted
+		// payload so the service worker can render the notification
+		// without an extra round-trip.
+		if strings.HasPrefix(s.Endpoint, "native:") || s.P256dh == "" || s.P256dh == "native" {
+			res, err = sender.Send(ctx, sub, 60, "high")
+		} else {
+			res, err = sender.SendEncrypted(ctx, sub, payload, 60, "high")
+		}
+		if err != nil {
+			logger.Warn("push send", "err", err, "endpoint", s.Endpoint)
+			continue
+		}
+		if res.IsExpired() {
+			if _, derr := pool.Exec(ctx, `DELETE FROM push_subscriptions WHERE id = $1`, s.ID); derr != nil {
+				logger.Warn("push prune", "err", derr)
+			}
+		}
+	}
+}
+
+// pushPayloadFor builds the JSON envelope the service worker (push-sw.js)
+// expects: title, body, url. We deliberately do NOT carry meeting subject
+// or guest names in the body — the push payload is visible on a locked
+// screen, so we limit it to the minimum the user needs to decide whether
+// to open the app for the full detail.
+func pushPayloadFor(ev bookingEvent) []byte {
+	title := "FSD MRBS"
+	body := "Your booking has been updated."
+	switch ev.Event {
+	case "BOOKING_CREATED":
+		body = "Booking confirmed."
+	case "BOOKING_PENDING_APPROVAL":
+		body = "Booking submitted for approval."
+	case "BOOKING_APPROVED":
+		body = "Your booking was approved."
+	case "BOOKING_REJECTED":
+		body = "Your booking was rejected."
+	case "BOOKING_UPDATED":
+		body = "Your booking was updated."
+	case "BOOKING_CANCELLED":
+		body = "Your booking was cancelled."
+	}
+	url := "/app/my"
+	if ev.BookingID != "" {
+		url = "/app/my?booking=" + ev.BookingID
+	}
+	b, _ := json.Marshal(map[string]any{
+		"title": title, "body": body, "url": url, "tag": "mrbs-" + ev.BookingID,
+	})
+	return b
 }
 
 func pickSender(logger *slog.Logger) email.Sender {

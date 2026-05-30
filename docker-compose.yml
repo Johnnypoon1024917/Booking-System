@@ -6,15 +6,38 @@ services:
       context: .
       dockerfile: Dockerfile
     image: fsd-mrbs:latest
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      DB_DSN: "postgres://mrbs_admin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_db:5432/fsd_mrbs?sslmode=disable"
+      # NOTE: sslmode=disable is permitted only because traffic stays on the
+      # compose-internal network. Production deploys MUST set sslmode=require
+      # (or verify-full) and route over TLS — the API will refuse to start
+      # otherwise unless ALLOW_INSECURE_DB=true is set explicitly.
+      ALLOW_INSECURE_DB: "${ALLOW_INSECURE_DB:-true}"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DEFAULT_TENANT_ID: "00000000-0000-0000-0000-000000000001"
       ZOOM_MASK_BASE: "https://ess.hkfsd.hksarg/redirect"
       LISTEN_ADDR: ":8080"
-      JWT_SECRET: "${JWT_SECRET:-}"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required (>=32 bytes; do not commit to source)}"
+      # Local-dev escape hatch only: lets the API mint an in-memory JWT
+      # signing key when JWT_SECRET is intentionally unset. NEVER set in prod.
+      ALLOW_DEV_JWT_EPHEMERAL_KEY: "${ALLOW_DEV_JWT_EPHEMERAL_KEY:-false}"
+      # Set ALLOW_DEV_LOGIN=true ONLY for local development. When true the
+      # built-in `admin/admin123` and `officer/pass` accounts work. The
+      # default (false) refuses every login unless LDAP_URL is configured.
+      ALLOW_DEV_LOGIN: "${ALLOW_DEV_LOGIN:-false}"
+      INTEGRATION_SECRET_KEY: "${INTEGRATION_SECRET_KEY:-}"
+      KMS_PROVIDER: "${KMS_PROVIDER:-env}"
+      ALLOW_DEV_INTEGRATION_EPHEMERAL: "${ALLOW_DEV_INTEGRATION_EPHEMERAL:-false}"
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
+      WEBAUTHN_RP_NAME: "${WEBAUTHN_RP_NAME:-FSD MRBS}"
+      WEBAUTHN_ORIGIN: "${WEBAUTHN_ORIGIN:-http://localhost:8080}"
+      MFA_ISSUER: "${MFA_ISSUER:-FSD MRBS}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:8080}"
+      TENANT_TAX_RATE: "${TENANT_TAX_RATE:-0}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       APP_ENV: "${APP_ENV:-development}"
@@ -33,11 +56,17 @@ services:
   # Reuses the same image. Falls back to log-only sender if SMTP_HOST unset.
   mrbs_worker:
     image: fsd-mrbs:latest
+    restart: unless-stopped
     depends_on:
       mrbs_api: { condition: service_started }
       rabbitmq: { condition: service_healthy }
     environment:
-      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      DB_DSN: "postgres://mrbs_admin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_db:5432/fsd_mrbs?sslmode=disable"
+      # NOTE: sslmode=disable is permitted only because traffic stays on the
+      # compose-internal network. Production deploys MUST set sslmode=require
+      # (or verify-full) and route over TLS — the API will refuse to start
+      # otherwise unless ALLOW_INSECURE_DB=true is set explicitly.
+      ALLOW_INSECURE_DB: "${ALLOW_INSECURE_DB:-true}"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       SMTP_HOST: "${SMTP_HOST:-}"
       SMTP_PORT: "${SMTP_PORT:-587}"
@@ -45,18 +74,36 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       SMTP_FROM: "${SMTP_FROM:-no-reply@fsd-mrbs.local}"
       SMTP_TLS: "${SMTP_TLS:-false}"
+      # The worker imports the integration + webpush packages at boot,
+      # which initialise the KMS provider and read VAPID material. Both
+      # are needed for push delivery; both fail closed if missing.
+      INTEGRATION_SECRET_KEY: "${INTEGRATION_SECRET_KEY:-}"
+      KMS_PROVIDER: "${KMS_PROVIDER:-env}"
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-mailto:noreply@fsd-mrbs.local}"
     command: ["/app/worker"]
 
   # ----- Webhook dispatcher --------------------------------------------------
   # HMAC-signs payloads, retries with exponential backoff, parks after 5 fails.
   mrbs_webhook_worker:
     image: fsd-mrbs:latest
+    restart: unless-stopped
     depends_on:
       mrbs_api: { condition: service_started }
       rabbitmq: { condition: service_healthy }
     environment:
-      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      DB_DSN: "postgres://mrbs_admin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_db:5432/fsd_mrbs?sslmode=disable"
+      # NOTE: sslmode=disable is permitted only because traffic stays on the
+      # compose-internal network. Production deploys MUST set sslmode=require
+      # (or verify-full) and route over TLS — the API will refuse to start
+      # otherwise unless ALLOW_INSECURE_DB=true is set explicitly.
+      ALLOW_INSECURE_DB: "${ALLOW_INSECURE_DB:-true}"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      # webhook_worker imports infrastructure/integration transitively;
+      # the KMS provider must have a key to satisfy init-time loading.
+      INTEGRATION_SECRET_KEY: "${INTEGRATION_SECRET_KEY:-}"
+      KMS_PROVIDER: "${KMS_PROVIDER:-env}"
     command: ["/app/webhook_worker"]
 
   # ----- Microsoft Graph (Outlook) sync -------------------------------------
@@ -64,24 +111,46 @@ services:
   # configured Microsoft credentials in /admin/integrations.
   mrbs_graph_worker:
     image: fsd-mrbs:latest
+    restart: unless-stopped
     depends_on:
       mrbs_api: { condition: service_started }
       rabbitmq: { condition: service_healthy }
     environment:
-      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      DB_DSN: "postgres://mrbs_admin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_db:5432/fsd_mrbs?sslmode=disable"
+      # NOTE: sslmode=disable is permitted only because traffic stays on the
+      # compose-internal network. Production deploys MUST set sslmode=require
+      # (or verify-full) and route over TLS — the API will refuse to start
+      # otherwise unless ALLOW_INSECURE_DB=true is set explicitly.
+      ALLOW_INSECURE_DB: "${ALLOW_INSECURE_DB:-true}"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       INTEGRATION_SECRET_KEY: "${INTEGRATION_SECRET_KEY:-}"
+      KMS_PROVIDER: "${KMS_PROVIDER:-env}"
     command: ["/app/graph_worker"]
 
   # ----- Background scheduler ------------------------------------------------
   # Auto-release no-shows, HKO poll, gov.hk holiday import.
   mrbs_scheduler:
     image: fsd-mrbs:latest
+    restart: unless-stopped
     depends_on:
       mrbs_api: { condition: service_started }
       rabbitmq: { condition: service_healthy }
     environment:
-      DB_DSN: postgres://mrbs_admin:SecurePass123!@postgres_db:5432/fsd_mrbs?sslmode=disable
+      DB_DSN: "postgres://mrbs_admin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_db:5432/fsd_mrbs?sslmode=disable"
+      # NOTE: sslmode=disable is permitted only because traffic stays on the
+      # compose-internal network. Production deploys MUST set sslmode=require
+      # (or verify-full) and route over TLS — the API will refuse to start
+      # otherwise unless ALLOW_INSECURE_DB=true is set explicitly.
+      ALLOW_INSECURE_DB: "${ALLOW_INSECURE_DB:-true}"
+      # Scheduler transitively imports infrastructure/integration too.
+      INTEGRATION_SECRET_KEY: "${INTEGRATION_SECRET_KEY:-}"
+      KMS_PROVIDER: "${KMS_PROVIDER:-env}"
+      # No-show auto-release tuning — see cmd/scheduler/main.go. Default
+      # OFF: admins use the manual "Mark as No-Show" button on Admin >
+      # Bookings (System Admin / Room Admin / Secretary). Set ENABLED=true
+      # to restore the Robin-style automatic sweep.
+      AUTO_RELEASE_ENABLED: "${AUTO_RELEASE_ENABLED:-false}"
+      AUTO_RELEASE_GRACE_MINUTES: "${AUTO_RELEASE_GRACE_MINUTES:-60}"
     command: ["/app/scheduler"]
 
   # ----- Postgres ------------------------------------------------------------
@@ -91,7 +160,7 @@ services:
     environment:
       POSTGRES_DB:       fsd_mrbs
       POSTGRES_USER:     mrbs_admin
-      POSTGRES_PASSWORD: SecurePass123!
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (set via env or .env)}"
     ports:
       - "5432:5432"
     volumes:

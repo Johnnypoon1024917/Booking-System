@@ -1,0 +1,24 @@
+{
+  "name": "fsd-booking-e2e",
+  "private": true,
+  "version": "1.1.0",
+  "description": "End-to-end + UI/UX quality automation for the FSD Booking System. Drives the SPA through the core booking flow (functional regression guards) and audits every page for product-grade UI quality: blank-screen/console/network health, layout overflow, responsive breakpoints, accessibility (axe WCAG 2.1 AA), and visual regression (light + dark).",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "smoke": "playwright test ui-smoke",
+    "layout": "playwright test layout-overflow responsive",
+    "a11y": "playwright test accessibility",
+    "dashboard": "playwright test dashboard",
+    "functional": "playwright test core-booking my-bookings",
+    "visual": "playwright test visual",
+    "visual:update": "playwright test visual --update-snapshots",
+    "report": "playwright show-report",
+    "install:browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "@playwright/test": "^1.49.0"
+  }
+}

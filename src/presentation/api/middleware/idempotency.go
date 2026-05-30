@@ -15,6 +15,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,7 +43,20 @@ func (m *IdempotencyMiddleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		// Look up the cached response first.
+		// Idempotency replay is sensitive: the cached body may contain the
+		// original caller's data. We MUST scope by (tenant_id, user_id) so a
+		// retry from a different identity that happens to reuse the same key
+		// cannot read the original response. Unauthenticated requests are
+		// never cached.
+		uid, _ := r.Context().Value("userID").(string)
+		tidUUID, ok := r.Context().Value(TenantIDKey).(uuid.UUID)
+		if uid == "" || !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		tid := tidUUID.String()
+
+		// Look up the cached response first, scoped to caller identity.
 		ctx := r.Context()
 		var (
 			code int
@@ -50,8 +64,9 @@ func (m *IdempotencyMiddleware) Wrap(next http.Handler) http.Handler {
 		)
 		err := m.pool.QueryRow(ctx,
 			`SELECT response_code, response_body FROM idempotency_keys
-              WHERE key = $1 AND request_path = $2 AND expires_at > NOW()`,
-			key, r.URL.Path,
+              WHERE key = $1 AND tenant_id = $2::uuid AND user_id = $3
+                AND request_path = $4 AND expires_at > NOW()`,
+			key, tid, uid, r.URL.Path,
 		).Scan(&code, &body)
 		if err == nil && code != 0 {
 			// Hit. Replay the original response.
@@ -73,12 +88,11 @@ func (m *IdempotencyMiddleware) Wrap(next http.Handler) http.Handler {
 		if buf.code < 200 || buf.code >= 300 {
 			return
 		}
-		uid, _ := r.Context().Value("userID").(string)
 		_, _ = m.pool.Exec(ctx,
-			`INSERT INTO idempotency_keys (key, user_id, request_path, response_code, response_body)
-              VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO idempotency_keys (key, tenant_id, user_id, request_path, response_code, response_body)
+              VALUES ($1, $2::uuid, $3, $4, $5, $6)
               ON CONFLICT (key) DO NOTHING`,
-			key, uid, r.URL.Path, buf.code, buf.body.Bytes())
+			key, tid, uid, r.URL.Path, buf.code, buf.body.Bytes())
 	})
 }
 

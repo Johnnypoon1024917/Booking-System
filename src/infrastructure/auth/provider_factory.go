@@ -171,6 +171,17 @@ func (f *ProviderFactory) createOAuth2Provider(config map[string]interface{}) (*
 		oauth2Config.ClientSecret = clientSecret
 	}
 
+	// OIDC issuer is required for id_token validation; without it the
+	// provider has no way to verify the iss claim.
+	if issuer, ok := config["issuer"].(string); ok {
+		oauth2Config.Issuer = issuer
+	}
+
+	// JWKS endpoint for signing-key lookup.
+	if jwks, ok := config["jwks_url"].(string); ok {
+		oauth2Config.JWKSURL = jwks
+	}
+
 	// Extract auth URL
 	if authURL, ok := config["auth_url"].(string); ok {
 		oauth2Config.AuthURL = authURL

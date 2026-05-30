@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>FSD Booking System — Permission Groups User Guide</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --line: #e3e6ea;
+    --text: #2f3640;
+    --muted: #7a8290;
+    --primary: #3498db;
+    --primary-dark: #2980b9;
+    --slate: #34495e;
+    --slate-deep: #2c3e50;
+    --ok: #27ae60;
+    --ok-bg: #dff7e6;
+    --warn: #e67e22;
+    --warn-bg: #fdf3e7;
+    --danger: #e74c3c;
+    --danger-bg: #fce4e4;
+    --info-bg: #eaf4fd;
+    --code-bg: #f4f6f8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", Tahoma, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.55;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 36px 80px; }
+  header.hero {
+    background: linear-gradient(135deg, var(--slate-deep), var(--slate));
+    color: #fff; padding: 36px 36px 30px; border-radius: 4px;
+    margin-bottom: 30px;
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 28px; font-weight: 500; letter-spacing: -.01em; }
+  header.hero p  { margin: 0; opacity: .85; font-size: 14px; }
+  header.hero .meta {
+    margin-top: 16px; display: flex; gap: 18px; flex-wrap: wrap;
+    font-size: 12px; opacity: .8;
+  }
+  header.hero .meta span { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* TOC */
+  nav.toc {
+    background: var(--card); border: 1px solid var(--line); border-radius: 3px;
+    padding: 14px 18px; margin-bottom: 24px;
+  }
+  nav.toc h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  nav.toc ol { margin: 0; padding-left: 22px; columns: 2; }
+  nav.toc ol li { padding: 2px 0; break-inside: avoid; }
+  nav.toc a { color: var(--text); text-decoration: none; }
+  nav.toc a:hover { color: var(--primary); }
+
+  /* Sections */
+  h2.section { font-size: 20px; font-weight: 500; margin: 40px 0 14px; color: var(--slate-deep); }
+  h2.section::after { content: ' »'; color: var(--muted); font-weight: 400; }
+  h3 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; color: var(--slate-deep); }
+  p { margin: 0 0 10px; }
+
+  /* Card */
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 3px;
+    padding: 18px 22px; margin-bottom: 18px;
+  }
+
+  /* Role tile */
+  .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .role-tile {
+    background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--primary);
+    border-radius: 3px; padding: 14px 18px;
+  }
+  .role-tile.system  { border-left-color: #2c3e50; }
+  .role-tile.security{ border-left-color: #8e44ad; }
+  .role-tile.room    { border-left-color: #3498db; }
+  .role-tile.secretary { border-left-color: #e67e22; }
+  .role-tile.general { border-left-color: #27ae60; }
+  .role-tile h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .role-tile .who { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
+  .role-tile p.desc { font-size: 13px; margin: 6px 0 0; }
+  .role-tile .key { font-family: Consolas, Menlo, monospace; font-size: 11px; background: var(--code-bg); padding: 1px 5px; border-radius: 2px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table th, table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table th { font-weight: 600; color: var(--text); background: #fafbfc; }
+  table.matrix th, table.matrix td { text-align: center; }
+  table.matrix th:first-child, table.matrix td:first-child { text-align: left; }
+  table.matrix th.group { background: var(--slate); color: #fff; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  table.matrix td.key { font-family: Consolas, Menlo, monospace; font-size: 11px; color: var(--muted); }
+  table.matrix td.label { font-weight: 500; }
+  .yes { color: var(--ok); font-weight: 700; }
+  .no  { color: #c0c6ce; }
+
+  /* Code */
+  code, pre { font-family: Consolas, Menlo, "Courier New", monospace; font-size: 12.5px; }
+  code.inline { background: var(--code-bg); padding: 1px 6px; border-radius: 2px; color: #c7254e; }
+  pre {
+    background: #1e293b; color: #e2e8f0; padding: 12px 14px; border-radius: 3px;
+    overflow-x: auto; margin: 8px 0 14px;
+  }
+  pre.shell { background: #1e1e1e; }
+  pre code { color: inherit; background: transparent; padding: 0; }
+
+  /* Pills */
+  .pill {
+    display: inline-block; padding: 2px 9px; border-radius: 2px;
+    font-size: 11px; font-weight: 600;
+  }
+  .pill.ok    { background: var(--ok-bg);     color: var(--ok); }
+  .pill.warn  { background: var(--warn-bg);   color: var(--warn); }
+  .pill.danger{ background: var(--danger-bg); color: var(--danger); }
+  .pill.info  { background: var(--info-bg);   color: var(--primary); }
+
+  /* Alert */
+  .alert {
+    padding: 12px 16px; border-radius: 3px; margin: 12px 0;
+    font-size: 13px;
+  }
+  .alert.warn   { background: var(--warn-bg);   color: #8a4b00; border-left: 3px solid var(--warn); }
+  .alert.danger { background: var(--danger-bg); color: #842029; border-left: 3px solid var(--danger); }
+  .alert.info   { background: var(--info-bg);   color: #1c5d8d; border-left: 3px solid var(--primary); }
+
+  /* Test steps */
+  ol.steps { padding-left: 22px; }
+  ol.steps > li { padding: 4px 0 8px; }
+  ol.steps > li > strong { color: var(--slate-deep); }
+  .exp { color: var(--muted); font-size: 12.5px; margin-left: 4px; }
+  .exp::before { content: '→ '; }
+
+  /* Tab nav for test plans */
+  .test-block {
+    border-top: 4px solid var(--primary);
+    background: var(--card); border-radius: 3px;
+    padding: 18px 22px; margin: 18px 0;
+    box-shadow: 0 1px 2px rgba(15,23,42,.03);
+  }
+  .test-block.system   { border-top-color: #2c3e50; }
+  .test-block.security { border-top-color: #8e44ad; }
+  .test-block.room     { border-top-color: #3498db; }
+  .test-block.secretary{ border-top-color: #e67e22; }
+  .test-block.general  { border-top-color: #27ae60; }
+  .test-block header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .test-block header h3 { margin: 0; font-size: 16px; }
+  .test-block .creds { font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--muted); }
+
+  /* Misc */
+  .kbd { display: inline-block; padding: 1px 6px; font-size: 11px; background: #f8f9fa; border: 1px solid #ced4da; border-radius: 3px; font-family: monospace; }
+  ul.bullet { margin: 4px 0 8px 18px; padding: 0; }
+  ul.bullet li { padding: 2px 0; }
+
+  footer {
+    margin-top: 50px; padding-top: 18px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted); text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="hero">
+  <h1>Permission Groups — User &amp; Test Guide</h1>
+  <p>FSD Booking System · 5 built-in roles · 9 permission groups · 27 permission keys · tenant-configurable matrix.</p>
+  <div class="meta">
+    <span>📅 2026-05-23</span>
+    <span>🏢 default tenant <code class="inline" style="background:rgba(255,255,255,.15);color:#fff;">00000000-0000-0000-0000-000000000001</code></span>
+    <span>🔐 RBAC + per-permission gates</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#concepts">How permissions work</a></li>
+    <li><a href="#roles">The 5 built-in roles</a></li>
+    <li><a href="#catalog">Permission catalog (9 groups)</a></li>
+    <li><a href="#matrix">Role × permission matrix</a></li>
+    <li><a href="#accounts">Test accounts &amp; how to log in</a></li>
+    <li><a href="#test-system">Test plan — System Admin</a></li>
+    <li><a href="#test-security">Test plan — Security Admin</a></li>
+    <li><a href="#test-room">Test plan — Room Admin</a></li>
+    <li><a href="#test-secretary">Test plan — Secretary</a></li>
+    <li><a href="#test-general">Test plan — General User</a></li>
+    <li><a href="#customize">Customising the matrix</a></li>
+    <li><a href="#api">API verification (curl)</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="concepts" class="section">How permissions work</h2>
+
+<div class="card">
+  <p>Every meaningful action is gated by <b>two layers</b>:</p>
+  <ol class="bullet">
+    <li><b>Role gate</b> — coarse, controls what menus appear (e.g. only admins see <code class="inline">/admin/*</code>).</li>
+    <li><b>Permission gate</b> — fine-grained, checks one of the 27 permission keys before the API will perform an action.</li>
+  </ol>
+  <p>Role-to-permission mapping is stored per tenant in the <code class="inline">role_permissions</code> table and is editable through <b>Settings → Permissions</b>. Default mappings are seeded by migration <code class="inline">007_integrations_permissions.up.sql</code>.</p>
+  <p class="alert info">Tenants can rebalance the matrix without code changes. A "System Admin" in one tenant might lack <code class="inline">tenant.manage</code> in another tenant if the operator chose to lock that down.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="roles" class="section">The 5 built-in roles</h2>
+
+<div class="role-grid">
+  <div class="role-tile system">
+    <h3>System Admin</h3>
+    <div class="who">Full system access</div>
+    <p class="desc">Holds every permission by default. Can edit tenant branding, manage users, configure approval chains, view audit log. Use sparingly in production.</p>
+    <span class="key">RoleSystemAdmin</span>
+  </div>
+  <div class="role-tile security">
+    <h3>Security Admin</h3>
+    <div class="who">Manages permissions &amp; audit</div>
+    <p class="desc">Read-only across bookings, can decide approvals (VIP/Top Management), edits the permission matrix and views the audit log. Cannot create resources or tenants.</p>
+    <span class="key">RoleSecurityAdmin</span>
+  </div>
+  <div class="role-tile room">
+    <h3>Room Admin</h3>
+    <div class="who">Regional room manager</div>
+    <p class="desc">Owns the rooms in their assigned <code class="inline">region_access</code> regions. Can edit room metadata, split composite rooms, decide approvals for their region, manage holidays.</p>
+    <span class="key">RoleRoomAdmin</span>
+  </div>
+  <div class="role-tile secretary">
+    <h3>Secretary</h3>
+    <div class="who">Top Management gatekeeper (SDO-grade)</div>
+    <p class="desc">Only role that can <b>see</b> resources marked <code class="inline">asset_type = 'Top Management'</code> (DGFS bookings). Books on behalf, approves Tier-1 of the VIP chain. Must hold <code class="inline">grade='SDO'</code>.</p>
+    <span class="key">RoleSecretary</span>
+  </div>
+  <div class="role-tile general">
+    <h3>General User</h3>
+    <div class="who">Standard staff</div>
+    <p class="desc">Self-service booking, cancellation, and updates of their own bookings. Cannot see restricted resources, cannot decide approvals, no admin access.</p>
+    <span class="key">RoleGeneralUser</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="catalog" class="section">Permission catalog</h2>
+
+<div class="card">
+  <p>27 permission keys grouped into 9 functional areas. The catalog is the source of truth — adding a new key here automatically surfaces it in the Permissions matrix UI.</p>
+  <table>
+    <thead><tr><th style="width:18%;">Group</th><th style="width:30%;">Key</th><th>What it gates</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="5"><b>Bookings</b></td><td><code class="inline">booking.create</code></td><td>Create a new reservation (Search → Confirm flow).</td></tr>
+      <tr><td><code class="inline">booking.cancel</code></td><td>Cancel <i>own</i> booking.</td></tr>
+      <tr><td><code class="inline">booking.cancel_others</code></td><td>Cancel another user's booking (admin override).</td></tr>
+      <tr><td><code class="inline">booking.update</code></td><td>Modify date/time/attendees of an existing booking.</td></tr>
+      <tr><td><code class="inline">booking.read_all</code></td><td>View the global "All Bookings" list across users.</td></tr>
+
+      <tr><td rowspan="4"><b>Resources</b></td><td><code class="inline">resource.create</code></td><td>Create a new room/resource (admin Rooms page).</td></tr>
+      <tr><td><code class="inline">resource.update</code></td><td>Edit room metadata (capacity, equipment, location, hours).</td></tr>
+      <tr><td><code class="inline">resource.delete</code></td><td>Delete a room (cascades to bookings — destructive).</td></tr>
+      <tr><td><code class="inline">resource.split</code></td><td>Split a composite room into sub-rooms (Training 18A → 18A-Left/Right).</td></tr>
+
+      <tr><td><b>Services</b></td><td><code class="inline">service.manage</code></td><td>Manage bookable services beyond rooms (e.g. coffee carts).</td></tr>
+
+      <tr><td rowspan="3"><b>Users</b></td><td><code class="inline">user.create</code></td><td>Add a new user record (via AD upsert or SCIM).</td></tr>
+      <tr><td><code class="inline">user.update</code></td><td>Change role, grade, region access of any user.</td></tr>
+      <tr><td><code class="inline">user.deactivate</code></td><td>Set <code class="inline">is_active=FALSE</code> on a user.</td></tr>
+
+      <tr><td rowspan="4"><b>Workspace</b></td><td><code class="inline">department.manage</code></td><td>CRUD on departments and department managers.</td></tr>
+      <tr><td><code class="inline">holiday.manage</code></td><td>Add/remove tenant-specific holidays (booking blocked on these dates).</td></tr>
+      <tr><td><code class="inline">holiday.import</code></td><td>Pull official HKSAR Government holidays from data.gov.hk.</td></tr>
+      <tr><td><code class="inline">broadcast.manage</code></td><td>Send the marquee broadcast banner (Typhoon, facility closures).</td></tr>
+
+      <tr><td rowspan="4"><b>Approvals</b></td><td><code class="inline">approval.decide</code></td><td>Approve or reject a Pending booking.</td></tr>
+      <tr><td><code class="inline">approval.delegate</code></td><td>Forward an approval task to another user.</td></tr>
+      <tr><td><code class="inline">approval.bypass</code></td><td>Skip the chain and force-approve (incident-response only).</td></tr>
+      <tr><td><code class="inline">approval_rule.manage</code></td><td>Edit the rules that determine which booking needs which chain.</td></tr>
+
+      <tr><td rowspan="3"><b>Integrations</b></td><td><code class="inline">webhook.manage</code></td><td>Configure outbound HMAC-signed webhooks.</td></tr>
+      <tr><td><code class="inline">integration.manage</code></td><td>Set up Microsoft Graph / Outlook room-mailbox sync.</td></tr>
+      <tr><td><code class="inline">permission.manage</code></td><td>Edit this matrix itself.</td></tr>
+
+      <tr><td rowspan="3"><b>Insights</b></td><td><code class="inline">report.view</code></td><td>View the Reports page (charts + tables).</td></tr>
+      <tr><td><code class="inline">report.export</code></td><td>Download Reports as CSV.</td></tr>
+      <tr><td><code class="inline">audit.view</code></td><td>Read the immutable audit log (security review).</td></tr>
+
+      <tr><td rowspan="2"><b>Tenant</b></td><td><code class="inline">customization.manage</code></td><td>Edit tenant branding (logo, colours, dashboard widgets).</td></tr>
+      <tr><td><code class="inline">tenant.manage</code></td><td>Tenant-level operations (rename, suspend, hard delete).</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="matrix" class="section">Default role × permission matrix</h2>
+
+<div class="card">
+  <p>This is the matrix as seeded by migration <code class="inline">007</code>. <span class="yes">✓</span> = granted by default · <span class="no">·</span> = not granted. Edit per tenant under <b>Settings → Permissions</b>.</p>
+  <div style="overflow-x:auto;">
+  <table class="matrix">
+    <colgroup><col style="width:42%;"><col><col><col><col><col></colgroup>
+    <thead>
+      <tr>
+        <th>Permission</th>
+        <th>System<br>Admin</th>
+        <th>Security<br>Admin</th>
+        <th>Room<br>Admin</th>
+        <th>Secretary</th>
+        <th>General<br>User</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><th colspan="6" class="group">Bookings</th></tr>
+      <tr><td class="label">Create booking <span class="key" style="font-family:monospace;font-size:11px;color:#7a8290;">booking.create</span></td>
+        <td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td></tr>
+      <tr><td class="label">Cancel own booking <span class="key" style="font-family:monospace;font-size:11px;color:#7a8290;">booking.cancel</span></td>
+        <td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td></tr>
+      <tr><td class="label">Cancel others' booking <span class="key" style="font-family:monospace;font-size:11px;color:#7a8290;">booking.cancel_others</span></td>
+        <td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Update booking <span class="key" style="font-family:monospace;font-size:11px;color:#7a8290;">booking.update</span></td>
+        <td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td></tr>
+      <tr><td class="label">Read all bookings <span class="key" style="font-family:monospace;font-size:11px;color:#7a8290;">booking.read_all</span></td>
+        <td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Resources</th></tr>
+      <tr><td class="label">Create resource</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Update resource</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Delete resource</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Split composite resource</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Users</th></tr>
+      <tr><td class="label">Create user</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Update user</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Deactivate user</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Workspace</th></tr>
+      <tr><td class="label">Manage departments</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Manage holidays</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Import gov.hk holidays</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Manage broadcasts</td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Approvals</th></tr>
+      <tr><td class="label">Decide approvals</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Delegate approvals</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Bypass approval chain</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Manage approval rules</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Integrations</th></tr>
+      <tr><td class="label">Manage webhooks</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Manage integrations</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Manage permissions matrix</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Insights</th></tr>
+      <tr><td class="label">View reports</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Export reports CSV</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">View audit log</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+
+      <tr><th colspan="6" class="group">Tenant</th></tr>
+      <tr><td class="label">Manage customization (branding)</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+      <tr><td class="label">Tenant-level admin</td><td><span class="yes">✓</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td><td><span class="no">·</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="alert info" style="margin-top:14px;"><b>Note:</b> <code class="inline">broadcast.manage</code> is in the catalog but not granted to any role by default. The current code routes broadcast creation via the role check (<code class="inline">canAdmin</code>) in addition to the permission gate. Add it explicitly to <i>System Admin</i> via <b>Settings → Permissions</b> to follow least-privilege.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="accounts" class="section">Test accounts &amp; how to log in</h2>
+
+<div class="card">
+  <p>The dev/demo setup ships with a <b>directory simulator</b> (active when <code class="inline">LDAP_URL</code> is unset). It hard-codes three accounts so you can sign in immediately after <code class="inline">docker compose up -d</code>. Two more roles (<i>Security Admin</i>, <i>Room Admin</i>) don't have ready-made accounts — you'll create them through the admin UI in Step 0 below.</p>
+
+  <table>
+    <thead><tr><th>Username</th><th>Password</th><th>Role (simulator)</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code class="inline">admin</code></td><td><code class="inline">admin123</code></td><td>System Admin</td><td>Grade SDO · access to all 3 regions</td></tr>
+      <tr><td><code class="inline">secretary</code></td><td><code class="inline">pass</code></td><td>Secretary</td><td>Grade SDO (required for Top Management visibility)</td></tr>
+      <tr><td><code class="inline">officer</code></td><td><code class="inline">pass</code></td><td>General User</td><td>Region access: Hong Kong only</td></tr>
+    </tbody>
+  </table>
+
+  <div class="alert warn">
+    <b>Production reminder:</b> these simulator credentials disappear as soon as <code class="inline">LDAP_URL</code> is configured. In production, authentication is delegated to your AD/LDAP server.
+  </div>
+
+  <h3>Step 0 — Create Security-Admin and Room-Admin test users</h3>
+  <ol class="steps">
+    <li>Log in as <code class="inline">admin / admin123</code> at <a href="http://localhost:8080/app/login" target="_blank">http://localhost:8080/app/login</a>.</li>
+    <li>Click the <b>Settings</b> icon in the sidebar → click <b>Users</b> in the admin sub-nav.</li>
+    <li>Find the existing rows (or use the simulator to log them in once so they're upserted), then click the pencil icon. Set role:
+      <ul class="bullet">
+        <li><code class="inline">secretary</code> → already Secretary, leave it</li>
+        <li>Pick any other user and reassign to <b>Security Admin</b> for testing</li>
+        <li>Pick another user and reassign to <b>Room Admin</b>, set <i>Region Access</i> = <code class="inline">["Hong Kong"]</code></li>
+      </ul>
+    </li>
+    <li><b>Or</b> add two new lines to the simulator at <code class="inline">src/infrastructure/ad/ldap_service.go</code> for permanent test users:
+<pre><code>if username == "sec" && password == "pass" {
+    return &user.User{ID: "AD-3001", Username: username,
+        Role: user.RoleSecurityAdmin, IsActive: true,
+        DN: "CN=Sec Officer,OU=Security,DC=fsd,DC=gov,DC=hk"}, nil
+}
+if username == "roomadmin" && password == "pass" {
+    return &user.User{ID: "AD-3002", Username: username,
+        Role: user.RoleRoomAdmin, IsActive: true,
+        RegionAccess: []string{"Hong Kong"},
+        DN: "CN=Room Admin,OU=Facilities,DC=fsd,DC=gov,DC=hk"}, nil
+}</code></pre>
+      Then <code class="inline">docker compose up -d --build mrbs_api</code> to reload.
+    </li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="test-system" class="section">Test plan — System Admin</h2>
+
+<div class="test-block system">
+  <header>
+    <h3>System Admin</h3>
+    <span class="creds">admin / admin123</span>
+  </header>
+
+  <h3>Expected sidebar</h3>
+  <p>All 8 items visible: Dashboard · Schedule · New Booking · All Bookings · Report · Approvals · Broadcast · Settings.</p>
+
+  <h3>Test cases</h3>
+  <ol class="steps">
+    <li><strong>Create a room</strong> — Settings → Rooms → <b>+ Create</b>. Fill Name "Test Room A", Capacity 10, Region "Hong Kong", Location "Test Building 1/F", click Save.<br>
+      <span class="exp">A new row appears in the Rooms list with status "Active". Permission gate: <code class="inline">resource.create</code>.</span></li>
+
+    <li><strong>Edit room equipment</strong> — Click the pencil icon on "Test Room A", set Equipment = ["Projector","Whiteboard"], save.<br>
+      <span class="exp">Equipment chips render. Permission gate: <code class="inline">resource.update</code>.</span></li>
+
+    <li><strong>Split a composite room</strong> — Create a Composite parent room (Capacity 80, set <i>Composite mode</i> = Parent), then split into 2 child sub-rooms.<br>
+      <span class="exp">Parent + 2 children render in Rooms list. Permission gate: <code class="inline">resource.split</code>.</span></li>
+
+    <li><strong>Cancel another user's booking</strong> — Log in as <code class="inline">officer</code> in another browser, create a booking. Back in admin browser, Settings → All Bookings → click the cancel icon on that booking.<br>
+      <span class="exp">Status changes to Cancelled. Permission gate: <code class="inline">booking.cancel_others</code>.</span></li>
+
+    <li><strong>Edit tenant branding</strong> — Settings → Tenant Studio → change brand primary colour to <code class="inline">#dc2626</code>, save.<br>
+      <span class="exp">Sidebar accent shifts to red after reload. Permission gate: <code class="inline">customization.manage</code>.</span></li>
+
+    <li><strong>Open the audit log</strong> — open the URL <a href="http://localhost:8080/api/v1/admin/audit" target="_blank">/api/v1/admin/audit</a> (or via API).<br>
+      <span class="exp">Returns 200 with audit events from the actions above. Permission gate: <code class="inline">audit.view</code>.</span></li>
+
+    <li><strong>Import HK holidays</strong> — Settings → Tenant Studio → click <b>Sync Holidays</b>.<br>
+      <span class="exp">Holiday list under Settings → Holidays populates with the next year of gov.hk dates. Permission gate: <code class="inline">holiday.import</code>.</span></li>
+
+    <li><strong>Manage the permission matrix</strong> — Settings → Permissions → toggle a checkbox (e.g. give General User <code class="inline">approval.decide</code>), save.<br>
+      <span class="exp">Save succeeds. Permission gate: <code class="inline">permission.manage</code>. Revert before continuing.</span></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="test-security" class="section">Test plan — Security Admin</h2>
+
+<div class="test-block security">
+  <header>
+    <h3>Security Admin</h3>
+    <span class="creds">sec / pass (if seeded) — or reassigned user</span>
+  </header>
+
+  <h3>Expected sidebar</h3>
+  <p>Dashboard · Schedule · New Booking · All Bookings · Report · Approvals · Settings. <b>No</b> Broadcast (no role grant).</p>
+
+  <h3>Test cases — should succeed</h3>
+  <ol class="steps">
+    <li><strong>View All Bookings</strong> — Settings → All Bookings.<br>
+      <span class="exp">List loads with bookings from every user. Permission gate: <code class="inline">booking.read_all</code>.</span></li>
+
+    <li><strong>Decide a VIP approval</strong> — Approvals page → click ✓ on a pending high-risk booking.<br>
+      <span class="exp">Booking transitions to Approved. Permission gate: <code class="inline">approval.decide</code>.</span></li>
+
+    <li><strong>Edit the permission matrix</strong> — Settings → Permissions → toggle a Room-Admin permission, save.<br>
+      <span class="exp">Save succeeds. Permission gate: <code class="inline">permission.manage</code>.</span></li>
+
+    <li><strong>View audit log</strong> — Settings → Audit (or <code class="inline">/api/v1/admin/audit</code>).<br>
+      <span class="exp">Returns 200. Permission gate: <code class="inline">audit.view</code>.</span></li>
+
+    <li><strong>Deactivate a user</strong> — Settings → Users → set "officer" inactive.<br>
+      <span class="exp">User row updates. Permission gate: <code class="inline">user.deactivate</code>.</span></li>
+  </ol>
+
+  <h3>Test cases — should fail with 403</h3>
+  <ol class="steps">
+    <li><strong>Create a booking</strong> — try Search → reserve → confirm.<br>
+      <span class="exp">Confirm button hits 403 (<code class="inline">booking.create</code> not granted). Security Admins do not personally book.</span></li>
+    <li><strong>Create a room</strong> — Settings → Rooms → + Create.<br>
+      <span class="exp">403 on POST. The button may even be hidden depending on role gate.</span></li>
+    <li><strong>Edit tenant branding</strong> — Settings → Tenant Studio → try to save a colour change.<br>
+      <span class="exp">403 on save (<code class="inline">customization.manage</code> not granted).</span></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="test-room" class="section">Test plan — Room Admin</h2>
+
+<div class="test-block room">
+  <header>
+    <h3>Room Admin</h3>
+    <span class="creds">roomadmin / pass (if seeded) — Region: Hong Kong only</span>
+  </header>
+
+  <h3>Expected sidebar</h3>
+  <p>Dashboard · Schedule · New Booking · All Bookings · Report · Approvals · Settings.</p>
+
+  <h3>Test cases — should succeed</h3>
+  <ol class="steps">
+    <li><strong>Edit a Hong-Kong room</strong> — Settings → Rooms → pick a room whose Region = "Hong Kong", change capacity, save.<br>
+      <span class="exp">Save succeeds. Permission gate: <code class="inline">resource.update</code> + Region match against <code class="inline">region_access</code>.</span></li>
+
+    <li><strong>Split a composite Hong-Kong room</strong> — same flow as System Admin step 3, restricted to a HK room.<br>
+      <span class="exp">Permission gate: <code class="inline">resource.split</code>.</span></li>
+
+    <li><strong>Approve a HK booking</strong> — Approvals → ✓ on a pending booking for a HK room.<br>
+      <span class="exp">Permission gate: <code class="inline">approval.decide</code>.</span></li>
+
+    <li><strong>Add a tenant holiday</strong> — Settings → Holidays → + Add → 2026-07-01, "Test Holiday".<br>
+      <span class="exp">Permission gate: <code class="inline">holiday.manage</code>.</span></li>
+
+    <li><strong>Create a booking for themselves</strong> — New Booking flow end-to-end.<br>
+      <span class="exp">Permission gate: <code class="inline">booking.create</code>.</span></li>
+  </ol>
+
+  <h3>Test cases — should fail with 403</h3>
+  <ol class="steps">
+    <li><strong>Edit a Kowloon room</strong> — change capacity on a room whose Region = "Kowloon".<br>
+      <span class="exp">403 — region not in <code class="inline">region_access</code>.</span></li>
+    <li><strong>Create a new room</strong> — Settings → Rooms → + Create.<br>
+      <span class="exp">403 (<code class="inline">resource.create</code> not granted to Room Admin).</span></li>
+    <li><strong>Delete a room</strong> — try the trash icon.<br>
+      <span class="exp">403 (<code class="inline">resource.delete</code> not granted).</span></li>
+    <li><strong>Edit the permission matrix</strong> — Settings → Permissions → toggle.<br>
+      <span class="exp">403 (<code class="inline">permission.manage</code> not granted).</span></li>
+    <li><strong>Export reports</strong> — Reports → Download CSV.<br>
+      <span class="exp">403 (<code class="inline">report.export</code> not granted — view yes, export no).</span></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="test-secretary" class="section">Test plan — Secretary</h2>
+
+<div class="test-block secretary">
+  <header>
+    <h3>Secretary</h3>
+    <span class="creds">secretary / pass · Grade SDO (required)</span>
+  </header>
+
+  <h3>Expected sidebar</h3>
+  <p>Dashboard · Schedule · New Booking · All Bookings · Approvals · Settings.</p>
+
+  <h3>Test cases — should succeed</h3>
+  <ol class="steps">
+    <li><strong>See Top Management rooms in Search</strong> — New Booking → Search Room.<br>
+      <span class="exp">Results include rooms with <code class="inline">asset_type = 'Top Management'</code>. Only Secretary (SDO grade) can see these.</span></li>
+
+    <li><strong>Book a Top Management room on behalf</strong> — Confirm a Top Management reservation, set attendee to a DGFS user.<br>
+      <span class="exp">Booking created in "Pending Approval" state. Permission gate: <code class="inline">booking.create</code>.</span></li>
+
+    <li><strong>Approve Tier-1 of the VIP chain</strong> — Approvals page → ✓ on a Top Management booking.<br>
+      <span class="exp">Approved. Chain advances to Security Admin Tier-2. Permission gate: <code class="inline">approval.decide</code> + chain step requires Secretary role.</span></li>
+
+    <li><strong>View all bookings</strong> — Settings → All Bookings.<br>
+      <span class="exp">Loads. Permission gate: <code class="inline">booking.read_all</code>.</span></li>
+  </ol>
+
+  <h3>Test cases — should fail with 403</h3>
+  <ol class="steps">
+    <li><strong>View reports</strong> — Sidebar should hide Report; if you navigate to <code class="inline">/reports</code> directly, 403.</li>
+    <li><strong>Edit a room</strong> — Settings → Rooms → pencil.<br>
+      <span class="exp">403 (<code class="inline">resource.update</code> not granted).</span></li>
+    <li><strong>Create a room</strong> — 403.</li>
+    <li><strong>Edit the permission matrix</strong> — 403.</li>
+  </ol>
+
+  <div class="alert warn"><b>Edge case:</b> if a Secretary's <code class="inline">grade</code> is changed to anything other than SDO, the Top-Management filter rejects them. Test by editing the user and removing the grade, then refreshing the Search page — Top Management rooms should disappear.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="test-general" class="section">Test plan — General User</h2>
+
+<div class="test-block general">
+  <header>
+    <h3>General User</h3>
+    <span class="creds">officer / pass · Region: Hong Kong</span>
+  </header>
+
+  <h3>Expected sidebar</h3>
+  <p>Dashboard · Schedule · New Booking · All Bookings (My) only. <b>No</b> Report, Approvals, Broadcast, Settings.</p>
+
+  <h3>Test cases — should succeed</h3>
+  <ol class="steps">
+    <li><strong>Create own booking</strong> — New Booking → pick a room → time → confirm.<br>
+      <span class="exp">Booking created in either "Confirmed" or "Pending Approval" depending on the room's <code class="inline">requires_approval</code>. Permission gate: <code class="inline">booking.create</code>.</span></li>
+
+    <li><strong>Cancel own booking</strong> — All Bookings → cancel.<br>
+      <span class="exp">Permission gate: <code class="inline">booking.cancel</code>.</span></li>
+
+    <li><strong>Update own booking</strong> — All Bookings → edit → change end time.<br>
+      <span class="exp">Permission gate: <code class="inline">booking.update</code>.</span></li>
+
+    <li><strong>Try to see a Top Management room in Search</strong> — Search results.<br>
+      <span class="exp">Top Management rooms are <b>not</b> listed (filtered server-side; not a 403 but an empty/short result).</span></li>
+  </ol>
+
+  <h3>Test cases — should fail with 403 or be hidden</h3>
+  <ol class="steps">
+    <li><strong>Cancel someone else's booking</strong> — try the cancel API directly with another user's booking ID.<br>
+      <span class="exp">403 (<code class="inline">booking.cancel_others</code>).</span></li>
+    <li><strong>Visit <code class="inline">/admin</code></strong> — direct URL navigation.<br>
+      <span class="exp">Redirected to home or shown a permission-denied screen.</span></li>
+    <li><strong>Visit <code class="inline">/approvals</code></strong> — direct URL.<br>
+      <span class="exp">Redirected or empty (<code class="inline">approval.decide</code> not granted).</span></li>
+    <li><strong>Visit <code class="inline">/reports</code></strong> — direct URL.<br>
+      <span class="exp">Redirected (<code class="inline">report.view</code> not granted).</span></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="customize" class="section">Customising the permission matrix</h2>
+
+<div class="card">
+  <p>The matrix is editable per tenant under <b>Settings → Permissions</b>. Changes are persisted to <code class="inline">role_permissions</code> immediately and take effect on the next request (no restart needed).</p>
+
+  <h3>Workflow</h3>
+  <ol class="steps">
+    <li>Log in as System Admin or Security Admin (both hold <code class="inline">permission.manage</code>).</li>
+    <li>Click <b>Settings</b> → <b>Permissions</b>.</li>
+    <li>The matrix renders 9 groups × 5 roles. Tick or untick checkboxes.</li>
+    <li>Click <b>Save</b>. The audit log records who changed which key for which role.</li>
+    <li>Refresh the affected user's session (re-login) so their JWT picks up the new role granting.</li>
+  </ol>
+
+  <div class="alert info"><b>Tip:</b> when locking down a permission, grep the codebase first for the key to find every site it gates — sometimes a button is dynamically shown based on a role match, not the permission match. UI hiding is cosmetic; the API gate is the authority.</div>
+
+  <h3>Common adjustments</h3>
+  <table>
+    <thead><tr><th>Need</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td>Make General Users read all bookings (open calendar)</td><td>Grant <code class="inline">booking.read_all</code> to General User</td></tr>
+      <tr><td>Stop Room Admins from approving outside their region</td><td>Already enforced by <code class="inline">region_access</code> match — no matrix change needed</td></tr>
+      <tr><td>Let Secretary view reports</td><td>Grant <code class="inline">report.view</code> to Secretary</td></tr>
+      <tr><td>Strip a System Admin of tenant-delete capability</td><td>Revoke <code class="inline">tenant.manage</code> from System Admin</td></tr>
+      <tr><td>Set up a help-desk "view-only" role</td><td>Clone Security Admin, revoke <code class="inline">permission.manage</code>, <code class="inline">user.update</code>, <code class="inline">user.deactivate</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="api" class="section">API verification (curl)</h2>
+
+<div class="card">
+  <p>The cleanest way to <i>prove</i> a permission gate works is to bypass the UI and hit the API directly. Each test below should return 200 for granted users and 403 for non-granted.</p>
+
+  <h3>1. Get a token</h3>
+<pre class="shell"><code>curl -X POST http://localhost:8080/api/v1/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# response: { "token": "eyJhbGc..." }
+export TOK=eyJhbGc...</code></pre>
+
+  <h3>2. Hit a gated endpoint</h3>
+<pre class="shell"><code># Should be 200 for System Admin, 403 for General User
+curl -i http://localhost:8080/api/v1/admin/audit \
+  -H "Authorization: Bearer $TOK"
+
+# Should be 200 for anyone who holds booking.create
+curl -i http://localhost:8080/api/v1/bookings/search?location=Hong+Kong \
+  -H "Authorization: Bearer $TOK"
+
+# Should be 200 only for permission.manage holders
+curl -i http://localhost:8080/api/v1/admin/permissions \
+  -H "Authorization: Bearer $TOK"</code></pre>
+
+  <h3>3. Inspect the JWT to see your role</h3>
+<pre class="shell"><code>echo $TOK | cut -d. -f2 | base64 -d 2>/dev/null
+# { "sub":"...","tenant_id":"...","role":"System Admin","grade":"SDO",
+#   "regions":["Hong Kong","Kowloon","New Territories"], "exp":..., "iat":... }</code></pre>
+
+  <h3>4. Dump the current matrix</h3>
+<pre class="shell"><code>curl -s http://localhost:8080/api/v1/admin/permissions \
+  -H "Authorization: Bearer $TOK" | jq .</code></pre>
+
+  <h3>5. Cross-check Quickly</h3>
+  <p>Run this loop to verify every role × endpoint combo (paste into a terminal):</p>
+<pre class="shell"><code>for U in admin:admin123 officer:pass secretary:pass; do
+  USR="${U%:*}"; PWD="${U#*:}"
+  TOK=$(curl -s -X POST http://localhost:8080/api/v1/login \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"$USR\",\"password\":\"$PWD\"}" | jq -r .token)
+  for EP in admin/audit admin/permissions bookings/search?location=Hong+Kong; do
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost:8080/api/v1/$EP \
+            -H "Authorization: Bearer $TOK")
+    echo "$USR  $EP  $CODE"
+  done
+done</code></pre>
+  <p>Expected output:</p>
+<pre><code>admin     admin/audit                     200
+admin     admin/permissions               200
+admin     bookings/search                 200
+officer   admin/audit                     403
+officer   admin/permissions               403
+officer   bookings/search                 200
+secretary admin/audit                     403
+secretary admin/permissions               403
+secretary bookings/search                 200</code></pre>
+</div>
+
+<footer>
+  FSD Booking System · permission groups guide · regenerate any time from <code class="inline">design/permissions-guide.html</code>.
+</footer>
+
+</div>
+</body>
+</html>

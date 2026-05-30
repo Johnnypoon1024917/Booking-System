@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"fsd-mrbs/src/infrastructure/safehttp"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -50,7 +52,7 @@ type BotAuthValidator struct {
 func NewBotAuthValidator(microsoftAppID string) *BotAuthValidator {
 	return &BotAuthValidator{
 		expectedAudience: microsoftAppID,
-		http:             &http.Client{Timeout: 10 * time.Second},
+		http:             safehttp.NewExternalClient(10 * time.Second),
 		cachedKeys:       map[string]*rsa.PublicKey{},
 	}
 }

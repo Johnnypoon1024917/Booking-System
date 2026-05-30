@@ -9,11 +9,14 @@ import (
 // Booking mode values describe how a resource handles overlapping bookings.
 //
 // "exclusive" — the legacy default. Only one booking may hold the resource
-//   for a given time window. Enforced by the bookings_no_overlap EXCLUDE
-//   constraint at the DB level.
+//
+//	for a given time window. Enforced by the bookings_no_overlap EXCLUDE
+//	constraint at the DB level.
+//
 // "shared" — the resource (gym, classroom, drop-in zone, …) admits up to
-//   `shared_capacity` concurrent bookings for the same window. The DB
-//   constraint skips these rows; the use case enforces capacity instead.
+//
+//	`shared_capacity` concurrent bookings for the same window. The DB
+//	constraint skips these rows; the use case enforces capacity instead.
 const (
 	BookingModeExclusive = "exclusive"
 	BookingModeShared    = "shared"
@@ -68,21 +71,50 @@ type Resource struct {
 	Color string
 	Icon  string
 
+	// Position on the interactive floor plan, as a % of container
+	FloorX float64
+	FloorY float64
+
 	// Optional grouping for admin reporting
 	DepartmentID string
+
+	// DetailsVisibleToRole widens the "who sees subject/organiser?"
+	// audience for this specific resource on top of the legacy default
+	// (owner + System/Security/Room Admin + Secretary). Set to
+	// ["General User"] for public rooms whose subjects should appear on
+	// every booker's calendar (e.g. "Town Hall — Q2 Results"). See
+	// domain/booking/visibility.go for the full policy.
+	DetailsVisibleToRole []string
 }
 
 // IsShared reports whether this resource admits multiple concurrent bookings.
 func (r *Resource) IsShared() bool { return r.BookingMode == BookingModeShared }
 
-// SearchCriteria defines the parameters for resource search
+// SearchCriteria defines the parameters for resource search.
+// Location is the building/floor (resources.location column); Region was
+// previously used here but matched the wrong column — the SPA's Location
+// dropdown ships building names, not the Hong Kong/Kowloon/NT region.
 type SearchCriteria struct {
 	StartTime time.Time
 	EndTime   time.Time
 	TenantID  string
-	Region    string
+	Location  string
 	Capacity  int
 	AssetType string
+	// AllDay marks an "all day event" search. For these the booking is not
+	// required to fit inside the resource's open/close window — the room
+	// just has to be open at all on that weekday. Without this an all-day
+	// (00:00–23:59) request only ever matched rooms configured for 24h
+	// operation, which is not what users expect from "all day". (QA #2)
+	AllDay bool
+	// Timezone is the tenant's IANA zone (e.g. "Asia/Hong_Kong"). The SPA
+	// sends the search window as a wall-clock time; bookings are stored as
+	// true UTC instants. The availability query must reinterpret the
+	// wall-clock window in this zone before comparing it against stored
+	// bookings, otherwise a 15:00 local search compared against a 15:00 UTC
+	// (07:00 local) interval never overlaps and booked rooms look free.
+	// (QA #1) Empty means "Asia/Hong_Kong".
+	Timezone string
 }
 
 // IsParent returns true when this resource has child sub-resources.

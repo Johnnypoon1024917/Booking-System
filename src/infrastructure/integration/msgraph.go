@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"fsd-mrbs/src/infrastructure/safehttp"
 )
 
 // Microsoft Graph + Azure AD identity endpoints. Override via env for
@@ -38,7 +40,7 @@ func NewGraphClient(timeout time.Duration) *GraphClient {
 	if timeout == 0 {
 		timeout = 15 * time.Second
 	}
-	return &GraphClient{http: &http.Client{Timeout: timeout}}
+	return &GraphClient{http: safehttp.NewExternalClient(timeout)}
 }
 
 // Token returns a non-expired access token for the given app credentials.

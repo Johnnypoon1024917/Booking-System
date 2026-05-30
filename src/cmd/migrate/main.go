@@ -14,9 +14,13 @@ import (
 func main() {
 	// Define command-line flags
 	action := flag.String("action", "up", "Migration action: up, down, reset, version")
-	dbURL := flag.String("db-url", getEnvOrDefault("DB_DSN", "postgres://mrbs_admin:SecurePass123!@localhost:5432/fsd_mrbs?sslmode=disable"), "Database connection URL")
+	dbURL := flag.String("db-url", os.Getenv("DB_DSN"), "Database connection URL")
 	migrationsPath := flag.String("path", "file://src/infrastructure/postgres/migrations", "Path to migration files")
 	flag.Parse()
+	if *dbURL == "" {
+		fmt.Println("DB_DSN (or -db-url) is required; refusing to start with an embedded default credential.")
+		os.Exit(1)
+	}
 
 	// Create migrate instance
 	m, err := migrate.New(*migrationsPath, *dbURL)
@@ -113,10 +117,3 @@ func main() {
 	fmt.Println("Migration operation completed successfully.")
 }
 
-// getEnvOrDefault returns the value of an environment variable or a default value.
-func getEnvOrDefault(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
-}

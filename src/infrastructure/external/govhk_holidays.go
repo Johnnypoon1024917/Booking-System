@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"fsd-mrbs/src/infrastructure/safehttp"
 )
 
 // gov.hk publishes the official HK public-holiday calendar at these stable
@@ -34,7 +36,7 @@ func NewGovHKHolidayClient(timeout time.Duration) *GovHKHolidayClient {
 	if timeout == 0 {
 		timeout = 15 * time.Second
 	}
-	return &GovHKHolidayClient{http: &http.Client{Timeout: timeout}}
+	return &GovHKHolidayClient{http: safehttp.NewExternalClient(timeout)}
 }
 
 // Fetch returns the holidays in the requested locale (defaults to English).

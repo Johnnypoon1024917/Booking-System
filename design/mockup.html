@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>FSD Booking System — Redesign Mockup</title>
+<style>
+  :root {
+    --sidebar-bg: #34495e;
+    --sidebar-bg-hover: #3d566e;
+    --sidebar-bg-active: #2c3e50;
+    --sidebar-fg: #cfd8dc;
+    --sidebar-fg-active: #ffffff;
+    --primary: #3498db;
+    --primary-hover: #2980b9;
+    --success: #27ae60;
+    --success-soft: #dff7e6;
+    --warn: #e67e22;
+    --danger: #e74c3c;
+    --info: #2980b9;
+    --grey-bg: #f5f6f8;
+    --border: #e3e6ea;
+    --text: #2f3640;
+    --muted: #7a8290;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Tahoma, Helvetica, Arial, sans-serif;
+    background: var(--grey-bg);
+    color: var(--text);
+    font-size: 14px;
+  }
+  .frame {
+    display: flex;
+    min-height: 100vh;
+  }
+  /* ===== Sidebar ===== */
+  .sidebar {
+    width: 92px;
+    background: var(--sidebar-bg);
+    color: var(--sidebar-fg);
+    display: flex;
+    flex-direction: column;
+    padding-top: 8px;
+  }
+  .sidebar .item {
+    padding: 14px 4px;
+    text-align: center;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .sidebar .item .icon {
+    display: block;
+    font-size: 20px;
+    margin-bottom: 4px;
+  }
+  .sidebar .item:hover { background: var(--sidebar-bg-hover); }
+  .sidebar .item.active {
+    background: var(--sidebar-bg-active);
+    color: var(--sidebar-fg-active);
+    border-left-color: var(--primary);
+  }
+
+  /* ===== Content ===== */
+  .content { flex: 1; padding: 24px 28px; }
+  .page-title {
+    font-size: 22px;
+    font-weight: 500;
+    margin: 0 0 18px 0;
+  }
+  .page-title small { color: var(--muted); font-weight: 400; }
+
+  /* ===== Buttons ===== */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-size: 13px;
+    cursor: pointer;
+    background: #fff;
+    color: var(--text);
+  }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-light { border-color: var(--border); }
+
+  /* ===== Card ===== */
+  .card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 18px 20px;
+    margin-bottom: 22px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+    margin: 0 0 12px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .card-title .picker { font-weight: 400; color: var(--text); }
+
+  /* ===== Table ===== */
+  .table-toolbar {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .table-toolbar select, .table-toolbar input {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+  table.dt {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.dt th, table.dt td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.dt th {
+    font-weight: 600;
+    color: var(--muted);
+    border-bottom: 2px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  table.dt th .caret { color: #c0c6ce; margin-left: 4px; font-size: 10px; }
+  table.dt td .icon-btn {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-size: 15px;
+    margin-right: 4px;
+  }
+  .icon-edit { color: var(--success); }
+  .icon-del { color: var(--danger); }
+  .status-active { color: var(--success); font-weight: 600; }
+  .status-inactive { color: var(--danger); font-weight: 600; }
+  .table-foot {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .pager .pg {
+    display: inline-block;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    margin-left: -1px;
+    cursor: pointer;
+    background: #fff;
+  }
+  .pager .pg.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  /* ===== Stepper ===== */
+  .stepper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 8px 0 26px;
+  }
+  .step { display: flex; align-items: center; color: var(--muted); }
+  .step .num {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #cfd6de; color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 600;
+    margin-right: 8px;
+  }
+  .step.active .num { background: var(--primary); }
+  .step.active { color: var(--text); font-weight: 500; }
+  .step-line {
+    width: 160px; height: 2px; background: var(--border);
+    margin: 0 14px;
+  }
+
+  /* ===== Form ===== */
+  .form-row { margin-bottom: 14px; }
+  .form-row label {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 4px;
+    color: var(--text);
+  }
+  .form-row label.req { color: var(--danger); }
+  .form-row input[type=text],
+  .form-row input[type=email],
+  .form-row input[type=date],
+  .form-row input[type=number],
+  .form-row select {
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 13px;
+    background: #fff;
+  }
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .checkbox-line { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+  .recur-panel {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px 16px;
+    background: #fafbfc;
+  }
+  .radio-row { display: flex; gap: 18px; margin-bottom: 12px; }
+  .radio-row label { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ===== Alerts ===== */
+  .alert-success {
+    background: var(--success-soft);
+    color: #1b6e3a;
+    padding: 10px 14px;
+    border-radius: 3px;
+    margin-bottom: 14px;
+    font-size: 13px;
+  }
+
+  /* ===== Room availability ===== */
+  .room-list { list-style: none; padding: 0; margin: 0; }
+  .room-list li { padding: 4px 0; font-size: 13px; }
+  .room-list li.unavailable { color: var(--danger); }
+  .side-panel {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px 16px;
+    background: #fafbfc;
+    font-size: 13px;
+  }
+  .side-panel h4 { margin: 0 0 8px; font-size: 13px; color: var(--info); }
+
+  /* ===== Dashboard ===== */
+  .grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+  .grid-2-eq { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .bar-chart {
+    height: 180px;
+    background:
+      linear-gradient(to top, #f8e6a8 0 35%, transparent 35%) 4% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 70%, transparent 70%) 14% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 20%, transparent 20%) 24% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 90%, transparent 90%) 34% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 45%, transparent 45%) 44% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 55%, transparent 55%) 54% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 25%, transparent 25%) 64% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 80%, transparent 80%) 74% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 30%, transparent 30%) 84% 100%/24px 100% no-repeat,
+      linear-gradient(to top, #f8e6a8 0 60%, transparent 60%) 94% 100%/24px 100% no-repeat;
+    border-bottom: 1px solid var(--border);
+  }
+  .pie {
+    width: 160px; height: 160px; border-radius: 50%;
+    background:
+      conic-gradient(#3498db 0 35%, #e67e22 35% 60%, #27ae60 60% 85%, #9b59b6 85% 100%);
+    margin: 0 auto;
+  }
+  .legend { list-style: none; padding: 0; margin: 12px 0 0; font-size: 12px; }
+  .legend li { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  .legend .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+  .statbox-top { display: flex; align-items: center; justify-content: space-around; padding: 8px 0 14px; }
+  .statbox-top .big {
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .statbox-top .big strong { font-size: 24px; }
+  .seg-row { display: flex; border-radius: 3px; overflow: hidden; font-size: 12px; }
+  .seg { flex: 1; text-align: center; padding: 12px 4px; color: #fff; }
+  .seg .pct { display: block; font-weight: 700; font-size: 16px; }
+  .seg.green { background: var(--success); }
+  .seg.orange { background: var(--warn); }
+  .seg.red { background: var(--danger); }
+  .seg.blue { background: var(--info); }
+  .seg.grey { background: #95a5a6; }
+
+  /* ===== Tag input ===== */
+  .tag-input {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 6px;
+    min-height: 36px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: #fff;
+  }
+  .chip {
+    background: #eaf4fd;
+    color: #1c5d8d;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .chip .x { cursor: pointer; opacity: .6; }
+
+  /* ===== Section divider ===== */
+  .section-divider {
+    margin: 50px 0 18px;
+    padding: 10px 14px;
+    background: #2c3e50;
+    color: #fff;
+    border-radius: 3px;
+    font-size: 14px;
+    letter-spacing: .05em;
+  }
+</style>
+</head>
+<body>
+
+<div class="section-divider">SCREEN 1 — DASHBOARD (replaces Dashboard.vue)</div>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="item active"><span class="icon">▦</span>Dashboard</div>
+    <div class="item"><span class="icon">▤</span>Schedule</div>
+    <div class="item"><span class="icon">＋</span>New Booking</div>
+    <div class="item"><span class="icon">≡</span>All Bookings</div>
+    <div class="item"><span class="icon">▮</span>Report</div>
+    <div class="item"><span class="icon">📢</span>Broadcast</div>
+    <div class="item"><span class="icon">⚙</span>Settings</div>
+  </aside>
+  <main class="content">
+    <h1 class="page-title">Dashboard</h1>
+
+    <div class="card">
+      <div class="card-title">Room Utilization <span class="picker">This Week ▾</span></div>
+      <div class="bar-chart"></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Utilization by Departments <span class="picker">This Week ▾</span></div>
+        <div style="display:flex; gap:24px; align-items:center;">
+          <div class="pie"></div>
+          <ul class="legend">
+            <li><span class="swatch" style="background:#3498db"></span>Marketing</li>
+            <li><span class="swatch" style="background:#e67e22"></span>FTLife staff</li>
+            <li><span class="swatch" style="background:#27ae60"></span>South China Wealth Mgmt</li>
+            <li><span class="swatch" style="background:#9b59b6"></span>Staff</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Stat Box <span class="picker">This Week ▾</span></div>
+        <div class="statbox-top">
+          <div class="big"><span>📅</span><strong>20</strong><span>Bookings</span></div>
+          <div class="big"><span>⏱</span><strong>162 mins</strong><span>Avg. Meeting Duration</span></div>
+        </div>
+        <div class="seg-row">
+          <div class="seg green"><span class="pct">6%</span>Check-in</div>
+          <div class="seg orange"><span class="pct">42%</span>Cancelled</div>
+          <div class="seg red"><span class="pct">10%</span>No Show</div>
+          <div class="seg blue"><span class="pct">7%</span>Walk In</div>
+          <div class="seg grey"><span class="pct">0%</span>Non-office</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">No Show <span class="picker">This Week ▾</span></div>
+      <table class="dt">
+        <thead><tr>
+          <th>Name <span class="caret">▲▼</span></th>
+          <th>Department <span class="caret">▲▼</span></th>
+          <th>Room <span class="caret">▲▼</span></th>
+          <th>Date/Time <span class="caret">▲▼</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td>Agent@ftlife.com.hk</td><td>South China Wealth Mgmt</td><td>Room 1</td><td>2017-08-14 09:00 - 09:30</td></tr>
+          <tr><td>Agent@ftlife.com.hk</td><td>FTLife staff</td><td>Room 1</td><td>2017-08-15 13:00 - 13:30</td></tr>
+          <tr><td>Lee.staff</td><td>Agent</td><td>Training 1</td><td>2017-08-15 11:00 - 11:30</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+
+<div class="section-divider">SCREEN 2 — NEW BOOKING, STEP 1 (replaces NewBooking.vue)</div>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="item"><span class="icon">▦</span>Dashboard</div>
+    <div class="item"><span class="icon">▤</span>Schedule</div>
+    <div class="item active"><span class="icon">＋</span>New Booking</div>
+    <div class="item"><span class="icon">≡</span>All Bookings</div>
+    <div class="item"><span class="icon">▮</span>Report</div>
+    <div class="item"><span class="icon">📢</span>Broadcast</div>
+    <div class="item"><span class="icon">⚙</span>Settings</div>
+  </aside>
+  <main class="content">
+    <h1 class="page-title">Booking <small>»</small></h1>
+
+    <div class="card">
+      <div class="stepper">
+        <div class="step active"><span class="num">1</span>Search Room</div>
+        <div class="step-line"></div>
+        <div class="step"><span class="num">2</span>Input Detail</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 26px;">
+        <div>
+          <div class="form-row">
+            <label>Location</label>
+            <select><option>FTLife Customer Service Centre - Gateway</option></select>
+          </div>
+          <div class="form-grid-2">
+            <div class="form-row">
+              <label>Date</label>
+              <input type="date" value="2026-05-25"/>
+            </div>
+            <div class="form-row">
+              <label>&nbsp;</label>
+              <label class="checkbox-line"><input type="checkbox"/> All Day Event</label>
+            </div>
+          </div>
+          <div class="form-grid-2">
+            <div class="form-row"><label>Start Time</label><input type="text" value="09:00"/></div>
+            <div class="form-row"><label>End Time</label><input type="text" value="09:30"/></div>
+          </div>
+
+          <div class="form-row">
+            <label class="checkbox-line"><input type="checkbox" checked/> Recur</label>
+          </div>
+          <div class="recur-panel">
+            <div style="font-weight:600; margin-bottom:10px;">Recurrence Specifications</div>
+            <div class="form-row">
+              <label>Repeat</label>
+              <div class="radio-row">
+                <label><input type="radio" name="r" checked/> Daily</label>
+                <label><input type="radio" name="r"/> Weekly</label>
+                <label><input type="radio" name="r"/> Monthly</label>
+              </div>
+            </div>
+            <div class="radio-row">
+              <label><input type="radio" name="freq" checked/> Every <input type="number" value="3" style="width:60px;"/> day(s)</label>
+              <label><input type="radio" name="freq"/> Recur every weekday</label>
+            </div>
+            <div style="font-weight:600; margin: 10px 0 6px;">Recur until</div>
+            <div class="radio-row">
+              <label><input type="radio" name="end" checked/> End after <input type="number" value="4" style="width:60px;"/> occurrences</label>
+            </div>
+            <div class="radio-row">
+              <label><input type="radio" name="end"/> End by <input type="date" value="2026-08-27"/></label>
+            </div>
+          </div>
+
+          <div style="margin-top:18px;">
+            <button class="btn btn-primary">✓ Check</button>
+          </div>
+        </div>
+
+        <div class="side-panel">
+          <h4>Room Detail</h4>
+          <div><b>Room Name:</b> Room 1</div>
+          <div><b>Room ID:</b> r1234</div>
+          <div><b>Number of Seats:</b> 1032</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+
+<div class="section-divider">SCREEN 3 — ROOM AVAILABILITY RESULT</div>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="item"><span class="icon">▦</span>Dashboard</div>
+    <div class="item"><span class="icon">▤</span>Schedule</div>
+    <div class="item active"><span class="icon">＋</span>New Booking</div>
+    <div class="item"><span class="icon">≡</span>All Bookings</div>
+    <div class="item"><span class="icon">▮</span>Report</div>
+    <div class="item"><span class="icon">📢</span>Broadcast</div>
+    <div class="item"><span class="icon">⚙</span>Settings</div>
+  </aside>
+  <main class="content">
+    <h1 class="page-title">Booking <small>»</small></h1>
+    <div class="card">
+      <div class="stepper">
+        <div class="step active"><span class="num">1</span>Search Room</div>
+        <div class="step-line"></div>
+        <div class="step"><span class="num">2</span>Input Detail</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1.2fr 1fr; gap: 26px;">
+        <div>
+          <div class="form-row"><label>Location</label><select><option>FTLife Tower 18/F</option></select></div>
+          <div class="form-grid-2">
+            <div class="form-row"><label>Date</label><input type="date" value="2026-05-25"/></div>
+            <div class="form-row"><label>&nbsp;</label><label class="checkbox-line"><input type="checkbox"/> All Day Event</label></div>
+          </div>
+          <div class="form-grid-2">
+            <div class="form-row"><label>Start Time</label><input type="text" value="16:00"/></div>
+            <div class="form-row"><label>End Time</label><input type="text" value="17:00"/></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="alert-success">The following rooms are available.</div>
+          <div class="side-panel">
+            <h4>Room Availability</h4>
+            <ul class="room-list">
+              <li><label><input type="checkbox" checked/> Meeting Room 18A (6 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Meeting Room 18B (6 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Meeting Room 18C (6 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Theatre Forum (20 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Training Room 18A (80 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Training Room 18B (80 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Training Room 18C (80 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Training Room 18D (80 pax)</label></li>
+              <li><label><input type="checkbox" checked/> Training Room 18E (80 pax)</label></li>
+              <li class="unavailable">Training Room 18F (99) — unavailable</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+
+<div class="section-divider">SCREEN 4 — LOCATION USER GROUPS LIST (replaces AdminLocationGroups.vue)</div>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="item"><span class="icon">▦</span>Dashboard</div>
+    <div class="item"><span class="icon">▤</span>Schedule</div>
+    <div class="item"><span class="icon">＋</span>New Booking</div>
+    <div class="item"><span class="icon">≡</span>All Bookings</div>
+    <div class="item"><span class="icon">▮</span>Report</div>
+    <div class="item"><span class="icon">📢</span>Broadcast</div>
+    <div class="item active"><span class="icon">⚙</span>Settings</div>
+  </aside>
+  <main class="content">
+    <h1 class="page-title">Location User Groups</h1>
+    <div class="card">
+      <button class="btn btn-primary" style="margin-bottom:12px;">＋ Create</button>
+      <div class="table-toolbar">
+        <div>Show <select><option>10</option><option>25</option></select> entries</div>
+        <div>Search: <input type="text"/></div>
+      </div>
+      <table class="dt">
+        <thead><tr>
+          <th>Name <span class="caret">▲</span></th>
+          <th>Filter By <span class="caret">▲▼</span></th>
+          <th>Approver Email <span class="caret">▲▼</span></th>
+          <th>Status <span class="caret">▲▼</span></th>
+          <th style="width:90px;"></th>
+        </tr></thead>
+        <tbody>
+          <tr><td>Filter by staff</td><td>Channel</td><td></td><td><span class="status-active">Active</span></td>
+            <td><button class="icon-btn icon-edit">✎</button><button class="icon-btn icon-del">🗑</button></td></tr>
+          <tr><td>test group</td><td>Whitelist</td><td>██████████</td><td><span class="status-active">Active</span></td>
+            <td><button class="icon-btn icon-edit">✎</button><button class="icon-btn icon-del">🗑</button></td></tr>
+        </tbody>
+      </table>
+      <div class="table-foot">
+        <div>Showing 1 to 2 of 2 entries</div>
+        <div class="pager">
+          <span class="pg">Previous</span>
+          <span class="pg active">1</span>
+          <span class="pg">Next</span>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+
+<div class="section-divider">SCREEN 5 — EDIT LOCATION USER GROUP</div>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="item"><span class="icon">▦</span>Dashboard</div>
+    <div class="item"><span class="icon">▤</span>Schedule</div>
+    <div class="item"><span class="icon">＋</span>New Booking</div>
+    <div class="item"><span class="icon">≡</span>All Bookings</div>
+    <div class="item"><span class="icon">▮</span>Report</div>
+    <div class="item"><span class="icon">📢</span>Broadcast</div>
+    <div class="item active"><span class="icon">⚙</span>Settings</div>
+  </aside>
+  <main class="content">
+    <h1 class="page-title">Edit Location User Group</h1>
+    <div class="card">
+      <div class="form-row"><label>Name</label><input type="text" value="test group"/></div>
+      <div class="form-row"><label>Filter By</label>
+        <input type="text" value="Whitelist" disabled style="background:#f5f6f8;"/>
+      </div>
+      <div class="form-row">
+        <label>Location Users <a href="#" style="font-size:12px; margin-left:6px;">(download import template)</a></label>
+        <div style="display:flex; gap:8px;">
+          <input type="text" placeholder="No file…" style="flex:1;"/>
+          <button class="btn btn-light">Choose</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Approver Email(s)</label>
+        <div class="tag-input">
+          <span class="chip">approver@ftlife.com.hk <span class="x">×</span></span>
+          <span class="chip">+ Tag</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Location(s)</label>
+        <div class="tag-input">
+          <span class="chip">FTLife CSC - The Gateway 35/F Regional room A <span class="x">×</span></span>
+          <span class="chip">FTLife CSC - Wing On Centre <span class="x">×</span></span>
+          <span class="chip">Kowloon Bay Center 12/F <span class="x">×</span></span>
+          <span class="chip">Prestige Service Centre <span class="x">×</span></span>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Status</label>
+        <select><option>Active</option><option>Inactive</option></select>
+      </div>
+
+      <div class="card-title" style="margin-top:24px;">Members</div>
+      <div class="table-toolbar">
+        <div>Show <select><option>10</option></select> entries</div>
+        <div>Search: <input type="text"/></div>
+      </div>
+      <table class="dt">
+        <thead><tr><th>Email <span class="caret">▲</span></th></tr></thead>
+        <tbody>
+          <tr><td>sample@example.com</td></tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:16px;">
+        <button class="btn btn-primary">Save</button>
+        <button class="btn btn-light">Cancel</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

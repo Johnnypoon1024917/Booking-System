@@ -59,13 +59,44 @@
         </select>
       </label>
       <label class="field"><span>{{ $t('admin.users.grade') }}</span><input v-model="editing.Grade" placeholder="SDO / DGFS / …"/></label>
+      <label class="field">
+        <span>{{ editing.ID ? $t('admin.users.password') : $t('admin.users.initialPassword') }}
+          <span v-if="editing.ID" class="muted">{{ $t('admin.users.passwordKeepHint') }}</span></span>
+        <input type="password" v-model="editing.password" autocomplete="new-password"/>
+      </label>
     </div>
+
+    <label class="toggle mt">
+      <input type="checkbox" v-model="editing.must_change_password"/>
+      <span>{{ $t('admin.users.forceReset') }}</span>
+    </label>
     <label class="field mt">
       <span>{{ $t('admin.users.regions') }}</span>
       <input :value="(editing.RegionAccess || []).join(', ')"
              @input="editing.RegionAccess = $event.target.value.split(',').map(s => s.trim()).filter(Boolean)"
              placeholder="Hong Kong, Kowloon, New Territories"/>
     </label>
+
+    <!-- Department membership: many-to-many via user_departments join.
+         Editing.DepartmentIDs is normalised to an empty array on open
+         so v-model with the checkbox `value` always behaves; missing
+         memberships are explicitly cleared on save with an empty array
+         (not nil), which the backend reads as "wipe membership". -->
+    <div class="field mt">
+      <span>Departments</span>
+      <div v-if="!departments.length" class="muted text-sm">
+        No departments configured yet — add some on the Departments admin page.
+      </div>
+      <div v-else class="dep-grid">
+        <label v-for="d in departments" :key="d.ID" class="dep-chip">
+          <input type="checkbox"
+                 :value="d.ID"
+                 v-model="editing.DepartmentIDs" />
+          <span>{{ d.Name }}<span v-if="d.Code" class="muted text-sm"> · {{ d.Code }}</span></span>
+        </label>
+      </div>
+    </div>
+
     <label class="toggle mt">
       <input type="checkbox" v-model="editing.IsActive"/>
       <span>{{ $t('admin.users.activeAccount') }}</span>
@@ -96,6 +127,7 @@ const { t } = useI18n()
 const toasts = useToastStore()
 const loading = ref(true)
 const items = ref([])
+const departments = ref([])
 const editing = ref(null)
 const q = ref('')
 const busy = ref(false)
@@ -104,7 +136,7 @@ const filtered = computed(() => items.value.filter(u =>
   !q.value || u.Username?.toLowerCase().includes(q.value.toLowerCase()) || u.DN?.toLowerCase().includes(q.value.toLowerCase())
 ))
 
-onMounted(load)
+onMounted(() => { load(); loadDepartments() })
 
 async function load() {
   loading.value = true
@@ -113,8 +145,23 @@ async function load() {
   finally { loading.value = false }
 }
 
-function open(u) { editing.value = JSON.parse(JSON.stringify(u)) }
-function openNew() { editing.value = { Username: '', DN: '', Role: 'General User', Grade: '', RegionAccess: [], IsActive: true } }
+async function loadDepartments() {
+  try { departments.value = await api.listDepartments() || [] }
+  catch { /* non-fatal — the modal degrades to "no departments configured" */ }
+}
+
+function open(u) {
+  // Deep-clone the row + normalise DepartmentIDs to a real array. The
+  // backend omits the field on users with no memberships, and v-model
+  // on a checkbox needs an array (not undefined) or vue can't push to
+  // it on first click.
+  const clone = JSON.parse(JSON.stringify(u))
+  clone.DepartmentIDs = Array.isArray(clone.DepartmentIDs) ? clone.DepartmentIDs : []
+  editing.value = clone
+}
+function openNew() {
+  editing.value = { Username: '', DN: '', Role: 'General User', Grade: '', RegionAccess: [], DepartmentIDs: [], IsActive: true, password: '', must_change_password: true }
+}
 
 async function save() {
   busy.value = true
@@ -161,4 +208,25 @@ async function deactivate() {
   .user-row { grid-template-columns: 1fr; }
   .user-row.header { display: none; }
 }
+
+/* Department checkbox grid in the Edit User modal. Auto-fill so 1-2
+   departments stay readable while larger sets wrap into a tidy 2-3
+   column block. */
+.dep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+.dep-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 13px;
+}
+.dep-chip:hover { background: var(--surface-inset); }
+.dep-chip input { margin: 0; }
 </style>

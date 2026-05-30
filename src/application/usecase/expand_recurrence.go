@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"fsd-mrbs/src/domain/booking"
+	"fsd-mrbs/src/domain/rrule"
 
 	"github.com/google/uuid"
 )
@@ -22,10 +23,17 @@ type ExpandRecurringBookingRequest struct {
 	Pattern    string // booking.PatternDaily / Weekly / BiWeekly / Monthly
 	FirstStart time.Time
 	FirstEnd   time.Time
-	Count      int      // total occurrences (1 .. 100)
-	DayOfWeek  []int    // for weekly: 0=Sun..6=Sat. Empty = use FirstStart's weekday.
-	DayOfMonth int      // for monthly: 1..31. Zero = use FirstStart's day.
+	Count      int   // total occurrences (1 .. 100)
+	DayOfWeek  []int // for weekly: 0=Sun..6=Sat. Empty = use FirstStart's weekday.
+	DayOfMonth int   // for monthly: 1..31. Zero = use FirstStart's day.
 	MeetingURL string
+
+	// RRule is an optional RFC 5545 recurrence rule. When set it takes
+	// precedence over Pattern/Count/DayOfWeek/DayOfMonth — those legacy
+	// fields exist only so older SPA builds keep working. New clients
+	// (Outlook add-in, mobile, public API) should always send RRule.
+	RRule    string
+	ExDates  []time.Time
 }
 
 // ExpandRecurringBooking inserts the entire series. If any occurrence
@@ -48,14 +56,36 @@ type ExpansionResult struct {
 }
 
 func (uc *ExpandRecurringBookingUseCase) Execute(ctx context.Context, req ExpandRecurringBookingRequest) (ExpansionResult, error) {
-	if req.Count < 1 || req.Count > 100 {
-		return ExpansionResult{}, errors.New("count must be between 1 and 100")
-	}
 	if !req.FirstEnd.After(req.FirstStart) {
 		return ExpansionResult{}, errors.New("end must be after start")
 	}
 
-	occurrences := generateOccurrences(req)
+	var occurrences []occurrence
+	if req.RRule != "" {
+		// RFC 5545 path: parse the rule, attach EXDATEs, expand, and
+		// convert to the local occurrence type the rest of this use
+		// case already handles.
+		rule, err := rrule.Parse(req.RRule)
+		if err != nil {
+			return ExpansionResult{}, err
+		}
+		rule.ExDates = req.ExDates
+		expanded, err := rule.Expand(req.FirstStart, req.FirstEnd)
+		if err != nil {
+			return ExpansionResult{}, err
+		}
+		if len(expanded) == 0 {
+			return ExpansionResult{}, errors.New("rrule produced no occurrences")
+		}
+		for _, o := range expanded {
+			occurrences = append(occurrences, occurrence{start: o.Start, end: o.End})
+		}
+	} else {
+		if req.Count < 1 || req.Count > 100 {
+			return ExpansionResult{}, errors.New("count must be between 1 and 100")
+		}
+		occurrences = generateOccurrences(req)
+	}
 
 	seriesID := uuid.NewString()
 	if err := uc.series.Save(ctx, booking.RecurringSeries{

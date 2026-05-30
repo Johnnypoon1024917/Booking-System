@@ -1,21 +1,12 @@
 <template>
-  <header class="topbar">
+  <header class="topbar fsd-topbar">
     <button class="icon-btn" @click="$emit('toggle-sidebar')" aria-label="menu" v-if="isMobile">
       <Menu :size="18" />
     </button>
 
-    <div class="search" role="search">
-      <Search class="icon" :size="16" />
-      <input v-model="q" type="text" :placeholder="$t('topbar.search')"
-             @keyup.enter="onSearch" aria-label="search resources" />
-    </div>
+    <div class="fsd-clock"><Clock :size="13" /> {{ clock }}</div>
 
     <div class="actions">
-      <button class="icon-btn" :title="$t('topbar.theme')" @click="theme.toggle()" aria-label="toggle theme">
-        <Sun v-if="theme.mode === 'dark'" :size="18" />
-        <Moon v-else :size="18" />
-      </button>
-
       <!-- Language: button + menu inside one wrapper so click-outside ignores
            the toggle click that opened the menu. -->
       <div style="position: relative;" v-click-outside="() => langOpen = false">
@@ -61,9 +52,9 @@
       </div>
 
       <div style="position: relative;" v-click-outside="() => userOpen = false">
-        <button class="icon-btn" style="width:auto; padding: 4px 6px 4px 4px;" @click="userOpen = !userOpen">
+        <button class="icon-btn fsd-user-btn" @click="userOpen = !userOpen">
           <Avatar :name="user.name" />
-          <span style="font-size: 13px; margin: 0 4px 0 8px; max-width: 110px;" class="truncate">{{ user.name }}</span>
+          <span class="truncate fsd-user-name">{{ user.name }}</span>
           <ChevronDown :size="14" />
         </button>
         <div class="menu" :class="{ open: userOpen }">
@@ -92,11 +83,10 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
-  Menu, Search, Bell, Sun, Moon, Globe, Check, ChevronDown,
-  User, Settings, LogOut, BookOpen
+  Menu, Bell, Globe, Check, ChevronDown,
+  User, Settings, LogOut, BookOpen, Clock
 } from 'lucide-vue-next'
 import Avatar from './Avatar.vue'
-import { useThemeStore } from '../stores/theme'
 import { useTenantStore } from '../stores/tenant'
 import { setLocale } from '../i18n'
 import { api, clearToken, openRealtime } from '../api'
@@ -104,34 +94,52 @@ import { api, clearToken, openRealtime } from '../api'
 defineEmits(['toggle-sidebar'])
 
 const router = useRouter()
-const theme = useThemeStore()
 const tenant = useTenantStore()
 const { availableLocales: i18nLocales } = useI18n()
 
-const q = ref('')
 const langOpen = ref(false)
 const notifOpen = ref(false)
 const userOpen = ref(false)
 const isMobile = ref(window.innerWidth < 880)
 
+// Server time status in the global header (FSD spec §1.2).
+const clock = ref('')
+function tickClock() {
+  clock.value = new Date().toLocaleString('en-GB', {
+    weekday: 'short', day: '2-digit', month: 'short',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  })
+}
+let clockTimer = null
+
 const onResize = () => { isMobile.value = window.innerWidth < 880 }
 let ws = null
 onMounted(() => {
+  tickClock()
+  clockTimer = setInterval(tickClock, 1000)
   window.addEventListener('resize', onResize)
   loadNotifications()
   // Subscribe to live booking lifecycle events — push them onto the bell.
   ws = openRealtime((ev) => {
     if (ev.type?.startsWith('booking.')) {
+      // Key the WS notification by the booking id so it shares an ack
+      // namespace with the /me/bookings rows — a user who dismisses the
+      // bell then receives the same booking via WS shouldn't see it pop
+      // back up.
+      const nid = ev.booking_id ? 'ws-booking-' + ev.booking_id : 'ws-' + ev.type + '-' + Date.now()
+      if (readIds.value.has(nid)) return
       notifications.value.unshift({
-        id: Date.now(),
+        id: nid,
         kind: ev.type.includes('cancelled') || ev.type.includes('rejected') ? 'warning' : 'info',
         title: prettifyEvent(ev.type) + (ev.resource_id ? ' · ' + shortId(ev.resource_id) : ''),
         at: Date.now(),
         booking_id: ev.booking_id
       })
     } else if (ev.type === 'weather.signal') {
+      const nid = 'ws-weather-' + (ev.payload?.code || 'signal')
+      if (readIds.value.has(nid)) return
       notifications.value.unshift({
-        id: Date.now(),
+        id: nid,
         kind: 'warning',
         title: 'HK Observatory: ' + (ev.payload?.code || 'signal'),
         at: Date.now()
@@ -141,6 +149,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  if (clockTimer) clearInterval(clockTimer)
   ws?.close?.()
 })
 
@@ -163,25 +172,57 @@ const canAdmin = computed(() => ['System Admin', 'Security Admin'].includes(user
 // Notifications: pull from /me/bookings to surface anything pending or
 // recently-decided. The endpoint already returns the user's own bookings;
 // we shape it into a quick activity feed. Live updates come via WebSocket.
+//
+// "Mark all read" tracks acknowledged IDs in localStorage, not a single
+// "last read" timestamp. The old timestamp approach failed because:
+//   1. WS-pushed events bypassed the filter on next page load.
+//   2. Server / client clock skew or sub-second CreatedAt parsing made
+//      the `>` comparison reject items the user had just dismissed.
+// An ID set is unambiguous: a notification is read iff its id is in the
+// set. Cap at 500 entries (LRU drop oldest) so it never grows unbounded.
 const notifications = ref([])
 const notifLoading = ref(false)
+const readKey = computed(() => 'fsd_notif_read:' + (user.value.name || 'anon'))
+const readIds = ref(loadReadIds())
+
+function loadReadIds() {
+  try {
+    const raw = localStorage.getItem(readKey.value)
+    if (!raw) return new Set()
+    const arr = JSON.parse(raw)
+    return new Set(Array.isArray(arr) ? arr : [])
+  } catch { return new Set() }
+}
+function persistReadIds() {
+  const arr = Array.from(readIds.value).slice(-500)
+  localStorage.setItem(readKey.value, JSON.stringify(arr))
+}
+
 async function loadNotifications() {
   notifLoading.value = true
   try {
     const list = await api.myBookings().catch(() => [])
-    notifications.value = (list || []).slice(0, 6).map(b => ({
-      id: b.ID,
-      kind: b.Status === 'Pending Approval' ? 'warning'
-          : b.Status === 'Cancelled' || b.Status === 'No Show' ? 'error'
-          : 'success',
-      title: b.Status + ': booking at ' + new Date(b.StartTime).toLocaleString(),
-      at: new Date(b.CreatedAt).getTime(),
-      booking_id: b.ID
-    }))
+    notifications.value = (list || [])
+      .slice(0, 6)
+      .map(b => ({
+        id: String(b.ID),
+        kind: b.Status === 'Pending Approval' ? 'warning'
+            : b.Status === 'Cancelled' || b.Status === 'No Show' ? 'error'
+            : 'success',
+        title: b.Status + ': booking at ' + new Date(b.StartTime).toLocaleString(),
+        at: new Date(b.CreatedAt).getTime(),
+        booking_id: b.ID
+      }))
+      .filter(n => !readIds.value.has(n.id))
   } finally { notifLoading.value = false }
 }
 const unread = computed(() => notifications.value.length)
-function markAllRead() { notifications.value = []; notifOpen.value = false }
+function markAllRead() {
+  for (const n of notifications.value) readIds.value.add(String(n.id))
+  persistReadIds()
+  notifications.value = []
+  notifOpen.value = false
+}
 function openNotification(n) {
   notifOpen.value = false
   if (n.booking_id) router.push('/my')
@@ -201,7 +242,6 @@ function relTime(ts) {
   return new Date(ts).toLocaleDateString()
 }
 
-function onSearch() { router.push({ name: 'search', query: { q: q.value } }) }
 function goTo(path) { userOpen.value = false; router.push(path) }
 function logout()   { clearToken(); location.href = '/' }
 

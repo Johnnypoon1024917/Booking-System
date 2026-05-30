@@ -38,11 +38,6 @@
   <div class="card">
     <h3 class="mb">{{ $t('profile.preferences') }}</h3>
     <div class="row gap" style="flex-wrap: wrap;">
-      <button class="btn ghost" @click="theme.toggle()">
-        <Moon v-if="theme.mode === 'light'" :size="14"/>
-        <Sun v-else :size="14"/>
-        {{ theme.mode === 'light' ? $t('profile.switchDark') : $t('profile.switchLight') }}
-      </button>
       <button class="btn ghost" @click="cycleLocale">
         <Globe :size="14"/>
         {{ $t('profile.language') }}: {{ localeLabel }}
@@ -57,14 +52,12 @@
 <script setup>
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Moon, Sun, Globe, LogOut } from 'lucide-vue-next'
+import { Globe, LogOut } from 'lucide-vue-next'
 import Avatar from '../components/Avatar.vue'
-import { useThemeStore } from '../stores/theme'
 import { setLocale } from '../i18n'
 import { clearToken } from '../api'
 
 const { locale, availableLocales } = useI18n()
-const theme = useThemeStore()
 
 const user = computed(() => {
   let payload = {}

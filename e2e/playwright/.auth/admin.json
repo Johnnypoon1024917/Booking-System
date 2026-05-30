@@ -1,0 +1,30 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:5173",
+      "localStorage": [
+        {
+          "name": "fsd_lang",
+          "value": "en"
+        },
+        {
+          "name": "fsd_brand",
+          "value": "{\"primary\":\"#002147\",\"secondary\":\"#475569\"}"
+        },
+        {
+          "name": "fsd_user",
+          "value": "{\"id\":\"67bc58b0-0e1c-49e8-82ec-c1728b604dc3\",\"tenantId\":\"f11f7459-0c9f-42fd-9d9f-4a6518d165a4\",\"tenantSlug\":\"default\",\"username\":\"admin\",\"role\":\"System Admin\",\"grade\":null,\"regionAccess\":[\"Hong Kong\"],\"mfaEnabled\":false}"
+        },
+        {
+          "name": "fsd_auth",
+          "value": "{\"state\":{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2N2JjNThiMC0wZTFjLTQ5ZTgtODJlYy1jMTcyOGI2MDRkYzMiLCJ0aWQiOiJmMTFmNzQ1OS0wYzlmLTQyZmQtOWQ5Zi00YTY1MThkMTY1YTQiLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZSI6IlN5c3RlbSBBZG1pbiIsImdyYWRlIjpudWxsLCJyZWdpb25zIjpbIkhvbmcgS29uZyJdLCJpYXQiOjE3ODAxMTE5MzIsImV4cCI6MTc4MDE1NTEzMn0.efU_Beb5m49bb6DydNBKYJytPH-WDaUoOCXaKk_OT4w\",\"user\":{\"id\":\"67bc58b0-0e1c-49e8-82ec-c1728b604dc3\",\"tenantId\":\"f11f7459-0c9f-42fd-9d9f-4a6518d165a4\",\"tenantSlug\":\"default\",\"username\":\"admin\",\"role\":\"System Admin\",\"grade\":null,\"regionAccess\":[\"Hong Kong\"],\"mfaEnabled\":false}},\"version\":0}"
+        },
+        {
+          "name": "fsd_jwt",
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2N2JjNThiMC0wZTFjLTQ5ZTgtODJlYy1jMTcyOGI2MDRkYzMiLCJ0aWQiOiJmMTFmNzQ1OS0wYzlmLTQyZmQtOWQ5Zi00YTY1MThkMTY1YTQiLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZSI6IlN5c3RlbSBBZG1pbiIsImdyYWRlIjpudWxsLCJyZWdpb25zIjpbIkhvbmcgS29uZyJdLCJpYXQiOjE3ODAxMTE5MzIsImV4cCI6MTc4MDE1NTEzMn0.efU_Beb5m49bb6DydNBKYJytPH-WDaUoOCXaKk_OT4w"
+        }
+      ]
+    }
+  ]
+}

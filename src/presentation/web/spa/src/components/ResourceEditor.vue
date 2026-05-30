@@ -9,12 +9,24 @@
         </select>
       </label>
       <label class="field">
-        <span>{{ $t('admin.resources.region') }}</span>
-        <select v-model="form.Region">
+        <span>{{ $t('admin.resources.region') }} <abbr title="required" class="req">*</abbr></span>
+        <select v-model="form.Region" required>
           <option>Hong Kong</option><option>Kowloon</option><option>New Territories</option>
         </select>
+        <small class="muted">{{ $t('admin.resources.regionHelp') }}</small>
       </label>
-      <label class="field"><span>{{ $t('admin.resources.location') }}</span><input v-model="form.Location" /></label>
+      <label class="field">
+        <span>{{ $t('admin.resources.location') }}</span>
+        <select v-if="locationOptions.length" v-model="form.Location">
+          <option value="">{{ $t('admin.resources.locationSameAsRegion') }}</option>
+          <option v-for="l in locationOptions" :key="l" :value="l">{{ l }}</option>
+          <option v-if="form.Location && !locationOptions.includes(form.Location)" :value="form.Location">
+            {{ form.Location }} (legacy)
+          </option>
+        </select>
+        <input v-else v-model="form.Location" :placeholder="$t('admin.resources.locationPh')" />
+        <small class="muted">{{ $t('admin.resources.locationHelp') }}</small>
+      </label>
       <label class="field"><span>{{ $t('admin.resources.capacity') }}</span><input type="number" v-model.number="form.Capacity" min="1" /></label>
       <label class="field">
         <span>{{ $t('admin.resources.department') }}</span>
@@ -36,6 +48,33 @@
       <label class="toggle"><input type="checkbox" v-model="form.RequiresApproval"/> <span>{{ $t('admin.resources.requiresApproval') }}</span></label>
       <label class="toggle"><input type="checkbox" v-model="form.IsRestricted"/>     <span>{{ $t('admin.resources.restricted') }}</span></label>
       <label class="toggle"><input type="checkbox" v-model="form.IsActive"/>          <span>{{ $t('admin.resources.active') }}</span></label>
+    </div>
+
+    <!-- Details-visibility ACL. The Outlook three-permission model
+         (visibility / free-busy / details) is enforced server-side;
+         this control widens the "details" audience for THIS resource
+         only. Owner + System/Security/Room Admin + Secretary always
+         see details (the legacy floor). Tick a box here to additionally
+         expose subject/organiser to that role — typical use is "General
+         User" on a public town-hall room. -->
+    <div class="card mt-lg" style="background: var(--surface-inset); border: 1px dashed var(--border);">
+      <h4 style="margin:0 0 6px;"><Eye :size="14"/> {{ $t('admin.resources.detailsAclTitle') }}</h4>
+      <p class="muted text-sm" style="max-width:580px; margin:0 0 10px;">
+        {{ $t('admin.resources.detailsAclHelp') }}
+      </p>
+      <div class="row gap" style="flex-wrap: wrap;">
+        <label class="toggle" v-for="role in detailsRoles" :key="role.value">
+          <input
+            type="checkbox"
+            :checked="(form.DetailsVisibleToRole || []).includes(role.value)"
+            @change="toggleDetailsRole(role.value, $event.target.checked)"
+          />
+          <span>{{ role.label }}</span>
+        </label>
+      </div>
+      <small class="muted" style="display:block; margin-top:8px;">
+        {{ $t('admin.resources.detailsAclFloorNote') }}
+      </small>
     </div>
 
     <!-- Booking mode block — gym/classroom shared bookings -->
@@ -69,6 +108,20 @@
         <span class="tag" :class="badge.cls">{{ badge.text }}</span>
       </div>
 
+      <div class="mt">
+        <label class="field"><span>How is this space booked?</span></label>
+        <div class="mode-opts">
+          <label><input type="radio" value="whole" v-model="splitMode"/> Whole only</label>
+          <label><input type="radio" value="splittable" v-model="splitMode"/> Splittable (sub-rooms)</label>
+          <label><input type="radio" value="pods" v-model="splitMode"/> Pods (shared capacity)</label>
+        </div>
+        <label v-if="splitMode === 'pods'" class="field mt">
+          <span>Concurrent capacity (pods)</span>
+          <input type="number" min="1" v-model.number="form.SharedCapacity"/>
+          <small class="muted">Up to this many independent bookings may overlap (e.g. 12 break-out pods). No sub-rooms are created.</small>
+        </label>
+      </div>
+
       <div v-if="form.CompositeMode === 'parent'" class="mt">
         <div class="sub-resources-list">
           <div v-for="(sub, idx) in splitForm.sub_resources" :key="idx" class="sub-resource-item">
@@ -96,7 +149,7 @@
       </div>
 
       <!-- Show split button only for new resources (not yet saved) -->
-      <div v-if="!form.ID && form.CompositeMode !== 'child'" class="mt">
+      <div v-if="splitMode === 'splittable' && !form.ID && form.CompositeMode !== 'child'" class="mt">
         <button class="btn ghost sm" @click.prevent="showSplit = !showSplit">
           <SplitSquareVertical :size="13"/> {{ $t('admin.resources.splitAction') }}
         </button>
@@ -107,7 +160,7 @@
         <p class="muted text-sm">{{ $t('admin.resources.alreadySplit') }}</p>
       </div>
 
-      <div v-if="showSplit" class="mt">
+      <div v-if="showSplit && splitMode === 'splittable'" class="mt">
         <div class="grid-2">
           <label class="field">
             <span>{{ $t('admin.resources.childCount') }}</span>
@@ -158,6 +211,22 @@
       </div>
     </div>
 
+    <!-- Floor plan position -->
+    <div class="card mt-lg" style="background: var(--surface-inset); border: 1px dashed var(--border);">
+      <h4 style="margin:0 0 6px;"><MapPin :size="14"/> {{ $t('admin.resources.floorPosition') }}</h4>
+      <p class="muted text-sm" style="max-width:560px; margin:0 0 10px;">{{ $t('admin.resources.floorPositionHelp') }}</p>
+      <div class="grid-2">
+        <label class="field">
+          <span>{{ $t('admin.resources.floorX') }} (%)</span>
+          <input type="number" min="0" max="100" step="0.1" v-model.number="form.FloorX" />
+        </label>
+        <label class="field">
+          <span>{{ $t('admin.resources.floorY') }} (%)</span>
+          <input type="number" min="0" max="100" step="0.1" v-model.number="form.FloorY" />
+        </label>
+      </div>
+    </div>
+
     <!-- Operating Hours -->
     <div class="card mt-lg" style="background: var(--surface-inset); border: 1px dashed var(--border);">
       <h4 style="margin:0 0 6px;">Operating Hours</h4>
@@ -184,6 +253,14 @@
 </template>
 
 <style scoped>
+/* Required-marker abbreviation used next to mandatory field labels.
+   no-underline removes the browser default so it doesn't dot-underline. */
+abbr.req { color: var(--danger, #b91c1c); text-decoration: none; margin-left: 2px; cursor: help; }
+.field small.muted { display: block; margin-top: 4px; font-size: 12px; line-height: 1.35; }
+
+.mode-opts { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 4px; }
+.mode-opts label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.mode-opts input { width: auto; }
 .day-row {
   display: grid;
   grid-template-columns: 100px 100px 1fr;
@@ -303,9 +380,9 @@
 </style>
 
 <script setup>
-import { computed, reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Combine, SplitSquareVertical, Save, Trash2, Users, Plus, X } from 'lucide-vue-next'
+import { Combine, SplitSquareVertical, Save, Trash2, Users, Plus, X, MapPin, Eye } from 'lucide-vue-next'
 import Modal from './Modal.vue'
 import { api } from '../api'
 import { useToastStore } from '../stores/toast'
@@ -319,11 +396,56 @@ const toasts = useToastStore()
 const form = reactive({
   BookingMode: 'exclusive',
   SharedCapacity: 1,
+  FloorX: 0,
+  FloorY: 0,
+  // Details-visibility ACL. Default empty so resources behave as they
+  // always did (legacy floor: owner + admins + Secretary). The UI lets
+  // operators ADD roles; the floor is enforced server-side and cannot
+  // be turned off from here.
+  DetailsVisibleToRole: [],
   ...props.resource
 })
+
+// detailsRoles drives the checkbox grid. The five roles displayed
+// match user.RoleXxx in domain/user/user.go. We deliberately omit
+// "System Admin" — it's always allowed (the audit backstop) so
+// showing a non-functional checkbox would be confusing.
+const detailsRoles = [
+  { value: 'General User',   label: t('admin.resources.roleGeneralUser') },
+  { value: 'Secretary',      label: t('admin.resources.roleSecretary') },
+  { value: 'Room Admin',     label: t('admin.resources.roleRoomAdmin') },
+  { value: 'Security Admin', label: t('admin.resources.roleSecurityAdmin') },
+]
+
+function toggleDetailsRole(role, on) {
+  const list = Array.isArray(form.DetailsVisibleToRole) ? [...form.DetailsVisibleToRole] : []
+  const i = list.indexOf(role)
+  if (on && i < 0) list.push(role)
+  if (!on && i >= 0) list.splice(i, 1)
+  form.DetailsVisibleToRole = list
+}
 const busy = ref(false)
 const showSplit = ref(false)
 const newChildName = ref('')
+
+// Booking model: Whole (exclusive standalone), Splittable (parent + child
+// sub-rooms via split), or Pods (this resource is shared up to N).
+const splitMode = ref(
+  form.BookingMode === 'shared' ? 'pods'
+  : (form.CompositeMode === 'parent' || form.CompositeMode === 'child') ? 'splittable'
+  : 'whole'
+)
+watch(splitMode, (m) => {
+  if (m === 'pods') {
+    form.BookingMode = 'shared'
+    if (!form.SharedCapacity || form.SharedCapacity < 1) form.SharedCapacity = form.Capacity || 2
+    showSplit.value = false
+  } else {
+    form.BookingMode = 'exclusive'
+    if (m === 'splittable' && !form.ID) showSplit.value = true
+    else showSplit.value = false
+  }
+})
 const splitForm = reactive({
   child_count: 3, 
   child_capacity: 4, 
@@ -373,7 +495,12 @@ function createDefaultHours() {
   return hours
 }
 
+const locationOptions = ref([])
 onMounted(async () => {
+  try {
+    const locs = await api.listLocations()
+    locationOptions.value = (locs || []).map(l => l.Name).filter(Boolean)
+  } catch { locationOptions.value = [] }
   try {
     const list = await api.listResourceTypes()
     if (Array.isArray(list) && list.length) resourceTypes.value = list
@@ -419,6 +546,16 @@ const badge = computed(() => {
 })
 
 async function save() {
+  // Region is the wide bucket ("Hong Kong"); Location is the specific
+  // building/floor inside that region. The search form only collects
+  // one box and matches against both columns, but every resource still
+  // needs SOMETHING in `location` so the equality filter doesn't drop
+  // the row. When the admin leaves Location blank we fall back to the
+  // selected Region — that's the same behaviour the data backfill used
+  // for legacy rows.
+  if (!form.Location || !form.Location.trim()) {
+    form.Location = form.Region
+  }
   busy.value = true
   try {
     let resourceId = form.ID

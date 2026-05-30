@@ -50,8 +50,82 @@ func (r *CustomizationRepo) Get(ctx context.Context, tenantID uuid.UUID) (*tenan
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return nil, err
 	}
+	// A row written by a previous build used PascalCase JSON keys, so the
+	// snake_case unmarshal above yields an all-zero document. Re-read it
+	// through the legacy shape and migrate, instead of losing the tenant's
+	// configuration.
+	if c.BrandName == "" && c.DefaultLocale == "" && len(c.SidebarModules) == 0 {
+		var legacy legacyCustomization
+		if err := json.Unmarshal(raw, &legacy); err == nil && (legacy.BrandName != "" || legacy.DefaultLocale != "" || len(legacy.SidebarModules) > 0) {
+			c = legacy.toCurrent()
+		} else {
+			// Genuinely empty → let the caller fall back to FSDDefaults.
+			return nil, nil
+		}
+	}
 	c.TenantID = tenantID
 	return &c, nil
+}
+
+// legacyCustomization mirrors the pre-redesign on-disk shape (Go default
+// PascalCase JSON keys, no tags). It exists only so an old row migrates
+// forward on first read; once Save() runs the row is rewritten snake_case.
+type legacyCustomization struct {
+	BrandName              string
+	BrandLogoURL           string
+	BrandPrimary           string
+	BrandSecondary         string
+	BrandAccent            string
+	DefaultLocale          string
+	AvailableLocales       []string
+	Timezone               string
+	DashboardWidgets       []string
+	SidebarModules         []string
+	WeekendDays            []int
+	BookingHorizonDays     int
+	MinDurationMinutes     int
+	MaxDurationMinutes     int
+	GracePeriodMinutes     int
+	ApprovalWindowHours    int
+	WeekendRequireApproval bool
+	HolidayBlocking        bool
+	CustomFields           []tenant.CustomField
+	RoleLabels             map[string]string
+	HKOWeatherEnabled      bool
+	GovHKHolidayFeed       bool
+	OutlookSyncEnabled     bool
+	TeamsAppEnabled        bool
+	ZoomMaskBase           string
+}
+
+func (l legacyCustomization) toCurrent() tenant.Customization {
+	return tenant.Customization{
+		BrandName:              l.BrandName,
+		BrandLogoURL:           l.BrandLogoURL,
+		BrandPrimary:           l.BrandPrimary,
+		BrandSecondary:         l.BrandSecondary,
+		BrandAccent:            l.BrandAccent,
+		DefaultLocale:          l.DefaultLocale,
+		AvailableLocales:       l.AvailableLocales,
+		Timezone:               l.Timezone,
+		DashboardWidgets:       l.DashboardWidgets,
+		SidebarModules:         l.SidebarModules,
+		WeekendDays:            l.WeekendDays,
+		BookingHorizonDays:     l.BookingHorizonDays,
+		MinDurationMinutes:     l.MinDurationMinutes,
+		MaxDurationMinutes:     l.MaxDurationMinutes,
+		GracePeriodMinutes:     l.GracePeriodMinutes,
+		ApprovalWindowHours:    l.ApprovalWindowHours,
+		WeekendRequireApproval: l.WeekendRequireApproval,
+		HolidayBlocking:        l.HolidayBlocking,
+		CustomFields:           l.CustomFields,
+		RoleLabels:             l.RoleLabels,
+		HKOWeatherEnabled:      l.HKOWeatherEnabled,
+		GovHKHolidayFeed:       l.GovHKHolidayFeed,
+		OutlookSyncEnabled:     l.OutlookSyncEnabled,
+		TeamsAppEnabled:        l.TeamsAppEnabled,
+		ZoomMaskBase:           l.ZoomMaskBase,
+	}
 }
 
 // Save upserts the customization JSON onto the tenant row.

@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -109,10 +110,17 @@ func (uc *ApprovalChainUseCase) Decide(ctx context.Context, bookingID string, de
 	// Resolve the rule (if still present) so we can honor per-level
 	// dependencies — empty deps fall back to "previous level must be done"
 	// (legacy linear). The lookup is best-effort: a deleted rule means we
-	// gracefully degrade to the linear fan-in.
+	// gracefully degrade to the linear fan-in. We log the degradation so
+	// an admin can spot it in the API logs (silently dropping fan-in
+	// branches has confused on-call before).
 	var rule *approval.Rule
 	if len(steps) > 0 && steps[0].RuleID != "" {
-		rule, _ = uc.rules.Get(ctx, steps[0].RuleID)
+		var lookupErr error
+		rule, lookupErr = uc.rules.Get(ctx, steps[0].RuleID)
+		if lookupErr != nil {
+			log.Printf("approval chain: rule %s missing for booking %s (degrading to linear): %v",
+				steps[0].RuleID, bookingID, lookupErr)
+		}
 	}
 	depsSatisfied := func(idx int) bool {
 		var deps []int
@@ -228,23 +236,25 @@ func matches(r *approval.Rule, res *booking.Resource) bool {
 
 // canDecide checks whether the given user is allowed to act on a step.
 // Match if:
-//   - their user ID is in the explicit approver list, OR
-//   - they hold the required role (and meet min_grade if specified), OR
+//   - their user ID is in the explicit approver list (grade gate still applies), OR
+//   - they hold the required role and meet min_grade if specified, OR
 //   - the step has no specific approvers AND user is a System Admin
+//
+// MinGrade is a *minimum* — anyone at or above the configured grade
+// satisfies it (see user.GradeAtLeast). Previously this was an equality
+// check, which silently rejected approvers at higher grades than the rule
+// required and made multi-tier chains unusable.
 func canDecide(step *approval.Step, u *user.User) bool {
 	if u == nil {
 		return false
 	}
 	for _, id := range step.ApproverIDs {
 		if id == u.ID {
-			return true
+			return user.GradeAtLeast(u.Grade, step.MinGrade)
 		}
 	}
 	if step.ApproverRole != "" && strings.EqualFold(step.ApproverRole, u.Role) {
-		if step.MinGrade != "" && !strings.EqualFold(step.MinGrade, u.Grade) {
-			return false
-		}
-		return true
+		return user.GradeAtLeast(u.Grade, step.MinGrade)
 	}
 	if u.Role == user.RoleSystemAdmin && len(step.ApproverIDs) == 0 && step.ApproverRole == "" {
 		return true

@@ -222,11 +222,13 @@ func TestTenantMiddleware_MissingTenantID(t *testing.T) {
 	}
 }
 
-// TestTenantMiddleware_SystemAdminBypass tests that System Admins can bypass tenant check
-func TestTenantMiddleware_SystemAdminBypass(t *testing.T) {
+// TestTenantMiddleware_SystemAdminRequiresTenantID asserts that the old
+// "system admin can bypass tenant context" behaviour is gone: a token
+// claiming System Admin but missing tenant_id MUST be rejected, otherwise
+// a leaked admin token would yield cross-tenant access.
+func TestTenantMiddleware_SystemAdminRequiresTenantID(t *testing.T) {
 	testUserID := uuid.New().String()
 
-	// Create a JWT token for System Admin without tenant_id
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":  testUserID,
 		"role": "System Admin",
@@ -234,32 +236,27 @@ func TestTenantMiddleware_SystemAdminBypass(t *testing.T) {
 	})
 	tokenString, _ := token.SignedString(JwtSecretKey)
 
-	// Create the middleware with mock
 	tm := &TenantMiddleware{
 		tenantRepo: &MockTenantRepository{},
 	}
 
-	// Create a test handler that captures the context
 	handlerCalled := false
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Create the request
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 	rec := httptest.NewRecorder()
 
-	// Execute
 	tm.Middleware(testHandler).ServeHTTP(rec, req)
 
-	// Assert - handler should be called
-	if !handlerCalled {
-		t.Error("Handler should be called for System Admin without tenant_id")
+	if handlerCalled {
+		t.Error("Handler must NOT be called for System Admin without tenant_id")
 	}
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected status 200 for System Admin, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for System Admin without tenant_id, got %d", rec.Code)
 	}
 }
 

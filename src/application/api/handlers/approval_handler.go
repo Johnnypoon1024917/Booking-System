@@ -31,6 +31,13 @@ type StepLister interface {
 	ListByBooking(ctx context.Context, bookingID string) ([]approval.Step, error)
 }
 
+// StepDelegator can reassign a pending step to another approver. The
+// approval_step repo satisfies this (ListByBooking + Save).
+type StepDelegator interface {
+	ListByBooking(ctx context.Context, bookingID string) ([]approval.Step, error)
+	Save(ctx context.Context, s approval.Step) error
+}
+
 // ApprovalHandler exposes the approval inbox + approve/reject actions.
 //
 //   GET  /api/v1/approvals                       list pending approvals visible to me
@@ -38,10 +45,11 @@ type StepLister interface {
 //   POST /api/v1/approvals/{booking_id}/reject   reject with reason
 //   GET  /api/v1/approvals/{booking_id}/chain    chain progress (steps)
 type ApprovalHandler struct {
-	uc       *usecase.ApprovalUseCase
-	chain    ChainDecider
-	steps    StepLister
-	bookings PendingApprovalLister
+	uc        *usecase.ApprovalUseCase
+	chain     ChainDecider
+	steps     StepLister
+	delegator StepDelegator
+	bookings  PendingApprovalLister
 }
 
 // NewApprovalHandler keeps backwards compatibility for callers that don't
@@ -53,6 +61,11 @@ func NewApprovalHandler(uc *usecase.ApprovalUseCase, bookings PendingApprovalLis
 func (h *ApprovalHandler) WithChain(decider ChainDecider, lister StepLister) *ApprovalHandler {
 	h.chain = decider
 	h.steps = lister
+	return h
+}
+
+func (h *ApprovalHandler) WithDelegation(d StepDelegator) *ApprovalHandler {
+	h.delegator = d
 	return h
 }
 
@@ -103,6 +116,21 @@ func (h *ApprovalHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
 
+	case len(parts) == 2 && parts[1] == "delegate" && r.Method == http.MethodPost:
+		var body struct {
+			ToUserID string `json:"to_user_id"`
+			Reason   string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ToUserID == "" {
+			http.Error(w, "to_user_id required", http.StatusBadRequest)
+			return
+		}
+		if err := h.delegate(r, parts[0], uid, body.ToUserID, body.Reason); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "delegated"})
+
 	case len(parts) == 2 && parts[1] == "reject" && r.Method == http.MethodPost:
 		var body struct {
 			Reason string `json:"reason"`
@@ -143,3 +171,43 @@ func (h *ApprovalHandler) act(r *http.Request, bookingID, status, reason string)
 	}
 	return h.uc.Reject(r.Context(), bookingID, uid, reason)
 }
+
+// delegate reassigns the first pending step of a booking to another
+// approver. Recorded as a chain event (note appended to the step) rather
+// than a silent reassignment, per the UX spec.
+func (h *ApprovalHandler) delegate(r *http.Request, bookingID, fromUID, toUID, reason string) error {
+	if h.delegator == nil {
+		return errDelegationUnavailable
+	}
+	steps, err := h.delegator.ListByBooking(r.Context(), bookingID)
+	if err != nil {
+		return err
+	}
+	for _, s := range steps {
+		if s.Status != approval.StepStatusPending {
+			continue
+		}
+		s.ApproverIDs = []string{toUID}
+		s.ApproverRole = ""
+		note := "Delegated " + fromUID + " → " + toUID
+		if reason != "" {
+			note += " (" + reason + ")"
+		}
+		if s.Reason != "" {
+			s.Reason = s.Reason + " · " + note
+		} else {
+			s.Reason = note
+		}
+		return h.delegator.Save(r.Context(), s)
+	}
+	return errNoPendingStep
+}
+
+var (
+	errDelegationUnavailable = &delegateErr{"delegation is not available for this booking"}
+	errNoPendingStep         = &delegateErr{"no pending approval step to delegate"}
+)
+
+type delegateErr struct{ msg string }
+
+func (e *delegateErr) Error() string { return e.msg }

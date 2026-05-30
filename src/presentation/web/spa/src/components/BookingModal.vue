@@ -36,10 +36,10 @@
         <label class="field">
           <span>{{ $t('booking.pattern') }}</span>
           <select v-model="pattern">
-            <option value="daily">{{ $t('booking.daily') }}</option>
-            <option value="weekly">{{ $t('booking.weekly') }}</option>
-            <option value="bi-weekly">{{ $t('booking.biweekly') }}</option>
-            <option value="monthly">{{ $t('booking.monthly') }}</option>
+            <option v-if="allowsPattern('daily')" value="daily">{{ $t('booking.daily') }}</option>
+            <option v-if="allowsPattern('weekly')" value="weekly">{{ $t('booking.weekly') }}</option>
+            <option v-if="allowsPattern('weekly')" value="bi-weekly">{{ $t('booking.biweekly') }}</option>
+            <option v-if="allowsPattern('monthly')" value="monthly">{{ $t('booking.monthly') }}</option>
           </select>
         </label>
         <label class="field">
@@ -77,6 +77,21 @@
       <input v-model="meetingURL" placeholder="https://teams.microsoft.com/…" />
     </label>
 
+    <!-- Outlook-style "Private appointment" flag. When checked, only
+         the owner and System Admin see organiser / subject; everyone
+         else sees "Reserved" on calendars. Useful for VIP meetings on
+         otherwise-public rooms. -->
+    <label class="toggle mt">
+      <input type="checkbox" v-model="isPrivate" />
+      <span>
+        <Lock :size="13" />
+        {{ $t('booking.markPrivate') }}
+      </span>
+    </label>
+    <small class="muted" style="display:block; margin-left:24px; margin-top:-4px;">
+      {{ $t('booking.markPrivateHelp') }}
+    </small>
+
     <!-- Result panel -->
     <div v-if="result" class="result mt">
       <div class="row gap" style="align-items: flex-start;">
@@ -98,9 +113,13 @@
       </div>
     </div>
 
+    <div v-if="ruleError" class="banner danger" style="margin-top:12px;">
+      <span>{{ ruleError }}</span>
+    </div>
+
     <template #footer>
       <button class="btn ghost" @click="$emit('close')">{{ $t('booking.cancel') }}</button>
-      <button class="btn" :disabled="busy || !!result" @click="submit">
+      <button class="btn" :disabled="busy || !!result || !!ruleError" @click="submit">
         <Loader2 v-if="busy" :size="14" class="spin" />
         {{ $t('booking.submit') }}
       </button>
@@ -112,11 +131,12 @@
 import { computed, nextTick, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
-import { Building2, Calendar, Clock, Check, CalendarPlus, Loader2, Repeat } from 'lucide-vue-next'
+import { Building2, Calendar, Clock, Check, CalendarPlus, Loader2, Repeat, Lock } from 'lucide-vue-next'
 import Modal from './Modal.vue'
 import { api } from '../api'
 import { useTenantStore } from '../stores/tenant'
 import { useToastStore } from '../stores/toast'
+import { useBookingRules } from '../composables/bookingRules'
 
 const props = defineProps(['resource', 'date', 'start', 'end'])
 const emit = defineEmits(['close', 'booked'])
@@ -124,10 +144,17 @@ const emit = defineEmits(['close', 'booked'])
 const tenant = useTenantStore()
 const toasts = useToastStore()
 const { locale } = useI18n()
+const { validate: validateRules, allowsPattern } = useBookingRules()
+
+// Admin-configured booking constraints (min/max duration, horizon, …).
+const ruleError = computed(() => validateRules({ date: props.date, start: props.start, end: props.end }))
 const customFields = computed(() => tenant.customization?.custom_fields || [])
 const customData = reactive({})
 const title = ref('')
 const meetingURL = ref('')
+// Outlook-style "Private appointment" toggle — strips PII for non-owners
+// even when the resource ACL would otherwise allow it.
+const isPrivate = ref(false)
 const busy = ref(false)
 const result = ref(null)
 const qrCanvas = ref(null)
@@ -144,6 +171,7 @@ function formatDate(d) {
 }
 
 async function submit() {
+  if (ruleError.value) { toasts.error('Cannot book', ruleError.value); return }
   busy.value = true
   try {
     // Convert local date+time to proper ISO with timezone offset
@@ -155,6 +183,7 @@ async function submit() {
       end_time: endLocal.toISOString(),
       title: title.value || undefined,
       meeting_url: meetingURL.value || undefined,
+      is_private: isPrivate.value,
       custom_data: customData,
       recurrence: recur.value ? { pattern: pattern.value, count: count.value } : undefined
     })
