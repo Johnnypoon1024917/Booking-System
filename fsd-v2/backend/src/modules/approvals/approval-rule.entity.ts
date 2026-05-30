@@ -6,17 +6,29 @@ import {
 // round-trip across stacks during cut-over.
 export type ApprovalScopeType = 'asset_type' | 'resource' | 'department' | 'tenant';
 
+// How a level's approver set is resolved. 'user'/'role' are the static forms
+// (explicit ids or a role + min_grade). 'manager' and 'department_head' are
+// RELATIVE to the booking and resolved to concrete user ids at materialization
+// time, so admins never have to re-point rules when people move teams.
+// Absent ⇒ legacy static behaviour (ids/role), so old rules keep working.
+export type ApproverType = 'user' | 'role' | 'manager' | 'department_head';
+
 // One level in the chain. At runtime resolved to a concrete approver set
-// via (specific user ids) OR (role + min_grade). Dependencies allow
-// fan-in; empty deps default to the legacy linear "previous must be done".
+// via (specific user ids) OR (role + min_grade) OR a dynamic target.
+// Dependencies allow fan-in; empty deps default to the legacy linear
+// "previous must be done".
 export interface ApprovalLevel {
   name: string;
+  approver_type?: ApproverType;
   approver_user_ids?: string[];
   approver_role?: string;
   min_grade?: string;
   auto_after_hours?: number;
   dependencies?: number[];
   parallel?: boolean;
+  // When true (and the level has >1 specific approver) every listed approver
+  // must approve. Default/false keeps the historical "any one approver" rule.
+  require_all?: boolean;
 }
 
 @Entity('approval_rules')

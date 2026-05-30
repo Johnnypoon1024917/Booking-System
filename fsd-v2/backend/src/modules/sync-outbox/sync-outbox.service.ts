@@ -1,13 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { SyncOutbox } from './sync-outbox.entity';
 import { OutlookSyncService } from '../outlook-sync/outlook-sync.service';
 import { GoogleSyncService } from '../google-sync/google-sync.service';
 
 const MAX_ATTEMPTS = 6;
 const DRAIN_BATCH = 50;
+// A row left in 'processing' longer than this is assumed orphaned by a
+// crashed/restarted worker and is reclaimed by the next drain.
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
 
 // Drains the calendar-sync outbox: pushes each pending booking change to
 // Outlook + Google with exponential backoff, so a transient Graph/Google
@@ -41,11 +44,35 @@ export class SyncOutboxService {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async drain(): Promise<void> {
-    const due = await this.outbox.find({
-      where: { status: 'pending', nextAttemptAt: LessThanOrEqual(new Date()) },
-      take: DRAIN_BATCH, order: { nextAttemptAt: 'ASC' },
+    const claimed = await this.claimDue();
+    for (const row of claimed) await this.deliverOne(row);
+  }
+
+  // claimDue atomically flips a batch of due rows from 'pending' to
+  // 'processing' inside a single locked transaction. FOR UPDATE SKIP LOCKED
+  // guarantees no concurrent/overrunning drain tick can claim the same rows,
+  // so a slow Graph/Google push can't trigger parallel re-processing. Rows
+  // orphaned in 'processing' by a crashed worker are reclaimed here too.
+  private claimDue(): Promise<SyncOutbox[]> {
+    const now = new Date();
+    const staleBefore = new Date(now.getTime() - STALE_PROCESSING_MS);
+    return this.outbox.manager.transaction(async (em) => {
+      const rows = await em.createQueryBuilder(SyncOutbox, 'o')
+        .setLock('pessimistic_write')
+        .setOnLocked('skip_locked')
+        .where('o.nextAttemptAt <= :now', { now })
+        .andWhere(
+          '(o.status = :pending OR (o.status = :processing AND o.updatedAt <= :staleBefore))',
+          { pending: 'pending', processing: 'processing', staleBefore },
+        )
+        .orderBy('o.nextAttemptAt', 'ASC')
+        .take(DRAIN_BATCH)
+        .getMany();
+      if (rows.length) {
+        await em.update(SyncOutbox, rows.map((r) => r.id), { status: 'processing' });
+      }
+      return rows;
     });
-    for (const row of due) await this.deliverOne(row);
   }
 
   private async deliverOne(row: SyncOutbox): Promise<void> {
@@ -74,6 +101,8 @@ export class SyncOutboxService {
         row.status = 'failed';
         this.log.warn(`calendar sync ${row.id} (${row.event} ${row.bookingId}) failed permanently: ${row.lastError}`);
       } else {
+        // Hand the claimed row back to the pool for a future tick.
+        row.status = 'pending';
         // 30s, 2m, 8m, 32m, … — matches the notification/webhook backoff curve.
         const delaySec = 30 * Math.pow(4, row.attemptCount - 1);
         row.nextAttemptAt = new Date(Date.now() + delaySec * 1000);

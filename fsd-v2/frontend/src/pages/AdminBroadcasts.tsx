@@ -3,6 +3,8 @@ import { Megaphone, Pencil, Plus, RefreshCcw, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { useT } from '../hooks/useT';
+import { useTimezone } from '../hooks/useTimezone';
+import { utcToZonedDatetimeLocal, zonedDatetimeLocalToUtcIso } from '../utils/datetime';
 import { confirmDialog, alertDialog } from '../stores/confirm';
 
 // R13 broadcast composer. Mirrors v1's AdminBroadcasts.vue: a list of
@@ -21,21 +23,16 @@ interface Broadcast {
   filters?: Record<string, any>;
 }
 
-function blank(): Broadcast {
+// Default window is "now" → "+24h" expressed as wall-clock in the *tenant*
+// zone, so an admin travelling abroad still schedules against the office's
+// local clock (a London-based admin composing for the HK office gets HK time).
+function blank(tz: string): Broadcast {
   const now = new Date();
   const end = new Date(now.getTime() + 24 * 3600 * 1000);
   return {
     title: '', content: '', severity: 'urgent', color: '',
-    startsAt: toLocal(now), endsAt: toLocal(end), filters: {},
+    startsAt: utcToZonedDatetimeLocal(now, tz), endsAt: utcToZonedDatetimeLocal(end, tz), filters: {},
   };
-}
-
-function toLocal(d: Date) {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-function fmt(s?: string) {
-  return s ? new Date(s).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 }
 function isLive(b: Broadcast) {
   const n = Date.now();
@@ -53,6 +50,7 @@ function sevColor(severity: string) {
 
 export function AdminBroadcasts() {
   const { t } = useT();
+  const tz = useTimezone();
   const [items, setItems] = useState<Broadcast[]>([]);
   const [editing, setEditing] = useState<Broadcast | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,8 +73,8 @@ export function AdminBroadcasts() {
       content: editing.content,
       severity: editing.severity,
       color: editing.color,
-      startsAt: new Date(editing.startsAt).toISOString(),
-      endsAt: new Date(editing.endsAt).toISOString(),
+      startsAt: zonedDatetimeLocalToUtcIso(editing.startsAt, tz.tz),
+      endsAt: zonedDatetimeLocalToUtcIso(editing.endsAt, tz.tz),
       filters: { ...(editing.filters || {}), severity: editing.severity, color: editing.color || undefined },
     };
     try {
@@ -97,8 +95,8 @@ export function AdminBroadcasts() {
   function edit(b: Broadcast) {
     setEditing({
       ...b,
-      startsAt: toLocal(new Date(b.startsAt)),
-      endsAt: toLocal(new Date(b.endsAt)),
+      startsAt: utcToZonedDatetimeLocal(b.startsAt, tz.tz),
+      endsAt: utcToZonedDatetimeLocal(b.endsAt, tz.tz),
       color: b.color || b.filters?.color || '',
     });
   }
@@ -108,7 +106,7 @@ export function AdminBroadcasts() {
       <header className="page-head">
         <h1>{t('adminBroadcasts.title')}</h1>
         <button className="btn ghost" onClick={load}><RefreshCcw size={14} /> {t('common.refresh')}</button>
-        <button className="btn primary" onClick={() => setEditing(blank())}>
+        <button className="btn primary" onClick={() => setEditing(blank(tz.tz))}>
           <Plus size={14} /> {t('adminBroadcasts.new')}
         </button>
       </header>
@@ -130,7 +128,7 @@ export function AdminBroadcasts() {
                   <strong>{b.title}</strong>
                   <div className="muted small">{b.content}</div>
                 </td>
-                <td className="small">{fmt(b.startsAt)} → {fmt(b.endsAt)}</td>
+                <td className="small">{b.startsAt ? tz.formatDateTime(b.startsAt) : '—'} → {b.endsAt ? tz.formatDateTime(b.endsAt) : '—'}</td>
                 <td>{isLive(b) && <span className="pill live">{t('adminBroadcasts.live')}</span>}</td>
                 <td>
                   <button className="btn ghost" onClick={() => edit(b)}><Pencil size={14} /></button>

@@ -41,6 +41,14 @@ class UpdateBookingDto {
   // Move the booking to a different room. Re-runs the same resource
   // validation + conflict check the time path does, against the new room.
   @IsOptional() @IsUUID() resourceId?: string;
+  // Service add-ons (Catering, IT setup, …) — editable after creation so a
+  // booker can add catering days later without cancelling and re-booking
+  // (Outlook parity). An empty array clears them. Without this decorator the
+  // global whitelist validator strips the field even when the SPA sends it.
+  @IsOptional() @IsArray() @IsString({ each: true }) services?: string[];
+  // Answers to the resource's custom fields. Merged over the stored answers and
+  // re-validated against the resource (required fields stay enforced).
+  @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
 }
 class CreateRecurringDtoIn {
   @IsUUID() resourceId!: string;

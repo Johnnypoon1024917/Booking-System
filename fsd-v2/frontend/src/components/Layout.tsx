@@ -185,32 +185,32 @@ export function Layout() {
         <nav className="fsd-nav">
           {show('dashboard') && (
             <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
-              <Gauge size={22} /><span>Dashboard</span>
+              <Gauge size={22} /><span>{t('nav.dashboard')}</span>
             </NavLink>
           )}
           {show('calendar') && (
             <NavLink to="/calendar" className={({ isActive }) => isActive ? 'active' : ''}>
-              <Calendar size={22} /><span>Schedule</span>
+              <Calendar size={22} /><span>{t('nav.schedule')}</span>
             </NavLink>
           )}
           {show('search') && (
             <NavLink to="/search" className={({ isActive }) => isActive ? 'active' : ''}>
-              <Plus size={22} /><span>New&nbsp;Booking</span>
+              <Plus size={22} /><span>{t('nav.newBooking')}</span>
             </NavLink>
           )}
           {show('my-bookings') && (
             <NavLink to="/my" className={({ isActive }) => isActive ? 'active' : ''}>
-              <MenuIcon size={22} /><span>My&nbsp;Bookings</span>
+              <MenuIcon size={22} /><span>{t('nav.myBookings')}</span>
             </NavLink>
           )}
           {canApprove && (
             <NavLink to="/approvals" className={({ isActive }) => isActive ? 'active' : ''}>
-              <CheckCircle size={22} /><span>Approvals</span>
+              <CheckCircle size={22} /><span>{t('nav.approvals')}</span>
             </NavLink>
           )}
           {show('reports') && canAdmin && (
             <NavLink to="/admin/reports" className={({ isActive }) => isActive ? 'active' : ''}>
-              <BarChart3 size={22} /><span>Reports</span>
+              <BarChart3 size={22} /><span>{t('nav.reports')}</span>
             </NavLink>
           )}
           {/* Broadcasts moved off the top-level sidebar — still reachable
@@ -218,7 +218,7 @@ export function Layout() {
               the 7 client items focused. */}
           {show('admin') && canAdmin && (
             <NavLink to="/admin/studio" className={({ isActive }) => isActive ? 'active' : ''}>
-              <Settings size={22} /><span>Settings</span>
+              <Settings size={22} /><span>{t('nav.settings')}</span>
             </NavLink>
           )}
         </nav>

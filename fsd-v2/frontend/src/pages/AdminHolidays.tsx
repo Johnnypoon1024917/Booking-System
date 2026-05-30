@@ -14,26 +14,42 @@ interface Holiday {
   holidayDate: string;
   name: string;
   scope?: string;
+  // '' = tenant-wide; otherwise only blocks resources in this region.
+  region?: string;
   isBlocker?: boolean;
 }
 
 function blank(): Holiday {
-  return { holidayDate: new Date().toISOString().slice(0, 10), name: '', isBlocker: true, scope: 'manual' };
+  // 'en-CA' yields YYYY-MM-DD in the *local* calendar. toISOString() would use
+  // UTC, so an admin in Asia opening this before 08:00 would default to
+  // yesterday (UTC is still the previous day).
+  return { holidayDate: new Date().toLocaleDateString('en-CA'), name: '', isBlocker: true, scope: 'manual', region: '' };
 }
 
 export function AdminHolidays() {
   const { t } = useT();
   const [items, setItems] = useState<Holiday[]>([]);
   const [editing, setEditing] = useState<Holiday | null>(null);
+  const [regions, setRegions] = useState<string[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadRegions(); }, []);
 
   async function load() {
     setLoading(true);
     try { setItems(await api.listHolidays()); }
     finally { setLoading(false); }
+  }
+
+  // Regions are free-form strings on resources (no fixed enum), so derive the
+  // pick-list from the distinct regions actually in use. Drives the "Applies
+  // to" scope picker — a holiday scoped to a region only blocks its rooms.
+  async function loadRegions() {
+    try {
+      const res: Array<{ region?: string }> = await api.adminResources();
+      setRegions([...new Set(res.map((r) => r.region).filter((r): r is string => !!r))].sort());
+    } catch { /* picker falls back to tenant-wide only */ }
   }
 
   async function save() {
@@ -85,13 +101,14 @@ export function AdminHolidays() {
         </div>
       ) : (
         <table className="data">
-          <thead><tr><th>{t('adminHolidays.colDate')}</th><th>{t('adminHolidays.colName')}</th><th>{t('adminHolidays.colScope')}</th><th>{t('adminHolidays.colBlocks')}</th><th></th></tr></thead>
+          <thead><tr><th>{t('adminHolidays.colDate')}</th><th>{t('adminHolidays.colName')}</th><th>{t('adminHolidays.colScope')}</th><th>{t('adminHolidays.colAppliesTo')}</th><th>{t('adminHolidays.colBlocks')}</th><th></th></tr></thead>
           <tbody>
             {items.map((h) => (
               <tr key={h.id}>
                 <td>{h.holidayDate}</td>
                 <td>{h.name || <span className="muted">—</span>}</td>
                 <td className="small muted">{h.scope || 'manual'}</td>
+                <td className="small">{h.region || <span className="muted">{t('adminHolidays.tenantWide')}</span>}</td>
                 <td>{h.isBlocker ? t('common.yes') : t('common.no')}</td>
                 <td>
                   <button className="btn ghost" onClick={() => setEditing({ ...h })}>{t('adminHolidays.edit')}</button>
@@ -121,6 +138,17 @@ export function AdminHolidays() {
             <input value={editing.name}
                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                    placeholder="e.g. Lunar New Year" />
+          </label>
+          <label>{t('adminHolidays.colAppliesTo')}
+            <select value={editing.region || ''} onChange={(e) => setEditing({ ...editing, region: e.target.value })}>
+              <option value="">{t('adminHolidays.tenantWide')}</option>
+              {/* Keep the current value selectable even if no resource uses it yet. */}
+              {editing.region && !regions.includes(editing.region) && (
+                <option value={editing.region}>{editing.region}</option>
+              )}
+              {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <small className="muted">{t('adminHolidays.appliesToHelp')}</small>
           </label>
           <label className="row">
             <input type="checkbox" checked={!!editing.isBlocker}

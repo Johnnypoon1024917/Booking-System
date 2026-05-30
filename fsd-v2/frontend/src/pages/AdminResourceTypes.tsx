@@ -66,7 +66,13 @@ export function AdminResourceTypes() {
             <label>{t('adminResourceTypes.key')}<input value={editing.key} onChange={(e) => setEditing({ ...editing, key: e.target.value })} disabled={editing.isBuiltin} /></label>
             <label>{t('adminResourceTypes.label')}<input value={editing.label} onChange={(e) => setEditing({ ...editing, label: e.target.value })} /></label>
             <label>{t('adminResourceTypes.iconLucide')}<input value={editing.icon} onChange={(e) => setEditing({ ...editing, icon: e.target.value })} /></label>
-            <label>{t('adminResourceTypes.color')}<input type="color" value={editing.color} onChange={(e) => setEditing({ ...editing, color: e.target.value })} /></label>
+            <label>{t('adminResourceTypes.color')}
+              <div className="row gap-sm">
+                <input type="color" value={editing.color} onChange={(e) => setEditing({ ...editing, color: e.target.value })} />
+                <input type="text" value={editing.color} maxLength={7} placeholder="#3b82f6"
+                  onChange={(e) => setEditing({ ...editing, color: e.target.value })} style={{ flex: 1 }} />
+              </div>
+            </label>
             <label>{t('adminResourceTypes.defaultCapacity')}<input type="number" min={0} value={editing.defaultCapacity} onChange={(e) => setEditing({ ...editing, defaultCapacity: +e.target.value })} /></label>
             <label>{t('adminResourceTypes.displayOrder')}<input type="number" value={editing.displayOrder} onChange={(e) => setEditing({ ...editing, displayOrder: +e.target.value })} /></label>
             <label>{t('adminResourceTypes.bookingMode')}

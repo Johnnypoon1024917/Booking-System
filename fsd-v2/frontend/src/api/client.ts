@@ -130,7 +130,13 @@ export const api = {
     `${(import.meta as any).env?.VITE_API_URL || ''}/api/v1/ics/feed/${tenantSlug}.ics?token=${token}`,
 
   // Users / departments
+  // Backward-compatible full directory (used by pickers/dropdowns elsewhere).
   users: () => http.get('/api/v1/admin/users').then((r) => r.data),
+  // Server-side paginated + searchable listing for the AdminUsers table.
+  // Returns { items, total, page, pageSize }. Each item carries managerName
+  // so the edit form can show the current line manager without a full pull.
+  usersPaged: (params: { page?: number; pageSize?: number; search?: string }) =>
+    http.get('/api/v1/admin/users', { params: { page: 1, ...params } }).then((r) => r.data),
   createUser: (b: any) => http.post('/api/v1/admin/users', b).then((r) => r.data),
   updateUser: (id: string, b: any) =>
     http.put(`/api/v1/admin/users/${id}`, b).then((r) => r.data),
@@ -194,6 +200,9 @@ export const api = {
     http.post(`/api/v1/approvals/${bookingId}/reject`, { status: 'rejected', reason }).then((r) => r.data),
   delegateBooking: (bookingId: string, toUserId: string, reason?: string) =>
     http.post(`/api/v1/approvals/${bookingId}/delegate`, { to_user_id: toUserId, reason }).then((r) => r.data),
+  // Typeahead directory search for the delegate picker (no full-directory pull).
+  searchApprovers: (q: string) =>
+    http.get('/api/v1/approvals/users/search', { params: { q } }).then((r) => r.data),
 
   // Approval rules (admin)
   listApprovalRules: () => http.get('/api/v1/admin/approval-rules').then((r) => r.data),
@@ -204,8 +213,12 @@ export const api = {
 
   // Permissions (admin)
   getPermissions: () => http.get('/api/v1/admin/permissions').then((r) => r.data),
-  setRolePermissions: (role: string, permissions: string[]) =>
-    http.put(`/api/v1/admin/permissions/${encodeURIComponent(role)}`, { permissions }),
+  // Returns { version } — the new optimistic-concurrency token. Pass the
+  // role's last-known version as expectedVersion so a concurrent edit is
+  // rejected (409) instead of silently overwritten.
+  setRolePermissions: (role: string, permissions: string[], expectedVersion?: string) =>
+    http.put(`/api/v1/admin/permissions/${encodeURIComponent(role)}`, { permissions, expectedVersion })
+      .then((r) => r.data),
 
   // Broadcasts (R13 banner)
   activeBroadcasts: () => http.get('/api/v1/broadcasts').then((r) => r.data),
@@ -395,7 +408,8 @@ export const api = {
 
   // ---------- SCIM tokens ----------
   scimTokens: () => http.get('/api/v1/admin/scim/tokens').then((r) => r.data),
-  scimIssue: (name: string) => http.post('/api/v1/admin/scim/tokens', { name }).then((r) => r.data),
+  scimIssue: (name: string, expiresInDays?: number) =>
+    http.post('/api/v1/admin/scim/tokens', { name, expiresInDays }).then((r) => r.data),
   scimRevoke: (id: string) => http.delete(`/api/v1/admin/scim/tokens/${id}`),
 };
 

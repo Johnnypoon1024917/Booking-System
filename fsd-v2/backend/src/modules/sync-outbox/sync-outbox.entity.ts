@@ -9,7 +9,9 @@ import {
 // and an EVERY_MINUTE cron drains it with exponential backoff, mirroring the
 // notification + webhook outboxes. The booking transaction still never blocks
 // on the remote calendar (enqueue is a single local insert).
-export type SyncOutboxStatus = 'pending' | 'sent' | 'failed';
+// 'processing' is a transient claim marker so a drain that overruns the
+// 1-minute cron can't grab the same row twice (FOR UPDATE SKIP LOCKED).
+export type SyncOutboxStatus = 'pending' | 'processing' | 'sent' | 'failed';
 
 @Entity('calendar_sync_outbox')
 @Index(['status', 'nextAttemptAt'])

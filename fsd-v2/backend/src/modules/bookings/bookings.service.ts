@@ -38,6 +38,11 @@ export interface UpdateBookingDto {
   meetingUrl?: string;
   title?: string;
   resourceId?: string;   // move the booking to a different room
+  // Service add-ons (Catering, IT setup, …) — editable post-creation. An empty
+  // array clears them; undefined leaves the stored list untouched.
+  services?: string[];
+  // Custom-field answers — merged over the stored values and re-validated.
+  customFieldValues?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -152,7 +157,7 @@ export class BookingsService {
     // with the resource's per-resource overrides layered on top (a room may
     // cap duration tighter — or loosen the horizon — vs the tenant default).
     // Authoritative server-side mirror of the SPA's useBookingRules.
-    await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined);
+    await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null);
     await this.assertWithinOperatingHours(tenantId, resource, start, end);
     const customFieldValues = this.validateCustomFields(resource, dto.customFieldValues);
     const costCenterCode = await this.resolveCostCenter(tenantId, dto.costCenterCode, resource);
@@ -232,7 +237,7 @@ export class BookingsService {
         // bookable. Previously `if (resource)` let a reschedule onto a
         // deleted/deactivated resource through with NO conflict check at all.
         if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
-        await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined);
+        await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null);
         await this.assertWithinOperatingHours(tenantId, resource, start, end);
         const ids = await this.relatedResourceIds(m, tenantId, resource);
         await this.lockResources(m, tenantId, ids);
@@ -249,6 +254,22 @@ export class BookingsService {
       }
       if (dto.title !== undefined) b.title = dto.title;
       if (dto.meetingUrl !== undefined) b.meetingUrl = dto.meetingUrl;
+      // Service add-ons are editable after creation (Outlook parity) — adding
+      // Catering later shouldn't force a cancel-and-rebook. An explicit empty
+      // array clears them; an absent field leaves the stored list alone.
+      if (dto.services !== undefined) {
+        b.services = dto.services.length ? dto.services : null;
+      }
+      // Custom-field answers: merge the incoming changes over what's stored,
+      // then re-validate against the resource so required fields stay enforced
+      // and unknown keys are dropped (mirrors create()). Validated against the
+      // booking's CURRENT resource (b.resourceId already reflects a room move).
+      if (dto.customFieldValues !== undefined) {
+        const resource = await m.getRepository(Resource).findOne({ where: { id: b.resourceId, tenantId } });
+        const merged = { ...(b.customFieldValues || {}), ...dto.customFieldValues };
+        const cleaned = resource ? this.validateCustomFields(resource, merged) : merged;
+        b.customFieldValues = Object.keys(cleaned).length ? cleaned : null;
+      }
       b.version += 1;
       return m.getRepository(Booking).save(b);
     });
@@ -304,6 +325,9 @@ export class BookingsService {
       if (dto.title !== undefined) patch.title = dto.title;
       if (dto.meetingUrl !== undefined) patch.meetingUrl = dto.meetingUrl;
       if (dto.resourceId) patch.resourceId = dto.resourceId;
+      // Service add-ons and custom-field answers propagate to every occurrence.
+      if (dto.services !== undefined) patch.services = dto.services;
+      if (dto.customFieldValues !== undefined) patch.customFieldValues = dto.customFieldValues;
       if (timeShift) {
         patch.startTime = new Date(+s.startTime + deltaStartMs).toISOString();
         patch.endTime = new Date(+s.endTime + deltaEndMs).toISOString();

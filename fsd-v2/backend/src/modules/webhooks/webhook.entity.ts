@@ -23,9 +23,10 @@ export class Webhook {
 
 // WebhookDelivery is the outbox row written by domain events. The
 // EVERY_MINUTE cron drains it. Status field semantics:
-//   - pending: waiting for next attempt
-//   - sent:    delivered, terminal
-//   - failed:  exhausted retries, terminal
+//   - pending:    waiting for next attempt
+//   - processing: claimed by a drain tick under a row lock (transient)
+//   - sent:       delivered, terminal
+//   - failed:     exhausted retries, terminal
 @Entity('webhook_deliveries')
 @Index(['tenantId', 'createdAt'])
 @Index(['status', 'nextAttemptAt'])
@@ -37,7 +38,7 @@ export class WebhookDelivery {
   @Column({ type: 'jsonb' }) payload!: Record<string, any>;
 
   @Column({ type: 'varchar', length: 16, default: 'pending' })
-  status!: 'pending' | 'sent' | 'failed';
+  status!: 'pending' | 'processing' | 'sent' | 'failed';
   @Column({ name: 'attempt_count', type: 'int', default: 0 })
   attemptCount!: number;
   @Column({ name: 'last_status', type: 'int', nullable: true })

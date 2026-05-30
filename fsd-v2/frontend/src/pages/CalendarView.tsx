@@ -17,11 +17,15 @@ function pad2(n: number) { return String(n).padStart(2, '0'); }
 function hhmm(d: Date) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
 function isoDate(d: Date) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
 
+// Map a booking status to its accent colour, used as the event card's coloured
+// left border. Confirmed/standard bookings inherit the tenant's configured
+// --brand-primary (injected onto :root by stores/theme.ts), so the calendar
+// matches the Tenant Studio "Live Preview" card instead of a generic red block.
 function statusColor(status: string) {
-  if (status === 'Pending Approval') return '#d97706';
-  if (status === 'No Show') return '#7f1d1d';
-  if (status === 'Checked In') return '#059669';
-  return '#dc2626';
+  if (status === 'Pending Approval') return 'var(--warning)';
+  if (status === 'No Show') return 'var(--text-muted)';
+  if (status === 'Checked In') return 'var(--success)';
+  return 'var(--brand-primary)';
 }
 
 export function CalendarView() {
@@ -68,9 +72,15 @@ export function CalendarView() {
       title: b.subjectHidden ? '🔒 Private' : (b.title || `Booking · ${roomName(b.resourceId)}`),
       start: b.startTime,
       end: b.endTime,
-      color: statusColor(b.status),
+      // White "Live Preview" card: light surface fill + dark text, with the
+      // status accent applied only to the heavy left border. FullCalendar sets
+      // these as inline styles; fc-modern-event then forces the top/right/bottom
+      // borders light via CSS, leaving this borderColor to show on the left edge.
+      backgroundColor: 'var(--surface)',
+      borderColor: statusColor(b.status),
+      textColor: 'var(--text)',
       editable: !b.subjectHidden,
-      classNames: b.subjectHidden ? ['evt-private'] : [],
+      classNames: ['fc-modern-event', ...(b.subjectHidden ? ['evt-private'] : [])],
       extendedProps: { subjectHidden: !!b.subjectHidden },
     })), [bookings, roomFilter, rooms]);
 
@@ -192,10 +202,10 @@ export function CalendarView() {
           />
         </div>
 
-        <div className="pb" style={{ padding: '10px 14px', borderTop: '1px solid var(--asl-line)' }}>
-          <span className="pill ok">Available</span>
-          <span className="pill bad" style={{ marginLeft: 8 }}>Booked / Conflict</span>
-          <span className="pill amber" style={{ marginLeft: 8 }}>Pending approval</span>
+        <div className="pb" style={{ padding: '10px 14px', borderTop: '1px solid var(--asl-line)', display: 'flex', alignItems: 'center' }}>
+          <span className="pill" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--brand-primary)' }}>Booked</span>
+          <span className="pill" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--warning)', marginLeft: 8 }}>Pending approval</span>
+          <span className="pill" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--success)', marginLeft: 8 }}>Checked in</span>
           <span className="muted text-sm" style={{ marginLeft: 12 }}>
             Drag across a time range, then choose a room in the popup to book it.
           </span>

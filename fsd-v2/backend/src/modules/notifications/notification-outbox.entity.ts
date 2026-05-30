@@ -7,7 +7,11 @@ import {
 // drains pending rows, renders the template + ICS, and sends via SMTP. This
 // mirrors the webhooks outbox so a slow/unreachable mail relay never blocks
 // the primary booking transaction and failures retry with backoff.
-export type OutboxStatus = 'pending' | 'sent' | 'failed';
+// 'processing' is a transient claim marker: the drain atomically flips
+// 'pending' → 'processing' under a row lock so a concurrent/overrunning cron
+// tick can't grab the same row twice (FOR UPDATE SKIP LOCKED). deliverOne
+// always moves it on to 'sent', 'failed', or back to 'pending' (retry).
+export type OutboxStatus = 'pending' | 'processing' | 'sent' | 'failed';
 
 @Entity('notification_outbox')
 @Index(['status', 'nextAttemptAt'])

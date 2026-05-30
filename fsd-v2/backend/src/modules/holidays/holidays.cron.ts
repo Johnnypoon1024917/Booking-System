@@ -23,7 +23,8 @@ export class HolidaysCron {
       try {
         const cz = await this.customization.get(tenantId);
         if (!cz.govhk_holidays_enabled) continue;
-        await this.holidays.syncFromGovHK(tenantId, undefined, cz.default_locale || 'en');
+        const regions: string[] = Array.isArray(cz.govhk_holiday_regions) ? cz.govhk_holiday_regions : [];
+        await this.holidays.syncFromGovHK(tenantId, undefined, cz.default_locale || 'en', regions);
       } catch (err) {
         this.log.warn(`gov.hk sync failed for tenant ${tenantId}: ${(err as Error).message}`);
       }

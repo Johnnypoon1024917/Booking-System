@@ -1,17 +1,82 @@
-import { useEffect, useMemo, useState } from 'react';
-import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch, Search } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { ApprovalTimeline } from '../components/ApprovalTimeline';
 import { useT } from '../hooks/useT';
 import { useToast } from '../stores/toast';
 
+// Async typeahead for the delegate picker. Queries the directory search
+// endpoint (capped, server-side) instead of rendering every user as a DOM
+// <option> — a full <select> of a 5,000-employee tenant freezes the tab.
+function ApproverSearch({ onSelect, placeholder }: { onSelect: (id: string) => void; placeholder: string }) {
+  const { t } = useT();
+  const [text, setText] = useState('');
+  const [results, setResults] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Debounced search — empty query returns the first page so the menu is
+  // never blank on focus.
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    const h = setTimeout(async () => {
+      try { const r = await api.searchApprovers(text); if (active) setResults(r || []); }
+      catch { if (active) setResults([]); }
+      finally { if (active) setLoading(false); }
+    }, 250);
+    return () => { active = false; clearTimeout(h); };
+  }, [text]);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  function pick(u: any) {
+    setText(`${u.username}${u.role ? ` — ${u.role}` : ''}`);
+    onSelect(u.id);
+    setOpen(false);
+  }
+
+  return (
+    <div className="typeahead" ref={boxRef}>
+      <div className="typeahead-input">
+        <Search size={14} className="muted" />
+        <input
+          value={text}
+          placeholder={placeholder}
+          onFocus={() => setOpen(true)}
+          // Editing after a pick invalidates the selection so a stale id can't
+          // be submitted under a different visible name.
+          onChange={(e) => { setText(e.target.value); onSelect(''); setOpen(true); }}
+        />
+      </div>
+      {open && (
+        <div className="typeahead-menu">
+          {loading && <div className="typeahead-empty muted text-sm">{t('common.loading')}</div>}
+          {!loading && results.length === 0 && <div className="typeahead-empty muted text-sm">{t('approvals.noMatches')}</div>}
+          {!loading && results.map((u) => (
+            <button type="button" key={u.id} className="typeahead-item" onClick={() => pick(u)}>
+              <b>{u.username}</b>
+              {u.role && <span className="muted"> — {u.role}</span>}
+              {u.grade && <span className="muted"> · {u.grade}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Approvals() {
   const { t } = useT();
   const toast = useToast();
   const [rows, setRows] = useState<any[]>([]);
   const [resources, setResources] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
   const [chains, setChains] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -27,14 +92,14 @@ export function Approvals() {
   async function load() {
     setLoading(true);
     try {
-      const [list, res, usrs] = await Promise.all([
+      // Requester names now ride along on the approvals payload (b.userName),
+      // so there's no full-directory fetch here — only the bounded resource list.
+      const [list, res] = await Promise.all([
         api.listApprovals(),
         api.resources().catch(() => []),
-        api.users().catch(() => []),
       ]);
       setRows(list || []);
       setResources(res || []);
-      setUsers(usrs || []);
       // Best-effort fetch chain per row — failures are silent because
       // single-level bookings have no chain.
       const next: Record<string, any[]> = {};
@@ -47,7 +112,6 @@ export function Approvals() {
   }
 
   const resourceMap = useMemo(() => Object.fromEntries(resources.map((r) => [r.id, r])), [resources]);
-  const userMap = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
   // Earliest pending-step due time, used to sort closest-to-breach first.
   function dueFor(b: any): number {
@@ -136,7 +200,6 @@ export function Approvals() {
       {sorted.map((b) => {
         const steps = chains[b.id] ?? [];
         const r = resourceMap[b.resourceId];
-        const u = userMap[b.userId];
         return (
           <article key={b.id} className="fsd-card approval-card">
             <div className="thumb"><Clock size={18} color="white"/></div>
@@ -153,7 +216,7 @@ export function Approvals() {
               <div className="muted text-sm row gap-sm" style={{ flexWrap: 'wrap' }}>
                 <span><CalendarDays size={11}/> {new Date(b.startTime).toLocaleDateString()}</span>
                 <span><Clock size={11}/> {new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                <span><User size={11}/> {u?.username || b.userId}</span>
+                <span><User size={11}/> {b.userName || b.userId}</span>
               </div>
               {steps.length > 0 && <div style={{ marginTop: 8 }}><ApprovalTimeline steps={steps} submittedAt={b.createdAt}/></div>}
             </div>
@@ -199,12 +262,7 @@ export function Approvals() {
         </>}>
           <p className="muted text-sm">{t('approvals.delegateHelp')}</p>
           <label>{t('approvals.delegateTo')}
-            <select value={delegateTo} onChange={(e) => setDelegateTo(e.target.value)}>
-              <option value="">{t('approvals.selectApprover')}</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.username}{u.role ? ` — ${u.role}` : ''}</option>
-              ))}
-            </select>
+            <ApproverSearch onSelect={setDelegateTo} placeholder={t('approvals.selectApprover')} />
           </label>
           <label>{t('approvals.reasonOptional')}
             <textarea rows={2} value={delegateReason} onChange={(e) => setDelegateReason(e.target.value)}

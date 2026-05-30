@@ -143,7 +143,9 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   const [pattern, setPattern] = useState<'daily' | 'weekly' | 'bi-weekly' | 'monthly'>(initialPattern || 'weekly');
   const [count, setCount] = useState(4);
   const [until, setUntil] = useState(initialUntil || '');   // optional end-date for the series (QA #7)
-  const [services, setServices] = useState<string[]>([]);
+  // Seed from the booking in edit mode so existing add-ons show pre-ticked and
+  // can be changed (services are now editable post-creation).
+  const [services, setServices] = useState<string[]>(existingBooking?.services || []);
   const [cfValues, setCfValues] = useState<Record<string, any>>({});
   const [costCenter, setCostCenter] = useState('');
   const [busy, setBusy] = useState(false);
@@ -326,6 +328,9 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         endTime: tz.toUtcIso(bDate, bEnd),
         title: title.trim(),
         meetingUrl: meetingUrl.trim(),
+        // Service add-ons are editable post-creation now — send the current
+        // selection (an empty array clears them server-side).
+        services,
         // Only send the room when it actually changed, so an unchanged edit
         // doesn't pointlessly re-run the room conflict/approval path.
         ...(selResId !== existingBooking.resourceId ? { resourceId: selResId } : {}),
@@ -562,19 +567,19 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         </label>
       )}
 
-      {!isEdit && (
-        <div className="field">
-          <label>{t('bookingModal.services')}</label>
-          <div className="chip-grid">
-            {SERVICE_OPTIONS.map((opt) => (
-              <label key={opt} className="dep-chip">
-                <input type="checkbox" checked={services.includes(opt)} onChange={() => toggleService(opt)} />
-                {opt}
-              </label>
-            ))}
-          </div>
+      {/* Services render in both create and edit — add-ons can be changed after
+          the booking is made (no cancel-and-rebook just to add Catering). */}
+      <div className="field">
+        <label>{t('bookingModal.services')}</label>
+        <div className="chip-grid">
+          {SERVICE_OPTIONS.map((opt) => (
+            <label key={opt} className="dep-chip">
+              <input type="checkbox" checked={services.includes(opt)} onChange={() => toggleService(opt)} />
+              {opt}
+            </label>
+          ))}
         </div>
-      )}
+      </div>
 
       {/* Resource-defined custom fields. Rendered by type; required ones are
           enforced on submit (and again server-side). Create-only — update can't

@@ -28,5 +28,11 @@ export class ApprovalStep {
   @Column({ name: 'decision_at', type: 'timestamptz', nullable: true }) decisionAt?: Date;
   @Column({ default: '' }) reason!: string;
   @Column({ name: 'due_at', type: 'timestamptz', nullable: true }) dueAt?: Date;
+  // ALL-of levels: every listed approver must sign off before the step flips
+  // to 'approved'. `approvedBy` accumulates the distinct ids that have signed
+  // so far; the step stays 'pending' until it covers all of `approverIds`.
+  @Column({ name: 'require_all', default: false }) requireAll!: boolean;
+  @Column({ name: 'approved_by', type: 'text', array: true, default: () => "'{}'" })
+  approvedBy!: string[];
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }

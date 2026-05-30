@@ -27,6 +27,7 @@ interface Resource {
   operatingHours?: OperatingHours | null;
   ruleOverrides?: RuleOverrides | null;
   costCenterCode?: string | null;
+  exchangeMailbox?: string | null;
 }
 
 // Per-resource overrides of the tenant workflow defaults. An absent key
@@ -164,6 +165,10 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
   // override field inherits. cost_centers drives the per-resource default code.
   const customization = useTenant((s) => s.customization) || {};
   const costCenters: string[] = Array.isArray(customization.cost_centers) ? customization.cost_centers : [];
+  // When the tenant has Outlook/Graph sync on, the admin must map this room to
+  // its Exchange mailbox (e.g. boardroomA@company.com) or two-way sync can't
+  // bind the calendar. Field is hidden entirely when the integration is off.
+  const outlookSync = !!customization.outlook_sync_enabled;
   const tenantDefaults = {
     min: customization.min_duration_minutes ?? 15,
     max: customization.max_duration_minutes ?? 480,
@@ -318,6 +323,15 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
                onChange={(e) => patch({ equipment: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
                placeholder="Projector, whiteboard, video conf …" />
       </label>
+
+      {outlookSync && (
+        <label>Exchange mailbox
+          <input type="email" value={form.exchangeMailbox || ''}
+                 onChange={(e) => patch({ exchangeMailbox: e.target.value })}
+                 placeholder="boardroomA@company.com" />
+          <small className="muted">Microsoft 365 room mailbox this resource maps to for two-way calendar sync.</small>
+        </label>
+      )}
 
       <div className="bm-box mt">
         <label className="row" style={{ alignItems: 'center' }}>

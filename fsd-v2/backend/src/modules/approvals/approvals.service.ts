@@ -2,12 +2,14 @@ import {
   BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, LessThanOrEqual, Repository } from 'typeorm';
 import { ApprovalRule, ApprovalLevel, ApprovalScopeType } from './approval-rule.entity';
 import { ApprovalStep, ApprovalStepStatus } from './approval-step.entity';
 import { Approval } from './approval.entity';
 import { Booking } from '../bookings/booking.entity';
 import { Resource } from '../resources/resource.entity';
+import { User } from '../users/user.entity';
+import { Department } from '../departments/department.entity';
 import { AuthUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { gradeAtLeast } from './grade';
@@ -28,6 +30,8 @@ export class ApprovalsService {
     @InjectRepository(Approval) private readonly approvals: Repository<Approval>,
     @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
     @InjectRepository(Resource) private readonly resources: Repository<Resource>,
+    @InjectRepository(User) private readonly users: Repository<User>,
+    @InjectRepository(Department) private readonly departments: Repository<Department>,
     private readonly notifications: NotificationsService,
   ) {}
 
@@ -73,25 +77,61 @@ export class ApprovalsService {
     const rule = await this.matchRule(booking.tenantId, res);
     if (!rule || rule.levels.length === 0) return 0;
 
+    // Resolve dynamic targets (manager / department-head) to concrete user ids
+    // ONCE — they're relative to this booking, not the rule. Looked up only if a
+    // level actually uses them.
+    const managerId = rule.levels.some((l) => l.approver_type === 'manager')
+      ? (await this.users.findOne({ where: { id: booking.userId, tenantId: booking.tenantId } }))?.managerId
+      : undefined;
+    const headUserId = rule.levels.some((l) => l.approver_type === 'department_head') && res.departmentId
+      ? (await this.departments.findOne({ where: { id: res.departmentId, tenantId: booking.tenantId } }))?.headUserId
+      : undefined;
+
     const now = Date.now();
-    const rows = rule.levels.map((lvl, i) =>
-      this.steps.create({
+    const rows = rule.levels.map((lvl, i) => {
+      const { approverIds, approverRole } = this.resolveLevelApprovers(lvl, managerId, headUserId, booking.id);
+      return this.steps.create({
         tenantId: booking.tenantId,
         bookingId: booking.id,
         ruleId: rule.id,
         stepIndex: i,
         levelName: lvl.name,
-        approverIds: lvl.approver_user_ids ?? [],
-        approverRole: lvl.approver_role ?? '',
+        approverIds,
+        approverRole,
         minGrade: lvl.min_grade ?? '',
         status: 'pending' as ApprovalStepStatus,
         dueAt: lvl.auto_after_hours && lvl.auto_after_hours > 0
           ? new Date(now + lvl.auto_after_hours * 3600_000)
           : undefined,
-      }),
-    );
+      });
+    });
     await this.steps.save(rows);
     return rule.levels.length;
+  }
+
+  // Resolve a level's configured approver target to the concrete (ids, role)
+  // stored on the step. Dynamic types ('manager'/'department_head') are baked
+  // to ids here so the runtime eligibility check stays unchanged. If a dynamic
+  // target can't be resolved (no manager / no head), the step is left with no
+  // approvers — which makes it System-Admin-decidable (and still auto-approvable
+  // by SLA), a safe fallback rather than a hard failure.
+  private resolveLevelApprovers(
+    lvl: ApprovalLevel, managerId: string | undefined, headUserId: string | undefined, bookingId: string,
+  ): { approverIds: string[]; approverRole: string } {
+    switch (lvl.approver_type) {
+      case 'manager':
+        if (!managerId) this.log.warn(`level "${lvl.name}" wants requester's manager but none is set (booking ${bookingId}); falling back to admin`);
+        return { approverIds: managerId ? [managerId] : [], approverRole: '' };
+      case 'department_head':
+        if (!headUserId) this.log.warn(`level "${lvl.name}" wants department head but none is set (booking ${bookingId}); falling back to admin`);
+        return { approverIds: headUserId ? [headUserId] : [], approverRole: '' };
+      case 'role':
+        return { approverIds: [], approverRole: lvl.approver_role ?? '' };
+      // 'user' and legacy (undefined) keep the original static behaviour:
+      // explicit ids plus an optional role.
+      default:
+        return { approverIds: lvl.approver_user_ids ?? [], approverRole: lvl.approver_role ?? '' };
+    }
   }
 
   // First-match by priority: resource > asset_type > department > tenant.
@@ -121,8 +161,9 @@ export class ApprovalsService {
 
   // Lists bookings the user can act on right now. We walk pending steps,
   // collect the first-actionable per booking, and load the bookings in
-  // one round-trip.
-  async listPendingForApprover(user: AuthUser): Promise<Booking[]> {
+  // one round-trip. Each booking is enriched with `userName` (the requester)
+  // so the approvals UI can render names without pulling the whole directory.
+  async listPendingForApprover(user: AuthUser): Promise<Array<Booking & { userName: string | null }>> {
     const pending = await this.steps.find({
       where: { tenantId: user.tenantId, status: 'pending' },
       order: { createdAt: 'ASC' },
@@ -159,14 +200,26 @@ export class ApprovalsService {
       where: { tenantId: user.tenantId, status: 'Pending Approval' },
     });
     for (const b of legacyPending) {
-      if (!byBooking.has(b.id) && this.canDecideLegacy(user)) actionableIds.push(b.id);
+      if (!byBooking.has(b.id) && this.canDecideLegacy(user, b)) actionableIds.push(b.id);
     }
 
     if (actionableIds.length === 0) return [];
-    return this.bookings.find({
+    const list = await this.bookings.find({
       where: { id: In(actionableIds), tenantId: user.tenantId },
       order: { startTime: 'ASC' },
     });
+
+    // Resolve requester usernames in one batched query and attach them, so the
+    // SPA no longer fetches the entire user directory just to map ids → names.
+    const requesterIds = Array.from(new Set(list.map((b) => b.userId)));
+    const requesters = requesterIds.length
+      ? await this.users.find({
+          where: { id: In(requesterIds), tenantId: user.tenantId },
+          select: { id: true, username: true },
+        })
+      : [];
+    const nameById = new Map(requesters.map((u) => [u.id, u.username]));
+    return list.map((b) => ({ ...b, userName: nameById.get(b.userId) ?? null }));
   }
 
   listChain(tenantId: string, bookingId: string) {
@@ -180,6 +233,12 @@ export class ApprovalsService {
 
   // Routes the decision through the chain if one is materialized,
   // otherwise falls back to a single-level approve/reject on the booking.
+  //
+  // The whole read→evaluate→write runs inside ONE transaction with the step
+  // rows (or the booking row, for legacy) locked FOR UPDATE. Without the lock,
+  // two approvers in a parallel step clicking at the same instant would both
+  // read the chain as "not yet all-done" and neither would flip the booking to
+  // Confirmed, stranding it forever (the classic lost-update race).
   async decide(user: AuthUser, bookingId: string, input: DecideInput): Promise<{ status: string; chained: boolean }> {
     if (input.status !== 'approved' && input.status !== 'rejected') {
       throw new BadRequestException('status must be approved or rejected');
@@ -188,81 +247,161 @@ export class ApprovalsService {
       throw new BadRequestException('reason required for rejection');
     }
 
-    const steps = await this.steps.find({
-      where: { tenantId: user.tenantId, bookingId },
-      order: { stepIndex: 'ASC' },
+    const outcome = await this.bookings.manager.transaction(async (m) => {
+      const steps = await this.lockChain(m, user.tenantId, bookingId);
+
+      if (steps.length === 0) {
+        await this.decideLegacyTx(m, user, bookingId, input);
+        await this.recordApprovalAudit(m, user.tenantId, bookingId, user.id, input);
+        return { status: input.status, chained: false, notify: input.status === 'approved' ? 'BOOKING_APPROVED' : 'BOOKING_REJECTED' };
+      }
+
+      const rule = steps[0].ruleId
+        ? await m.getRepository(ApprovalRule).findOne({ where: { id: steps[0].ruleId } }).catch(() => null)
+        : null;
+      if (steps[0].ruleId && !rule) {
+        this.log.warn(`rule ${steps[0].ruleId} missing for booking ${bookingId}; degrading to linear chain`);
+      }
+
+      const idx = this.firstActionableIndex(steps, rule, user);
+      if (idx < 0) throw new ForbiddenException('no actionable approval step for this user');
+
+      const { confirmed, rejected } = await this.commitStepDecision(m, user.tenantId, bookingId, steps, steps[idx], input, user.id);
+      await this.recordApprovalAudit(m, user.tenantId, bookingId, user.id, input);
+      return {
+        status: input.status, chained: true,
+        // Only email the owner once the whole chain clears (confirm) or it is
+        // rejected — intermediate step approvals don't change booking status.
+        notify: rejected ? 'BOOKING_REJECTED' : confirmed ? 'BOOKING_APPROVED' : null,
+      };
     });
 
-    if (steps.length === 0) {
-      await this.decideLegacy(user, bookingId, input);
-      await this.recordApprovalAudit(user, bookingId, input);
-      await this.notifyDecision(user.tenantId, bookingId,
-        input.status === 'approved' ? 'BOOKING_APPROVED' : 'BOOKING_REJECTED');
-      return { status: input.status, chained: false };
-    }
+    if (outcome.notify) await this.notifyDecision(user.tenantId, bookingId, outcome.notify);
+    return { status: outcome.status, chained: outcome.chained };
+  }
 
-    const rule = steps[0].ruleId
-      ? await this.rules.findOne({ where: { id: steps[0].ruleId } }).catch(() => null)
-      : null;
-    if (steps[0].ruleId && !rule) {
-      this.log.warn(`rule ${steps[0].ruleId} missing for booking ${bookingId}; degrading to linear chain`);
-    }
+  // Lock and load the full chain for a booking in step order (SELECT … FOR
+  // UPDATE). Must be called inside a transaction.
+  private lockChain(m: EntityManager, tenantId: string, bookingId: string): Promise<ApprovalStep[]> {
+    return m.getRepository(ApprovalStep).createQueryBuilder('s')
+      .setLock('pessimistic_write')
+      .where('s.tenant_id = :t AND s.booking_id = :b', { t: tenantId, b: bookingId })
+      .orderBy('s.step_index', 'ASC')
+      .getMany();
+  }
 
-    const idx = this.firstActionableIndex(steps, rule, user);
-    if (idx < 0) throw new ForbiddenException('no actionable approval step for this user');
-
-    const step = steps[idx];
+  // Apply a single approver's decision to one already-locked step and, if the
+  // chain is now complete, flip the booking. Shared by decide() and the
+  // auto-approval sweep so both go through the identical confirm logic.
+  // `actorId` is null for system/auto decisions.
+  private async commitStepDecision(
+    m: EntityManager, tenantId: string, bookingId: string,
+    steps: ApprovalStep[], step: ApprovalStep, input: DecideInput, actorId: string | null,
+  ): Promise<{ confirmed: boolean; rejected: boolean }> {
     step.status = input.status;
-    step.decidedBy = user.id;
+    step.decidedBy = actorId ?? undefined;
     step.decisionAt = new Date();
     step.reason = input.reason ?? '';
-    await this.steps.save(step);
-
-    await this.recordApprovalAudit(user, bookingId, input);
+    await m.getRepository(ApprovalStep).save(step);
 
     if (input.status === 'rejected') {
-      await this.bookings.update(
-        { id: bookingId, tenantId: user.tenantId },
+      await m.getRepository(Booking).update(
+        { id: bookingId, tenantId },
         { status: 'Cancelled', exceptionNotes: `Rejected at ${step.levelName}: ${input.reason ?? ''}` },
       );
-      await this.notifyDecision(user.tenantId, bookingId, 'BOOKING_REJECTED');
-      return { status: 'rejected', chained: true };
+      return { confirmed: false, rejected: true };
     }
 
-    // Approved — if all remaining steps are done (approved/skipped), confirm.
+    // Approved — confirm the booking only when every step is approved/skipped.
+    // `steps` is the locked snapshot; `step` was just mutated in place.
     const allDone = steps.every((s) =>
       s.id === step.id || s.status === 'approved' || s.status === 'skipped',
     );
     if (allDone) {
-      await this.bookings.update(
-        { id: bookingId, tenantId: user.tenantId },
-        { status: 'Confirmed' },
-      );
-      // Only email the owner once the whole chain clears and the booking is
-      // actually confirmed — intermediate step approvals don't change the
-      // booking's status, so they stay silent.
-      await this.notifyDecision(user.tenantId, bookingId, 'BOOKING_APPROVED');
+      await m.getRepository(Booking).update({ id: bookingId, tenantId }, { status: 'Confirmed' });
     }
-    return { status: 'approved', chained: true };
+    return { confirmed: allDone, rejected: false };
   }
 
-  // Reassign the first pending step to another approver. Recorded on the
-  // step's reason field (the timeline surfaces it) so it isn't a silent
-  // reassignment.
+  // ---- auto-approval sweep (cron-driven) ----
+
+  // Approve every pending step whose SLA (dueAt) has elapsed. Called from the
+  // ApprovalsCron every few minutes. Each step is handled in its own locked
+  // transaction so one tenant's bad row can't abort the rest of the sweep, and
+  // so it interleaves safely with live approver clicks. Returns the count
+  // actually approved.
+  async runDueAutoApprovals(now: Date = new Date()): Promise<number> {
+    const due = await this.steps.find({
+      where: { status: 'pending', dueAt: LessThanOrEqual(now) },
+      order: { createdAt: 'ASC' },
+    });
+    let approved = 0;
+    for (const s of due) {
+      try {
+        const did = await this.autoApproveStep(s.tenantId, s.bookingId, s.id, now);
+        if (did) approved++;
+      } catch (err) {
+        this.log.warn(`auto-approve failed for step ${s.id} (booking ${s.bookingId}): ${(err as Error).message}`);
+      }
+    }
+    if (approved) this.log.log(`auto-approved ${approved} overdue approval step(s)`);
+    return approved;
+  }
+
+  // Auto-approve one overdue step under a row lock. Re-checks status/dueAt
+  // inside the transaction so a step a human just actioned (or that was already
+  // swept) is skipped rather than double-decided. Returns true if it acted.
+  private async autoApproveStep(tenantId: string, bookingId: string, stepId: string, now: Date): Promise<boolean> {
+    const input: DecideInput = { status: 'approved', reason: 'Auto-approved by system policy' };
+    const confirmed = await this.bookings.manager.transaction(async (m) => {
+      const steps = await this.lockChain(m, tenantId, bookingId);
+      const step = steps.find((s) => s.id === stepId);
+      if (!step || step.status !== 'pending') return null;           // already decided/swept
+      if (!step.dueAt || step.dueAt.getTime() > now.getTime()) return null; // no longer overdue
+      const res = await this.commitStepDecision(m, tenantId, bookingId, steps, step, input, null);
+      await this.recordApprovalAudit(m, tenantId, bookingId, null, input);
+      return res.confirmed;
+    });
+    if (confirmed === null) return false;
+    if (confirmed) await this.notifyDecision(tenantId, bookingId, 'BOOKING_APPROVED');
+    return true;
+  }
+
+  // Reassign approval to another user. For a materialized chain we re-point
+  // the first pending step; for a LEGACY (single-level, no chain) booking
+  // there is no step to reassign, so we hand off via Booking.delegatedTo
+  // instead of 404-ing. Recorded on the step reason / booking notes so the
+  // timeline surfaces it.
   async delegate(user: AuthUser, bookingId: string, toUserId: string, reason: string) {
     if (!toUserId) throw new BadRequestException('to_user_id required');
     const steps = await this.steps.find({
       where: { tenantId: user.tenantId, bookingId },
       order: { stepIndex: 'ASC' },
     });
-    const pending = steps.find((s) => s.status === 'pending');
-    if (!pending) throw new NotFoundException('no pending approval step to delegate');
 
-    pending.approverIds = [toUserId];
-    pending.approverRole = '';
+    const pending = steps.find((s) => s.status === 'pending');
+    if (pending) {
+      pending.approverIds = [toUserId];
+      pending.approverRole = '';
+      const note = `Delegated ${user.id} → ${toUserId}${reason ? ` (${reason})` : ''}`;
+      pending.reason = pending.reason ? `${pending.reason} · ${note}` : note;
+      await this.steps.save(pending);
+      return;
+    }
+
+    // Legacy single-level fallback: no chain rows exist. Verify the booking is
+    // genuinely a pending legacy booking, then record the hand-off on it.
+    if (steps.length > 0) throw new BadRequestException('approval chain is already decided');
+    const b = await this.bookings.findOne({ where: { id: bookingId, tenantId: user.tenantId } });
+    if (!b) throw new NotFoundException('booking not found');
+    if (b.status !== 'Pending Approval') {
+      throw new BadRequestException('booking is not pending approval');
+    }
     const note = `Delegated ${user.id} → ${toUserId}${reason ? ` (${reason})` : ''}`;
-    pending.reason = pending.reason ? `${pending.reason} · ${note}` : note;
-    await this.steps.save(pending);
+    await this.bookings.update(
+      { id: bookingId, tenantId: user.tenantId },
+      { delegatedTo: toUserId, exceptionNotes: b.exceptionNotes ? `${b.exceptionNotes} · ${note}` : note },
+    );
   }
 
   // ---- helpers ----
@@ -303,36 +442,48 @@ export class ApprovalsService {
     return false;
   }
 
-  private canDecideLegacy(user: AuthUser): boolean {
+  // A user may decide a legacy booking if they hold an approver role, OR the
+  // booking was explicitly delegated to them (even if they're a plain user).
+  private canDecideLegacy(user: AuthUser, booking?: Booking): boolean {
+    if (booking?.delegatedTo && booking.delegatedTo === user.id) return true;
     return [Roles.SystemAdmin, Roles.SecurityAdmin, Roles.RoomAdmin, Roles.Secretary].includes(user.role as any);
   }
 
-  // Legacy single-level: flip Pending Approval → Confirmed/Cancelled
-  // when no chain exists for the booking.
-  private async decideLegacy(user: AuthUser, bookingId: string, input: DecideInput) {
-    const b = await this.bookings.findOne({ where: { id: bookingId, tenantId: user.tenantId } });
+  // Legacy single-level: flip Pending Approval → Confirmed/Cancelled when no
+  // chain exists. Runs inside the caller's transaction with the booking row
+  // locked FOR UPDATE so concurrent legacy decisions can't race.
+  private async decideLegacyTx(m: EntityManager, user: AuthUser, bookingId: string, input: DecideInput) {
+    const b = await m.getRepository(Booking).createQueryBuilder('b')
+      .setLock('pessimistic_write')
+      .where('b.id = :id AND b.tenant_id = :t', { id: bookingId, t: user.tenantId })
+      .getOne();
     if (!b) throw new NotFoundException('booking not found');
-    if (!this.canDecideLegacy(user)) throw new ForbiddenException();
+    if (!this.canDecideLegacy(user, b)) throw new ForbiddenException();
     if (b.status !== 'Pending Approval' && b.status !== 'Confirmed') {
       throw new BadRequestException('booking is not pending approval');
     }
     if (input.status === 'approved') {
       if (b.status === 'Pending Approval') {
-        await this.bookings.update({ id: b.id }, { status: 'Confirmed' });
+        await m.getRepository(Booking).update({ id: b.id }, { status: 'Confirmed' });
       }
     } else {
-      await this.bookings.update({ id: b.id }, {
+      await m.getRepository(Booking).update({ id: b.id }, {
         status: 'Cancelled',
         exceptionNotes: `Rejected: ${input.reason ?? ''}`,
       });
     }
   }
 
-  private async recordApprovalAudit(user: AuthUser, bookingId: string, input: DecideInput) {
-    await this.approvals.insert({
-      tenantId: user.tenantId,
+  // Append an immutable decision row. `approverId` is null for system/auto
+  // decisions. Uses the supplied transactional manager so the audit commits
+  // atomically with the decision.
+  private async recordApprovalAudit(
+    m: EntityManager, tenantId: string, bookingId: string, approverId: string | null, input: DecideInput,
+  ) {
+    await m.getRepository(Approval).insert({
+      tenantId,
       bookingId,
-      approverId: user.id,
+      approverId: approverId ?? undefined,
       decision: input.status,
       reason: input.reason ?? '',
     });

@@ -1,42 +1,60 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
+import { TokenSelect, TokenOption } from '../components/TokenSelect';
 import { useT } from '../hooks/useT';
 import { confirmDialog, alertDialog } from '../stores/confirm';
 
 // Org-hierarchy room privilege groups. Mirrors v1 AdminLocationGroups.vue.
-// approvers / locations / memberIds are arrays the SPA owns; we surface
-// them as comma-separated chips for the simple case.
+// approvers / locations / memberIds are arrays the SPA owns. Admins pick
+// them from a searchable address book of real users / locations (see
+// TokenSelect) rather than hand-typing comma-separated lists.
 const blank = { name: '', filterBy: 'Whitelist', status: 'Active', approvers: [] as string[], locations: [] as string[], memberIds: [] as string[] };
 
+function toArr(a: any): string[] { return Array.isArray(a) ? a.map(String) : []; }
 function toCsv(a: any[] | undefined) { return Array.isArray(a) ? a.join(', ') : ''; }
-function fromCsv(s: string) { return s.split(',').map((x) => x.trim()).filter(Boolean); }
 
 export function AdminLocationGroups() {
   const { t } = useT();
   const [items, setItems] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
-  const [approversText, setApproversText] = useState('');
-  const [locationsText, setLocationsText] = useState('');
-  const [membersText, setMembersText] = useState('');
+  const [users, setUsers] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.users().then(setUsers).catch(() => setUsers([]));
+    api.locations().then(setLocations).catch(() => setLocations([]));
+  }, []);
   function load() { api.locationGroups().then(setItems); }
 
+  // Address-book options. Users are stored by username (the stable, readable
+  // identity the table already renders); locations by name.
+  const userOptions: TokenOption[] = useMemo(
+    () => users.map((u) => ({ value: u.username, label: u.username, sub: u.email || undefined })),
+    [users],
+  );
+  const locationOptions: TokenOption[] = useMemo(
+    () => locations.map((l) => ({ value: l.name, label: l.name, sub: l.region || undefined })),
+    [locations],
+  );
+
   function open(row: any) {
-    setEditing({ ...row });
-    setApproversText(toCsv(row.approvers));
-    setLocationsText(toCsv(row.locations));
-    setMembersText(toCsv(row.memberIds));
+    setEditing({
+      ...row,
+      approvers: toArr(row.approvers),
+      locations: toArr(row.locations),
+      memberIds: toArr(row.memberIds),
+    });
   }
 
   async function save() {
     try {
       const body = {
         ...editing,
-        approvers: fromCsv(approversText),
-        locations: fromCsv(locationsText),
-        memberIds: fromCsv(membersText),
+        approvers: toArr(editing.approvers),
+        locations: toArr(editing.locations),
+        memberIds: toArr(editing.memberIds),
       };
       if (editing.id) await api.updateLocationGroup(editing.id, body);
       else            await api.createLocationGroup(body);
@@ -89,14 +107,23 @@ export function AdminLocationGroups() {
               </select>
             </label>
           </div>
-          <label>{t('adminLocationGroups.locationsCsv')}
-            <input value={locationsText} onChange={(e) => setLocationsText(e.target.value)} />
+          <label>{t('adminLocationGroups.locations')}
+            <TokenSelect options={locationOptions} value={editing.locations}
+              onChange={(v) => setEditing({ ...editing, locations: v })}
+              placeholder={t('adminLocationGroups.locationsPlaceholder')}
+              emptyText={t('adminLocationGroups.noLocations')} />
           </label>
-          <label>{t('adminLocationGroups.approversCsv')}
-            <input value={approversText} onChange={(e) => setApproversText(e.target.value)} />
+          <label>{t('adminLocationGroups.approvers')}
+            <TokenSelect options={userOptions} value={editing.approvers}
+              onChange={(v) => setEditing({ ...editing, approvers: v })}
+              placeholder={t('adminLocationGroups.usersPlaceholder')}
+              emptyText={t('adminLocationGroups.noUsers')} allowCustom />
           </label>
-          <label>{t('adminLocationGroups.memberIdsCsv')}
-            <input value={membersText} onChange={(e) => setMembersText(e.target.value)} />
+          <label>{t('adminLocationGroups.members')}
+            <TokenSelect options={userOptions} value={editing.memberIds}
+              onChange={(v) => setEditing({ ...editing, memberIds: v })}
+              placeholder={t('adminLocationGroups.usersPlaceholder')}
+              emptyText={t('adminLocationGroups.noUsers')} allowCustom />
           </label>
         </Modal>
       )}

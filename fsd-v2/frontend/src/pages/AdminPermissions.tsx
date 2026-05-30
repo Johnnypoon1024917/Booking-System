@@ -38,11 +38,20 @@ const LABELS: Record<string, string> = {
   'tenant.manage': 'Manage tenant lifecycle',
 };
 
+// The absolute root role. PermissionsGuard hard-bypasses it server-side, so
+// its matrix row has no effect — editing it is both meaningless and a footgun
+// (an admin who unticks "Edit this matrix" believes they locked themselves
+// out). We render it read-only; the backend also rejects writes to it.
+const ROOT_ROLE = 'System Admin';
+
 export function AdminPermissions() {
   const { t } = useT();
   const [catalog, setCatalog] = useState<{ title: string; keys: string[] }[]>([]);
   const [matrix, setMatrix] = useState<Record<string, Set<string>>>({});
   const [original, setOriginal] = useState<Record<string, string[]>>({});
+  // Per-role optimistic-concurrency tokens from the last load/save. Echoed
+  // back on save so a concurrent edit is rejected instead of overwritten.
+  const [versions, setVersions] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -61,6 +70,7 @@ export function AdminPermissions() {
       }
       setMatrix(m);
       setOriginal(o);
+      setVersions(data.versions ?? {});
     } finally { setLoading(false); }
   }
 
@@ -76,6 +86,7 @@ export function AdminPermissions() {
   }, [matrix, original]);
 
   function toggle(role: string, key: string) {
+    if (role === ROOT_ROLE) return; // root role is immutable
     setMatrix((prev) => {
       const s = new Set(prev[role] ?? []);
       s.has(key) ? s.delete(key) : s.add(key);
@@ -91,15 +102,29 @@ export function AdminPermissions() {
     try {
       // Only PUT roles whose permission set actually changed — saves a
       // round-trip per untouched role and keeps the audit log focused.
+      // The root role is never sent (its row is immutable server-side).
       for (const r of Object.keys(matrix)) {
+        if (r === ROOT_ROLE) continue;
         const next = [...matrix[r]].sort();
         const prev = (original[r] ?? []).slice().sort();
         if (next.join(',') !== prev.join(',')) {
-          await api.setRolePermissions(r, [...matrix[r]]);
+          // Pass the role's known version for optimistic concurrency — the
+          // backend returns the new version, which we store for the next save.
+          const res = await api.setRolePermissions(r, [...matrix[r]], versions[r]);
           setOriginal((o) => ({ ...o, [r]: [...matrix[r]] }));
+          if (res?.version) setVersions((v) => ({ ...v, [r]: res.version }));
         }
       }
-    } catch (e: any) { await alertDialog({ title: t('common.error'), message: e.displayMessage, tone: 'danger' }); }
+    } catch (e: any) {
+      // 409 = someone else edited a role since we loaded. Reload so the
+      // admin re-applies against fresh data instead of clobbering it.
+      if (e?.response?.status === 409) {
+        await alertDialog({ title: t('permissions.conflictTitle'), message: e.displayMessage || t('permissions.conflictBody'), tone: 'danger' });
+        await load();
+      } else {
+        await alertDialog({ title: t('common.error'), message: e.displayMessage, tone: 'danger' });
+      }
+    }
     finally { setBusy(false); }
   }
 
@@ -130,7 +155,12 @@ export function AdminPermissions() {
               <thead>
                 <tr>
                   <th className="left">{t('permissions.permission')}</th>
-                  {roles.map((r) => <th key={r} className="role">{r}</th>)}
+                  {roles.map((r) => (
+                    <th key={r} className="role">
+                      {r}
+                      {r === ROOT_ROLE && <Lock size={11} style={{ marginLeft: 4, verticalAlign: 'middle' }} aria-label={t('permissions.rootLocked')} />}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -148,6 +178,8 @@ export function AdminPermissions() {
                         {roles.map((r) => (
                           <td key={r} className="check" style={{ textAlign: 'center' }}>
                             <input type="checkbox" checked={has(r, k)} onChange={() => toggle(r, k)}
+                                   disabled={r === ROOT_ROLE}
+                                   title={r === ROOT_ROLE ? t('permissions.rootLocked') : undefined}
                                    aria-label={`${r}: ${t(`permissions.labels.${k.replace(/\./g, '_')}`, { defaultValue: LABELS[k] || k })}`}/>
                           </td>
                         ))}

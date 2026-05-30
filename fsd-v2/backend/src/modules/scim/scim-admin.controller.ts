@@ -1,12 +1,18 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ScimService } from './scim.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { RequireRoles, AdminRoles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 
-class IssueDto { @IsOptional() @IsString() name?: string; }
+class IssueDto {
+  @IsOptional() @IsString() name?: string;
+  // Token lifetime in days. Service clamps to [1, 365]; we bound here too
+  // so a malformed value is rejected at the edge rather than silently
+  // coerced.
+  @IsOptional() @IsInt() @Min(1) @Max(365) expiresInDays?: number;
+}
 
 // Admin UI endpoints for managing SCIM tokens. Lives inside the
 // `api/v1` prefix and is guarded by the normal JWT + role guard.
@@ -27,7 +33,7 @@ export class ScimAdminController {
   @Post()
   @HttpCode(201)
   issue(@CurrentUser() u: AuthUser, @Body() body: IssueDto) {
-    return this.svc.issue(u.tenantId, body.name || 'SCIM client');
+    return this.svc.issue(u.tenantId, body.name || 'SCIM client', body.expiresInDays);
   }
 
   @Delete(':id')

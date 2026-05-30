@@ -10,6 +10,9 @@ class DepartmentDto {
   @IsString() name!: string;
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsUUID() parentId?: string;
+  // Department head for dynamic approval routing. '' clears it (normalised
+  // server-side); a non-empty value must be a real user id.
+  @IsOptional() @IsString() headUserId?: string;
 }
 
 @ApiTags('admin / departments')

@@ -1357,6 +1357,43 @@ h1.page-title::after { content: ' »'; color: var(--fsd-muted); font-weight: 400
 .integration-row:last-child { border-bottom: 0; }
 .integration-row .space { flex: 1; }
 .integration-row p { margin: 2px 0 0; }
+
+/* TokenSelect — searchable multi-select with pill chips --------- */
+.tokensel { position: relative; }
+.tokensel-box {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  min-height: 38px; padding: 5px 8px; cursor: text;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.tokensel-box:focus-within { border-color: var(--brand-primary); }
+.tokensel-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 6px 3px 9px; border-radius: 999px; font-size: 12px;
+  background: color-mix(in srgb, var(--brand-primary) 12%, transparent);
+  color: var(--brand-primary); border: 1px solid color-mix(in srgb, var(--brand-primary) 30%, transparent);
+}
+.tokensel-chip button {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: inherit; cursor: pointer; padding: 0; line-height: 1;
+}
+.tokensel-chip button:hover { color: var(--danger); }
+.tokensel-box input { border: 0; outline: none; flex: 1; min-width: 120px; font: inherit; background: transparent; color: var(--text); }
+.tokensel-menu {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 240px; overflow-y: auto; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,.12);
+}
+.tokensel-opt {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: none;
+  cursor: pointer; font: inherit; color: var(--text);
+}
+.tokensel-opt.active { background: var(--surface-inset); }
+.tokensel-opt-label { font-size: 13px; }
+.tokensel-opt-sub { font-size: 11px; color: var(--text-muted); }
+.tokensel-empty { padding: 8px 10px; font-size: 12px; color: var(--text-muted); }
 .spin { animation: fsd-spin 1s linear infinite; }
 @keyframes fsd-spin { to { transform: rotate(360deg); } }
 
@@ -1960,6 +1997,25 @@ table.dt th .caret, .caret { color: #5f6875; }
   padding: 0 18px; font-size: 14px; font-weight: 500;
 }
 
+/* ---- Async typeahead (delegate approver picker) ---- */
+.typeahead { position: relative; }
+.typeahead-input { display: flex; align-items: center; gap: 6px; }
+.typeahead-input svg { flex: none; margin-left: 10px; }
+.typeahead-input input { flex: 1; }
+.typeahead-menu {
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 240px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 4px;
+}
+.typeahead-item {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: 8px 10px; border: 0; background: transparent; border-radius: 7px;
+  font-size: 13px; color: var(--text);
+}
+.typeahead-item:hover { background: var(--surface-inset); }
+.typeahead-empty { padding: 10px; text-align: center; }
+
 /* ---- Booking summary header (BookingModal) ---- */
 .modal section .bm-summary { padding: 14px; border-radius: 12px; gap: 14px; }
 .modal section .bm-summary label { width: 100%; }
@@ -1979,3 +2035,46 @@ table.dt th .caret, .caret { color: #5f6875; }
 .modal section .bm-timerow-edit .bm-when input[type=time] { width: 96px; }
 .modal section .bm-timerow-edit .bm-when input[type=date] { width: 158px; }
 .modal section .bm-timerow-edit .bm-dash { color: var(--text-muted); }
+
+/* ============================================================================
+   FSD V2: Modern Calendar Event Cards (matches the Tenant Studio Live Preview)
+   White surface fill + dark text with a light top/right/bottom border; only the
+   left border keeps the status accent colour FullCalendar sets inline
+   (brand-primary for confirmed bookings) — replicating the preview card.
+   ============================================================================ */
+.fc .fc-modern-event {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border-top: 1px solid var(--border) !important;
+  border-right: 1px solid var(--border) !important;
+  border-bottom: 1px solid var(--border) !important;
+  /* Left border colour is left to the inline borderColor set in CalendarView. */
+  border-left-width: 4px !important;
+  border-left-style: solid !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 3px 6px !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.fc .fc-modern-event .fc-event-time {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 11px;
+}
+.fc .fc-modern-event .fc-event-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.fc .fc-modern-event:hover {
+  box-shadow: var(--shadow-sm) !important;
+  transform: translateY(-1px);
+  transition: all 0.2s ease;
+}
+
+/* Private bookings the caller can't see stay a solid muted, blurred block —
+   override the white modern card so the "hands off" signal isn't lost. */
+.fc .fc-modern-event.evt-private {
+  background: var(--text-muted) !important;
+  border-color: var(--text-muted) !important;
+}

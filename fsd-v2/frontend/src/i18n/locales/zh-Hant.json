@@ -20,6 +20,9 @@
   },
   "nav": {
     "dashboard": "概覽",
+    "schedule": "日程",
+    "newBooking": "新增預約",
+    "settings": "設定",
     "search": "搜尋房間",
     "myBookings": "我的預約",
     "bookings": "所有預約",
@@ -284,7 +287,12 @@
     "cancelReason": "取消原因？（可選）",
     "cancelled": "預約已取消",
     "empty": "尚無預約",
-    "approvalLoadFailed": "無法載入審批狀態 — 點擊重試"
+    "approvalLoadFailed": "無法載入審批狀態 — 點擊重試",
+    "endAfterStart": "結束時間必須晚於開始時間。",
+    "recurringCancelTitle": "取消週期性預約",
+    "recurringCancelMessage": "此預約屬於一個系列。要僅取消此次，還是取消整個系列？",
+    "cancelOccurrence": "僅此次",
+    "cancelSeries": "整個系列"
   },
   "approvals": {
     "title": "審批",
@@ -311,7 +319,8 @@
     "delegateApproval": "委派審批",
     "delegateHelp": "將目前待處理步驟重新分配給另一位審批人。會記錄在時間軸上。",
     "delegateTo": "委派給",
-    "selectApprover": "選擇審批人…",
+    "selectApprover": "依姓名或電郵搜尋…",
+    "noMatches": "沒有符合的用戶",
     "reasonOptional": "原因（可選）",
     "approvalFailed": "審批失敗",
     "rejectFailed": "拒絕失敗",
@@ -336,6 +345,13 @@
     "levels": "審批層級（依序）",
     "addLevel": "新增層級",
     "levelName": "層級名稱（例如：部門主管）",
+    "approverType": "審批人",
+    "typeUser": "指定人員",
+    "typeRole": "按角色",
+    "typeManager": "申請人的主管",
+    "typeDeptHead": "部門主管",
+    "typeManagerHint": "建立預約時，自動路由至申請人的直屬主管（於用戶資料設定）。",
+    "typeDeptHeadHint": "建立預約時，自動路由至所預約資源所屬部門的主管（於部門設定）。",
     "approverRole": "所需角色",
     "minGrade": "最低職級",
     "specificApprovers": "指定審批人（按 Ctrl/⌘ 多選）",
@@ -386,7 +402,17 @@
     "specificApproversCount": "指定審批人（已選 {{n}} 個）",
     "dependenciesInline": "相依項 — 必須在此步驟之前完成。留空 = 僅相依上一步驟。",
     "stepN": "步驟 {{n}}",
-    "defaultLevelName": "審批"
+    "defaultLevelName": "審批",
+    "approverMode": "當存在多名審批人時",
+    "modeAny": "任一審批人批准即可",
+    "modeAll": "所有審批人都必須批准",
+    "modeAllShort": "需全部",
+    "validateTitle": "無法儲存規則",
+    "validateNoApprover": "步驟「{{name}}」沒有指定審批人——請指定角色、最低職級或具體人員。",
+    "reorderStripWarn": "重新排序將移除指向後續步驟的依賴關係。是否繼續？",
+    "reorderConfirm": "仍然重新排序",
+    "userSearchPlaceholder": "按姓名搜尋人員…",
+    "userSearchEmpty": "沒有匹配的人員"
   },
   "webhooks": {
     "title": "Webhook",
@@ -513,6 +539,9 @@
     "saved": "權限已更新",
     "matrixSubtitle": "按角色劃分的權限矩陣。變更將作為警告事件記入稽核。",
     "matrixHelp": "每個勾選項授予某角色一個權限項。角色成員資格按使用者設定；權限從角色繼承。",
+    "rootLocked": "系統管理員是應急超級使用者角色，不可編輯。",
+    "conflictTitle": "未能儲存變更",
+    "conflictBody": "在您操作期間，他人已修改了這些權限。畫面已重新整理，請重新套用您的變更。",
     "labels": {
       "booking_create": "建立新預訂",
       "booking_cancel": "取消自己的預訂",
@@ -649,7 +678,18 @@
     "activeTokens": "使用中的權杖",
     "created": "建立時間",
     "lastUsed": "最近使用",
-    "revoke": "撤銷"
+    "revoke": "撤銷",
+    "expiry": "權杖有效期",
+    "expiry30": "30 天",
+    "expiry90": "90 天",
+    "expiry180": "180 天",
+    "expiry365": "1 年",
+    "expires": "到期",
+    "expiresOn": "到期日：{{date}}",
+    "noExpiry": "無有效期",
+    "copy": "複製",
+    "copied": "已複製",
+    "copyToClipboard": "複製到剪貼簿"
   },
   "admin": {
     "title": "租戶設定",
@@ -975,6 +1015,8 @@
     "cancel": "取消",
     "delete": "刪除",
     "done": "完成",
+    "prev": "上一頁",
+    "next": "下一頁",
     "yes": "是",
     "no": "否",
     "confirm": "確認",
@@ -1074,11 +1116,18 @@
     "password": "密碼",
     "passwordKeepHint": "（留空則保持不變）",
     "grade": "職級",
+    "lineManager": "直屬主管",
+    "noManager": "— 無 —",
     "regionAccess": "區域權限",
+    "noRegions": "尚未設定區域。請先新增帶區域的地點以授予範圍存取權限。",
     "noDepartments": "尚未設定任何部門。",
     "activeAccount": "啟用帳戶",
     "initialPassword": "初始密碼",
-    "forceReset": "首次登入時強制重設密碼"
+    "forceReset": "首次登入時強制重設密碼",
+    "searchPlaceholder": "依使用者名稱或電子郵件搜尋…",
+    "noResults": "沒有符合搜尋條件的使用者。",
+    "totalCount": "共 {{count}} 個使用者",
+    "pageOf": "第 {{page}} / {{pages}} 頁"
   },
   "adminDepartments": {
     "title": "部門",
@@ -1088,6 +1137,7 @@
     "nameRequired": "名稱為必填項",
     "saveFailed": "儲存失敗",
     "deleteConfirm": "刪除部門「{{name}}」？此操作無法復原。",
+    "deleteConfirmChildren": "「{{name}}」有 {{count}} 個下屬單位。刪除後它們可能成為孤立項。是否繼續？",
     "deleted": "已刪除",
     "deleteFailed": "刪除失敗",
     "emptyTitle": "暫無部門",
@@ -1098,7 +1148,9 @@
     "name": "名稱",
     "code": "代碼",
     "parent": "上級部門",
-    "topLevel": "—（頂層）"
+    "topLevel": "—（頂層）",
+    "head": "部門主管",
+    "noHead": "— 無 —"
   },
   "adminResources": {
     "title": "資源",
@@ -1110,7 +1162,12 @@
     "capacityShort": "容量",
     "edit": "編輯",
     "deleteConfirm": "刪除 {{name}}？",
-    "deleteFailed": "刪除失敗"
+    "deleteFailed": "刪除失敗",
+    "searchPlaceholder": "按名稱、位置或區域搜尋…",
+    "countLabel": "顯示 {{shown}} / {{total}}",
+    "pageLabel": "第 {{page}} / {{pages}} 頁",
+    "noMatches": "沒有符合搜尋條件的資源。",
+    "empty": "尚無資源。"
   },
   "adminResourceTypes": {
     "title": "資源類型",
@@ -1158,9 +1215,11 @@
     "filterBy": "篩選方式",
     "locations": "地點",
     "approvers": "審批人",
-    "locationsCsv": "地點（以逗號分隔）",
-    "approversCsv": "審批人（電子郵件，以逗號分隔）",
-    "memberIdsCsv": "成員 ID（以逗號分隔）",
+    "members": "成員",
+    "locationsPlaceholder": "搜尋並新增地點…",
+    "usersPlaceholder": "搜尋並新增使用者…",
+    "noLocations": "沒有相符的地點",
+    "noUsers": "沒有相符的使用者",
     "edit": "編輯",
     "saveFailed": "儲存失敗",
     "confirmDelete": "刪除 {{name}}？"
@@ -1319,7 +1378,10 @@
     "confirmDelete": "刪除假期「{{name}}」？",
     "editTitle": "編輯假期",
     "addTitle": "新增假期",
-    "blockNew": "禁止在此日期進行新預訂"
+    "blockNew": "禁止在此日期進行新預訂",
+    "colAppliesTo": "適用範圍",
+    "tenantWide": "所有地區（全租戶）",
+    "appliesToHelp": "可將此停用限定於某個地區的資源，或保留為所有地區以封鎖整個租戶。"
   },
   "adminBookings": {
     "title": "所有預訂",

@@ -6,6 +6,10 @@ import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 export class Customization {
   @PrimaryColumn({ name: 'tenant_id', type: 'uuid' }) tenantId!: string;
   @Column({ type: 'jsonb', default: () => `'{}'::jsonb` }) data!: Record<string, any>;
+  // Optimistic-concurrency token. Bumped on every save; a save that carries a
+  // stale version is rejected with a 409 so two admins editing the same tenant
+  // can't silently clobber each other ("last writer wins" wipeout).
+  @Column({ type: 'int', default: 0 }) version!: number;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }
 
@@ -28,6 +32,11 @@ export const defaultCustomization = {
   recurrence_patterns: ['daily', 'weekly', 'monthly'],
   hko_weather_enabled: true,
   govhk_holidays_enabled: false,
+  // Regions that gov.hk public holidays apply to. Empty = tenant-wide (every
+  // resource). For a multi-region tenant (e.g. HK + Singapore offices) list the
+  // Hong Kong regions here so the feed only closes HK rooms. Shared by the
+  // manual sync and the nightly cron.
+  govhk_holiday_regions: [] as string[],
   // Chargeback / cost-center codes a booker must pick from. Empty = the
   // tenant runs no chargeback codes and the field stays optional everywhere.
   cost_centers: [] as string[],

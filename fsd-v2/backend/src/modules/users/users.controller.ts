@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID } from 'class-validator';
@@ -20,8 +20,14 @@ class UpsertUserBody {
   @IsOptional() @IsString() dn?: string;
   @IsOptional() @IsString() grade?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  // Line manager for dynamic approval routing. '' clears it. @IsUUID rejects
+  // anything that isn't a real id (an empty string is normalised to null below).
+  @IsOptional() @IsString() managerId?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) regionAccess?: string[];
   @IsOptional() @IsArray() @IsUUID('4', { each: true }) departmentIds?: string[];
+  // Preferred language for system emails/push. Lenient on input (SSO variants
+  // like zh-TW are accepted); the service coerces to a supported locale.
+  @IsOptional() @IsString() locale?: string;
 }
 
 @ApiTags('admin / users')
@@ -32,7 +38,24 @@ class UpsertUserBody {
 export class UsersController {
   constructor(private readonly svc: UsersService, private readonly audit: AuditService) {}
 
-  @Get() list(@CurrentUser() u: AuthUser) { return this.svc.list(u.tenantId); }
+  // Backward-compatible directory listing. With no pagination params we
+  // return the full array (pickers/dropdowns across the app rely on that
+  // shape). When `page` or `search` is supplied we return a paginated
+  // envelope { items, total, page, pageSize } so the admin table never
+  // pulls an entire government-sized directory into the DOM at once.
+  @Get() list(
+    @CurrentUser() u: AuthUser,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
+  ) {
+    if (page === undefined && search === undefined) {
+      return this.svc.list(u.tenantId);
+    }
+    const p = Math.max(parseInt(page ?? '1', 10) || 1, 1);
+    const size = Math.min(Math.max(parseInt(pageSize ?? '25', 10) || 25, 1), 100);
+    return this.svc.listPaged(u.tenantId, { page: p, pageSize: size, search: (search ?? '').trim() });
+  }
 
   @Get(':id') get(@CurrentUser() u: AuthUser, @Param('id') id: string) {
     return this.svc.findById(u.tenantId, id);

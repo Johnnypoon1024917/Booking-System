@@ -9,11 +9,13 @@ import { Booking } from '../bookings/booking.entity';
 import { User } from '../users/user.entity';
 import { Resource } from '../resources/resource.entity';
 import { AuditModule } from '../audit/audit.module';
+import { PushModule } from '../push/push.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([NotificationOutbox, NotificationTemplate, Booking, User, Resource]),
     AuditModule,
+    PushModule,
   ],
   controllers: [NotificationsController],
   providers: [NotificationsService, SmtpService],

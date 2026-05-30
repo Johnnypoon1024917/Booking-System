@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { Holiday } from './holiday.entity';
 import { GovHKHolidayClient } from './govhk.client';
 
@@ -8,6 +8,7 @@ export interface HolidayInput {
   holidayDate: string;
   name?: string;
   scope?: string;
+  region?: string;
   isBlocker?: boolean;
 }
 
@@ -31,6 +32,7 @@ export class HolidaysService {
       holidayDate: input.holidayDate,
       name: input.name ?? '',
       scope: input.scope ?? 'manual',
+      region: input.region ?? '',
       isBlocker: input.isBlocker ?? true,
     }));
   }
@@ -41,6 +43,7 @@ export class HolidaysService {
     h.holidayDate = input.holidayDate;
     h.name = input.name ?? h.name;
     if (input.scope) h.scope = input.scope;
+    if (input.region !== undefined) h.region = input.region;
     if (typeof input.isBlocker === 'boolean') h.isBlocker = input.isBlocker;
     return this.repo.save(h);
   }
@@ -50,37 +53,50 @@ export class HolidaysService {
     if (!res.affected) throw new NotFoundException('holiday not found');
   }
 
-  // Pulls the live gov.hk feed and upserts rows keyed on (tenant, date).
+  // Pulls the live gov.hk feed and upserts rows keyed on (tenant, date, region).
+  // `regions` is the tenant's configured gov.hk scope: empty = tenant-wide
+  // (region ''), otherwise one row is written per region so a Hong Kong public
+  // holiday only closes Hong Kong resources — never, say, a Singapore office.
   // Returns { imported, skipped } so the SPA can show a confirmation toast.
-  async syncFromGovHK(tenantId: string, userId: string | undefined, locale = 'en') {
+  async syncFromGovHK(tenantId: string, userId: string | undefined, locale = 'en', regions: string[] = []) {
     const feed = await this.govhk.fetch(locale);
+    const targets = regions.length ? [...new Set(regions)] : [''];
     let imported = 0;
     let skipped = 0;
     for (const e of feed) {
-      const existing = await this.repo.findOne({
-        where: { tenantId, holidayDate: e.date },
-      });
-      if (existing) {
-        // Refresh the name from the official feed but leave manual entries
-        // alone (don't overwrite an admin's custom label).
-        if (existing.scope === 'govhk' && existing.name !== e.name) {
-          existing.name = e.name;
-          await this.repo.save(existing);
+      for (const region of targets) {
+        const existing = await this.repo.findOne({
+          where: { tenantId, holidayDate: e.date, region },
+        });
+        if (existing) {
+          // Refresh the name from the official feed but leave manual entries
+          // alone (don't overwrite an admin's custom label).
+          if (existing.scope === 'govhk' && existing.name !== e.name) {
+            existing.name = e.name;
+            await this.repo.save(existing);
+          }
+          skipped++;
+          continue;
         }
-        skipped++;
-        continue;
+        await this.repo.save(this.repo.create({
+          tenantId,
+          createdBy: userId,
+          holidayDate: e.date,
+          name: e.name,
+          scope: 'govhk',
+          region,
+          isBlocker: true,
+        }));
+        imported++;
       }
-      await this.repo.save(this.repo.create({
-        tenantId,
-        createdBy: userId,
-        holidayDate: e.date,
-        name: e.name,
-        scope: 'govhk',
-        isBlocker: true,
-      }));
-      imported++;
+      // Reconcile: drop gov.hk rows left over from a previous scope (e.g. the
+      // admin switched from tenant-wide to regional) so the same date isn't
+      // blocked by two stale rows. Manual entries (scope != 'govhk') are kept.
+      await this.repo.delete({
+        tenantId, holidayDate: e.date, scope: 'govhk', region: Not(In(targets)),
+      });
     }
-    this.log.log(`gov.hk sync (tenant=${tenantId}): imported=${imported} skipped=${skipped}`);
+    this.log.log(`gov.hk sync (tenant=${tenantId}): imported=${imported} skipped=${skipped} regions=[${targets.join(',')}]`);
     return { imported, skipped };
   }
 

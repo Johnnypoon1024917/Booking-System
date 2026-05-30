@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as crypto from 'crypto';
 import { Webhook, WebhookDelivery } from './webhook.entity';
@@ -20,6 +20,10 @@ const DEFAULT_EVENTS = [
 ];
 const MAX_ATTEMPTS = 6;
 const DELIVERY_TIMEOUT_MS = 10_000;
+const DRAIN_BATCH = 50;
+// A delivery left in 'processing' longer than this is assumed orphaned by a
+// crashed/restarted worker and is reclaimed by the next drain.
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
 
 @Injectable()
 export class WebhooksService {
@@ -109,16 +113,40 @@ export class WebhooksService {
     await this.deliveries.save(rows);
   }
 
-  // EVERY_MINUTE outbox drain. Picks a bounded batch of due rows and
-  // attempts delivery serially per row to keep memory predictable.
+  // EVERY_MINUTE outbox drain. Atomically claims a bounded batch of due rows
+  // and attempts delivery serially per row to keep memory predictable.
   @Cron(CronExpression.EVERY_MINUTE)
   async drain(): Promise<void> {
+    const claimed = await this.claimDue();
+    for (const d of claimed) await this.deliverOne(d);
+  }
+
+  // claimDue atomically flips a batch of due deliveries from 'pending' to
+  // 'processing' inside a single locked transaction. FOR UPDATE SKIP LOCKED
+  // guarantees no other drain tick — or a second app instance — can claim the
+  // same rows, so a drain that overruns the 1-minute cron interval (slow
+  // target) can never re-POST the same webhook. Rows orphaned in 'processing'
+  // by a crashed worker (older than STALE_PROCESSING_MS) are reclaimed here.
+  private claimDue(): Promise<WebhookDelivery[]> {
     const now = new Date();
-    const due = await this.deliveries.find({
-      where: { status: 'pending', nextAttemptAt: LessThanOrEqual(now) },
-      take: 50, order: { nextAttemptAt: 'ASC' },
+    const staleBefore = new Date(now.getTime() - STALE_PROCESSING_MS);
+    return this.deliveries.manager.transaction(async (em) => {
+      const rows = await em.createQueryBuilder(WebhookDelivery, 'd')
+        .setLock('pessimistic_write')
+        .setOnLocked('skip_locked')
+        .where('d.nextAttemptAt <= :now', { now })
+        .andWhere(
+          '(d.status = :pending OR (d.status = :processing AND d.updatedAt <= :staleBefore))',
+          { pending: 'pending', processing: 'processing', staleBefore },
+        )
+        .orderBy('d.nextAttemptAt', 'ASC')
+        .take(DRAIN_BATCH)
+        .getMany();
+      if (rows.length) {
+        await em.update(WebhookDelivery, rows.map((r) => r.id), { status: 'processing' });
+      }
+      return rows;
     });
-    for (const d of due) await this.deliverOne(d);
   }
 
   private async deliverOne(d: WebhookDelivery): Promise<void> {
@@ -172,7 +200,9 @@ export class WebhooksService {
     } else if (d.attemptCount >= MAX_ATTEMPTS) {
       d.status = 'failed';
     } else {
-      // Exponential backoff: 30s, 1m, 4m, 16m, 64m, ...
+      // Quartic backoff: 30s, 2m, 8m, 32m, 128m, ... (30·4^(n-1)).
+      // Hand the claimed row back to the pool for a future tick.
+      d.status = 'pending';
       const delaySec = 30 * Math.pow(4, d.attemptCount - 1);
       d.nextAttemptAt = new Date(Date.now() + delaySec * 1000);
     }

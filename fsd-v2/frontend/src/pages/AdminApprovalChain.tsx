@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Plus, ArrowUp, ArrowDown, Trash2, Save, ChevronRight, GitBranch } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
+import { TokenSelect, TokenOption } from '../components/TokenSelect';
 import { useT } from '../hooks/useT';
 import { useToast } from '../stores/toast';
 import { confirmDialog } from '../stores/confirm';
@@ -10,15 +11,33 @@ import { confirmDialog } from '../stores/confirm';
 // pick a min_grade that silently fails server-side.
 const GRADES = ['SO', 'SSO', 'ADO', 'DO', 'SDO', 'ADD', 'DDGFS', 'DGFS'];
 
+// Built-in asset types ship in code (backend ResourceType comment: "Built-ins
+// remain present in code as a floor"), so they may not appear in the
+// resource-types table. We seed the scope dropdown with these and merge in the
+// live catalog + any types actually in use, so custom types like "Hot Desk"
+// are always selectable.
+const BUILTIN_ASSET_TYPES = ['Meeting Room', 'Vehicle', 'Equipment', 'Top Management'];
+
 type Scope = 'asset_type' | 'resource' | 'department' | 'tenant';
+type ApproverType = 'user' | 'role' | 'manager' | 'department_head';
 interface Level {
   name: string;
+  approver_type?: ApproverType;
   approver_role?: string;
   min_grade?: string;
   approver_user_ids?: string[];
   auto_after_hours?: number;
   parallel?: boolean;
+  require_all?: boolean;
   dependencies?: number[];
+}
+
+// Infer the editor's approver-type for a level saved before approver_type
+// existed: a role-only legacy level shows as "by role", everything else as
+// "specific users" — so old rules render with their real configuration.
+function effectiveType(l: Level): ApproverType {
+  if (l.approver_type) return l.approver_type;
+  return l.approver_role && !(l.approver_user_ids?.length) ? 'role' : 'user';
 }
 interface Rule {
   id?: string;
@@ -31,7 +50,40 @@ interface Rule {
 }
 
 function emptyLevel(name: string): Level {
-  return { name, approver_role: '', min_grade: '', approver_user_ids: [], auto_after_hours: 0, parallel: false, dependencies: [] };
+  return { name, approver_type: 'user', approver_role: '', min_grade: '', approver_user_ids: [], auto_after_hours: 0, parallel: false, require_all: false, dependencies: [] };
+}
+
+// Visual diagram of the approval chain. Levels that share a dependency rank
+// run in parallel (stacked vertically); sequential stages become columns
+// separated by chevrons. Mirrors the runtime's "explicit deps, else previous
+// level" rule so the picture matches what the server will actually do.
+function ChainGraph({ levels, fallback }: { levels: Level[]; fallback: string }) {
+  if (!levels.length) return null;
+  const depsOf = (i: number) => (levels[i].dependencies?.length ? levels[i].dependencies! : (i === 0 ? [] : [i - 1]));
+  const rank: number[] = [];
+  for (let i = 0; i < levels.length; i++) {
+    const d = depsOf(i);
+    rank[i] = d.length ? Math.max(...d.map((x) => rank[x] ?? 0)) + 1 : 0;
+  }
+  const maxRank = rank.length ? Math.max(...rank) : 0;
+  const cols: number[][] = Array.from({ length: maxRank + 1 }, () => []);
+  rank.forEach((r, i) => cols[r].push(i));
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', overflowX: 'auto', padding: '8px 0' }}>
+      {cols.map((col, c) => (
+        <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {col.map((i) => (
+              <div key={i} className="tag info" style={{ whiteSpace: 'nowrap' }}>
+                <span className="num small">{i + 1}</span> {levels[i].name || fallback}
+              </div>
+            ))}
+          </div>
+          {c < cols.length - 1 && <ChevronRight size={16} className="muted" />}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function AdminApprovalChain() {
@@ -39,6 +91,7 @@ export function AdminApprovalChain() {
   const toast = useToast();
   const [rules, setRules] = useState<any[]>([]);
   const [resources, setResources] = useState<any[]>([]);
+  const [resourceTypes, setResourceTypes] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [editing, setEditing] = useState<Rule | null>(null);
@@ -47,17 +100,40 @@ export function AdminApprovalChain() {
   useEffect(() => { load(); }, []);
 
   async function load() {
-    const [r, res, dept, usr] = await Promise.all([
+    const [r, res, rt, dept, usr] = await Promise.all([
       api.listApprovalRules(),
       api.resources().catch(() => []),
+      api.resourceTypes().catch(() => []),
       api.departments().catch(() => []),
       api.users().catch(() => []),
     ]);
     setRules(r || []);
     setResources(res || []);
+    setResourceTypes(rt || []);
     setDepartments(dept || []);
     setUsers(usr || []);
   }
+
+  // Union of built-in types, the live resource-type catalog, the asset types
+  // actually assigned to resources (these are the values the server matches
+  // on), and the rule's current value — so editing never drops an existing
+  // scope and new categories show up automatically.
+  // Address-book options for the approver picker (TokenSelect): username as the
+  // primary line, role/grade as the secondary so admins can disambiguate.
+  const userOptions = useMemo<TokenOption[]>(() =>
+    users.map((u) => ({
+      value: u.id,
+      label: u.username ?? u.id,
+      sub: [u.role, u.grade].filter(Boolean).join(' · '),
+    })), [users]);
+
+  const assetTypeOptions = useMemo(() => {
+    const set = new Set<string>(BUILTIN_ASSET_TYPES);
+    resources.forEach((r) => { if (r.assetType) set.add(r.assetType); });
+    resourceTypes.forEach((rt) => { const v = rt.label || rt.key; if (v) set.add(v); });
+    if (editing?.scopeType === 'asset_type' && editing.scopeValue) set.add(editing.scopeValue);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [resources, resourceTypes, editing?.scopeType, editing?.scopeValue]);
 
   function openNew() {
     setEditing({
@@ -102,17 +178,27 @@ export function AdminApprovalChain() {
       return { ...e, levels };
     });
   }
-  function moveLevel(i: number, delta: number) {
-    setEditing((e) => {
-      if (!e) return e;
-      const j = i + delta;
-      if (j < 0 || j >= e.levels.length) return e;
-      const arr = [...e.levels];
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-      // Reordering makes deps ambiguous — drop deps that no longer point
-      // strictly backwards.
-      return { ...e, levels: arr.map((l, idx) => ({ ...l, dependencies: (l.dependencies ?? []).filter((d) => d < idx) })) };
-    });
+  async function moveLevel(i: number, delta: number) {
+    if (!editing) return;
+    const j = i + delta;
+    if (j < 0 || j >= editing.levels.length) return;
+    const arr = [...editing.levels];
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    // Reordering can make a dependency point forwards (a step depending on a
+    // later one). Those deps get dropped — warn first so an accidental
+    // up/down click doesn't silently destroy a carefully wired fan-in.
+    const wouldStrip = arr.some((l, idx) => (l.dependencies ?? []).some((d) => d >= idx));
+    if (wouldStrip) {
+      const ok = await confirmDialog({
+        title: t('approvalChain.reorderStripWarn'),
+        tone: 'danger',
+        confirmText: t('approvalChain.reorderConfirm'),
+        cancelText: t('common.cancel'),
+      });
+      if (!ok) return;
+    }
+    const levels = arr.map((l, idx) => ({ ...l, dependencies: (l.dependencies ?? []).filter((d) => d < idx) }));
+    setEditing((e) => e ? { ...e, levels } : e);
   }
   function toggleDep(i: number, depIdx: number, checked: boolean) {
     setEditing((e) => {
@@ -128,6 +214,22 @@ export function AdminApprovalChain() {
 
   async function save() {
     if (!editing || !editing.name.trim()) return;
+    // Reject "ghost steps": a level with no resolvable approver would
+    // materialise a step assigned to nobody, stranding the booking. Manager /
+    // department-head levels resolve relative to the booking, so they're
+    // always fine; static levels need a role, a grade, or specific people.
+    for (const lvl of editing.levels) {
+      const tp = effectiveType(lvl);
+      if (tp === 'manager' || tp === 'department_head') continue;
+      const hasApprover = !!(lvl.approver_role || lvl.min_grade || (lvl.approver_user_ids?.length));
+      if (!hasApprover) {
+        toast.error(
+          t('approvalChain.validateTitle'),
+          t('approvalChain.validateNoApprover', { name: lvl.name || t('approvalChain.ruleFallback') }),
+        );
+        return;
+      }
+    }
     setBusy(true);
     try {
       if (editing.id) await api.updateApprovalRule(editing.id, editing);
@@ -154,12 +256,33 @@ export function AdminApprovalChain() {
 
   function describeLevel(l: Level): string {
     const parts: string[] = [];
-    if (l.approver_role) parts.push(l.approver_role);
+    const tp = effectiveType(l);
+    if (tp === 'manager') parts.push(t('approvalChain.typeManager'));
+    else if (tp === 'department_head') parts.push(t('approvalChain.typeDeptHead'));
+    else {
+      if (l.approver_role) parts.push(l.approver_role);
+      if (l.approver_user_ids?.length) parts.push(t('approvalChain.specificCount', { n: l.approver_user_ids.length }));
+    }
     if (l.min_grade) parts.push(`≥ ${l.min_grade}`);
-    if (l.approver_user_ids?.length) parts.push(t('approvalChain.specificCount', { n: l.approver_user_ids.length }));
-    if (l.parallel) parts.push(t('approvalChain.anyOf'));
+    if (tp === 'user' && (l.approver_user_ids?.length ?? 0) > 1) {
+      parts.push(l.require_all ? t('approvalChain.modeAllShort') : t('approvalChain.anyOf'));
+    }
     if (l.auto_after_hours) parts.push(t('approvalChain.autoHours', { n: l.auto_after_hours }));
     return parts.length ? '· ' + parts.join(' · ') : '';
+  }
+
+  // Switching approver type clears the fields that no longer apply so a hidden
+  // value can't silently ride along (e.g. a stale role under a 'manager' level).
+  function setApproverType(i: number, type: ApproverType) {
+    const patch: Partial<Level> = { approver_type: type };
+    if (type === 'manager' || type === 'department_head') {
+      patch.approver_role = ''; patch.approver_user_ids = []; patch.min_grade = '';
+    } else if (type === 'role') {
+      patch.approver_user_ids = [];
+    } else { // 'user'
+      patch.approver_role = '';
+    }
+    updateLevel(i, patch);
   }
   function scopeLabel(r: any): string {
     if (r.scopeType === 'resource') return resources.find((x) => x.id === r.scopeValue)?.name || r.scopeValue;
@@ -225,7 +348,7 @@ export function AdminApprovalChain() {
               {editing.scopeType === 'asset_type' && (
                 <select value={editing.scopeValue} onChange={(e) => setEd('scopeValue', e.target.value)}>
                   <option value="">—</option>
-                  <option>Meeting Room</option><option>Vehicle</option><option>Equipment</option><option>Top Management</option>
+                  {assetTypeOptions.map((a) => <option key={a} value={a}>{a}</option>)}
                 </select>
               )}
               {editing.scopeType === 'resource' && (
@@ -251,7 +374,13 @@ export function AdminApprovalChain() {
             <span>{t('common.active')}</span>
           </label>
 
-          <h4 style={{ marginTop: 24, marginBottom: 8 }}>{t('approvalChain.levels')}</h4>
+          <h4 style={{ marginTop: 24, marginBottom: 4 }}><GitBranch size={14} style={{ verticalAlign: '-2px' }}/> {t('approvalChain.levels')}</h4>
+          {editing.levels.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <small className="muted">{t('approvalChain.preview')}</small>
+              <ChainGraph levels={editing.levels} fallback={t('approvalChain.ruleFallback')} />
+            </div>
+          )}
           {editing.levels.map((lvl, i) => (
             <div key={i} className="card level-card">
               <div className="row gap-sm">
@@ -263,37 +392,63 @@ export function AdminApprovalChain() {
                 <button className="btn ghost danger" onClick={() => removeLevel(i)}><Trash2 size={13}/></button>
               </div>
               <div className="grid-2" style={{ marginTop: 8 }}>
-                <label>{t('approvalChain.approverRole')}
-                  <select value={lvl.approver_role ?? ''} onChange={(e) => updateLevel(i, { approver_role: e.target.value })}>
-                    <option value="">—</option>
-                    <option>System Admin</option><option>Security Admin</option><option>Room Admin</option><option>Secretary</option>
+                {/* Who approves this level. 'manager'/'department_head' resolve
+                    relative to each booking, so the static role/user pickers are
+                    hidden for them. */}
+                <label style={{ gridColumn: '1 / -1' }}>{t('approvalChain.approverType')}
+                  <select value={effectiveType(lvl)} onChange={(e) => setApproverType(i, e.target.value as ApproverType)}>
+                    <option value="user">{t('approvalChain.typeUser')}</option>
+                    <option value="role">{t('approvalChain.typeRole')}</option>
+                    <option value="manager">{t('approvalChain.typeManager')}</option>
+                    <option value="department_head">{t('approvalChain.typeDeptHead')}</option>
                   </select>
                 </label>
-                <label>{t('approvalChain.minGrade')}
-                  <select value={lvl.min_grade ?? ''} onChange={(e) => updateLevel(i, { min_grade: e.target.value })}>
-                    <option value="">{t('approvalChain.anyGrade')}</option>
-                    {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
-                  </select>
-                </label>
-                <label style={{ gridColumn: '1 / -1' }}>
-                  {t('approvalChain.specificApproversCount', { n: (lvl.approver_user_ids ?? []).length })}
-                  <select multiple style={{ minHeight: 92 }}
-                          value={lvl.approver_user_ids ?? []}
-                          onChange={(e) => updateLevel(i, {
-                            approver_user_ids: Array.from(e.target.selectedOptions).map((o) => o.value),
-                          })}>
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>{u.username} · {u.role}{u.grade ? ` · ${u.grade}` : ''}</option>
-                    ))}
-                  </select>
-                </label>
+
+                {effectiveType(lvl) === 'role' && (
+                  <label>{t('approvalChain.approverRole')}
+                    <select value={lvl.approver_role ?? ''} onChange={(e) => updateLevel(i, { approver_role: e.target.value })}>
+                      <option value="">—</option>
+                      <option>System Admin</option><option>Security Admin</option><option>Room Admin</option><option>Secretary</option>
+                    </select>
+                  </label>
+                )}
+                {(effectiveType(lvl) === 'user' || effectiveType(lvl) === 'role') && (
+                  <label>{t('approvalChain.minGrade')}
+                    <select value={lvl.min_grade ?? ''} onChange={(e) => updateLevel(i, { min_grade: e.target.value })}>
+                      <option value="">{t('approvalChain.anyGrade')}</option>
+                      {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </label>
+                )}
+                {effectiveType(lvl) === 'user' && (
+                  <label style={{ gridColumn: '1 / -1' }}>
+                    {t('approvalChain.specificApproversCount', { n: (lvl.approver_user_ids ?? []).length })}
+                    <TokenSelect
+                      options={userOptions}
+                      value={lvl.approver_user_ids ?? []}
+                      onChange={(ids) => updateLevel(i, { approver_user_ids: ids })}
+                      placeholder={t('approvalChain.userSearchPlaceholder')}
+                      emptyText={t('approvalChain.userSearchEmpty')}
+                    />
+                  </label>
+                )}
+                {effectiveType(lvl) === 'user' && (lvl.approver_user_ids?.length ?? 0) > 1 && (
+                  <label style={{ gridColumn: '1 / -1' }}>{t('approvalChain.approverMode')}
+                    <select value={lvl.require_all ? 'all' : 'any'}
+                            onChange={(e) => updateLevel(i, { require_all: e.target.value === 'all', parallel: e.target.value !== 'all' })}>
+                      <option value="any">{t('approvalChain.modeAny')}</option>
+                      <option value="all">{t('approvalChain.modeAll')}</option>
+                    </select>
+                  </label>
+                )}
+                {(effectiveType(lvl) === 'manager' || effectiveType(lvl) === 'department_head') && (
+                  <p className="muted text-sm" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                    {effectiveType(lvl) === 'manager' ? t('approvalChain.typeManagerHint') : t('approvalChain.typeDeptHeadHint')}
+                  </p>
+                )}
                 <label>{t('approvalChain.autoApproveAfter')}
                   <input type="number" min={0} value={lvl.auto_after_hours ?? 0}
                          onChange={(e) => updateLevel(i, { auto_after_hours: parseInt(e.target.value || '0', 10) })}/>
-                </label>
-                <label className="row" style={{ alignSelf: 'end' }}>
-                  <input type="checkbox" checked={!!lvl.parallel} onChange={(e) => updateLevel(i, { parallel: e.target.checked })}/>
-                  <span>{t('approvalChain.parallelApprovers')}</span>
                 </label>
               </div>
 

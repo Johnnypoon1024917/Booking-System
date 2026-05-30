@@ -13,6 +13,7 @@ interface Dept {
   name: string;
   code?: string;
   parentId?: string | null;
+  headUserId?: string | null;
 }
 
 interface TreeRow extends Dept {
@@ -37,10 +38,11 @@ export function AdminDepartments() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<Dept[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [editing, setEditing] = useState<Partial<Dept> | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.users().then(setUsers).catch(() => {}); }, []);
   async function load() {
     setLoading(true);
     try { setItems(await api.departments() || []); }
@@ -74,7 +76,8 @@ export function AdminDepartments() {
     if (!editing?.name?.trim()) { toast.warning(t('adminDepartments.nameRequired')); return; }
     setBusy(true);
     try {
-      const payload = { name: editing.name, code: editing.code, parentId: editing.parentId || undefined };
+      // headUserId: '' explicitly clears the head server-side (→ NULL).
+      const payload = { name: editing.name, code: editing.code, parentId: editing.parentId || undefined, headUserId: editing.headUserId || '' };
       if (editing.id) await api.updateDepartment(editing.id, payload);
       else            await api.createDepartment(payload);
       toast.success(t('common.saved'));
@@ -84,9 +87,21 @@ export function AdminDepartments() {
     finally { setBusy(false); }
   }
 
+  // All descendant ids of a node, walked recursively. Used both to hide the
+  // subtree from the parent picker (a node can't be re-parented under its own
+  // child — that creates an A→B→A cycle) and to count orphans before delete.
+  function descendantIds(rootId: string): string[] {
+    const kids = items.filter((i) => i.parentId === rootId).map((i) => i.id);
+    return [...kids, ...kids.flatMap(descendantIds)];
+  }
+
   async function remove() {
     if (!editing?.id) return;
-    if (!(await confirmDialog({ title: t('adminDepartments.deleteConfirm', { name: editing.name }), tone: 'danger', confirmText: t('common.delete'), cancelText: t('common.cancel') }))) return;
+    const orphans = descendantIds(editing.id).length;
+    const title = orphans > 0
+      ? t('adminDepartments.deleteConfirmChildren', { name: editing.name, count: orphans })
+      : t('adminDepartments.deleteConfirm', { name: editing.name });
+    if (!(await confirmDialog({ title, tone: 'danger', confirmText: t('common.delete'), cancelText: t('common.cancel') }))) return;
     setBusy(true);
     try {
       await api.deleteDepartment(editing.id);
@@ -162,8 +177,22 @@ export function AdminDepartments() {
           <label>{t('adminDepartments.parent')}
             <select value={editing.parentId || ''} onChange={(e) => setEditing({ ...editing, parentId: e.target.value || null })}>
               <option value="">{t('adminDepartments.topLevel')}</option>
-              {items.filter((d) => d.id !== editing.id).map((d) =>
-                <option key={d.id} value={d.id}>{d.name}</option>)}
+              {(() => {
+                // Exclude self and the whole descendant subtree so the admin
+                // can't form a circular parent chain (A→B→A).
+                const blocked = new Set(editing.id ? [editing.id, ...descendantIds(editing.id)] : []);
+                return items.filter((d) => !blocked.has(d.id)).map((d) =>
+                  <option key={d.id} value={d.id}>{d.name}</option>);
+              })()}
+            </select>
+          </label>
+          {/* Department head — used by approval rules with approver_type
+              'department_head' (routes to the head of the booked resource's
+              department). */}
+          <label>{t('adminDepartments.head')}
+            <select value={editing.headUserId || ''} onChange={(e) => setEditing({ ...editing, headUserId: e.target.value || null })}>
+              <option value="">{t('adminDepartments.noHead')}</option>
+              {users.map((u) => <option key={u.id} value={u.id}>{u.username}{u.role ? ` — ${u.role}` : ''}</option>)}
             </select>
           </label>
         </Modal>

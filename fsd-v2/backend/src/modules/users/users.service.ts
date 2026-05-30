@@ -4,6 +4,7 @@ import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './user.entity';
 import { Department } from '../departments/department.entity';
+import { normalizeLocale } from '../notifications/notifications.i18n';
 
 export interface UpsertUserDto {
   username: string;
@@ -14,8 +15,21 @@ export interface UpsertUserDto {
   dn?: string;
   grade?: string;
   isActive?: boolean;
+  managerId?: string;
   regionAccess?: string[];
   departmentIds?: string[];
+  // Preferred language for system emails/push. Coerced to a supported
+  // locale on write; defaults to 'en'.
+  locale?: string;
+}
+
+// Normalise an optional FK id from a form: '' / whitespace → null (clear),
+// otherwise the trimmed id. Keeps empty-string from being written as a
+// non-null value that violates the uuid column.
+function fkOrNull(v: string | undefined): string | null | undefined {
+  if (v === undefined) return undefined;       // field absent → leave unchanged
+  const t = v.trim();
+  return t === '' ? null : t;
 }
 
 @Injectable()
@@ -31,6 +45,63 @@ export class UsersService {
       relations: { departments: true },
       order: { username: 'ASC' },
     });
+  }
+
+  // Server-side paginated + searchable directory for AdminUsers. A
+  // government tenant can hold tens of thousands of users; the old
+  // unbounded list froze the browser, so the table now pulls one page at
+  // a time. `search` matches username/email (case-insensitive substring).
+  // We attach each row's manager username so the edit form's manager
+  // typeahead can show the current selection without pulling the whole
+  // directory.
+  async listPaged(
+    tenantId: string,
+    opts: { page: number; pageSize: number; search: string },
+  ) {
+    const { page, pageSize, search } = opts;
+    const qb = this.users.createQueryBuilder('u')
+      .leftJoinAndSelect('u.departments', 'd')
+      .where('u.tenant_id = :tenantId', { tenantId })
+      .orderBy('u.username', 'ASC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+    if (search) {
+      qb.andWhere('(u.username ILIKE :q OR u.email ILIKE :q)', { q: `%${search}%` });
+    }
+    const [items, total] = await qb.getManyAndCount();
+
+    // Resolve manager names for the current page only (≤ pageSize lookups).
+    const mgrIds = [...new Set(items.map((u) => u.managerId).filter(Boolean))] as string[];
+    const mgrMap = new Map<string, string>();
+    if (mgrIds.length) {
+      const mgrs = await this.users.find({ where: { id: In(mgrIds) }, select: ['id', 'username'] });
+      for (const m of mgrs) mgrMap.set(m.id, m.username);
+    }
+
+    return {
+      items: items.map((u) => ({
+        ...u,
+        managerName: u.managerId ? mgrMap.get(u.managerId) ?? null : null,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  // Typeahead directory search — id/username/email/role/grade only, active
+  // users, capped. Backs the delegate picker so the client never has to pull
+  // the entire user directory into a <select> (which freezes on large tenants).
+  search(tenantId: string, q: string, limit = 20) {
+    const cap = Math.min(Math.max(limit, 1), 50);
+    const qb = this.users.createQueryBuilder('u')
+      .select(['u.id', 'u.username', 'u.email', 'u.role', 'u.grade'])
+      .where('u.tenant_id = :tenantId AND u.is_active = true', { tenantId })
+      .orderBy('u.username', 'ASC')
+      .limit(cap);
+    const term = q.trim();
+    if (term) qb.andWhere('(u.username ILIKE :t OR u.email ILIKE :t)', { t: `%${term}%` });
+    return qb.getMany();
   }
 
   async findById(tenantId: string, id: string) {
@@ -67,7 +138,9 @@ export class UsersService {
       dn: dto.dn,
       grade: dto.grade,
       isActive: dto.isActive ?? true,
+      managerId: fkOrNull(dto.managerId) as string | undefined,
       regionAccess: dto.regionAccess ?? [],
+      locale: normalizeLocale(dto.locale),
       departments,
     });
     return this.users.save(u);
@@ -81,7 +154,9 @@ export class UsersService {
     existing.dn = dto.dn ?? existing.dn;
     existing.grade = dto.grade ?? existing.grade;
     if (dto.isActive !== undefined) existing.isActive = dto.isActive;
+    if (dto.managerId !== undefined) existing.managerId = fkOrNull(dto.managerId) as string | undefined;
     if (dto.regionAccess !== undefined) existing.regionAccess = dto.regionAccess;
+    if (dto.locale !== undefined) existing.locale = normalizeLocale(dto.locale);
     if (dto.password) existing.passwordHash = await bcrypt.hash(dto.password, 10);
     if (dto.mustChangePassword !== undefined) existing.mustChangePassword = dto.mustChangePassword;
     if (dto.departmentIds !== undefined) {

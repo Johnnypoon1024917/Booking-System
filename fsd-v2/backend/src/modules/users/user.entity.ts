@@ -21,7 +21,17 @@ export class User {
   @Column({ nullable: true }) dn?: string;
   @Column() role!: string;
   @Column({ nullable: true }) grade?: string;
+  // Preferred language for system communications (emails + push). One of
+  // 'en' | 'zh-Hant' | 'zh-Hans'; see notifications.i18n. Defaults to English
+  // and is coerced to a supported locale at send time, so legacy rows and
+  // unexpected values degrade gracefully.
+  @Column({ type: 'varchar', length: 16, default: 'en' }) locale!: string;
   @Column({ name: 'is_active', default: true }) isActive!: boolean;
+
+  // Line manager — drives dynamic approval routing (approver_type 'manager':
+  // "route to the requester's manager"). Self-referential FK by id, nullable
+  // (top of the org chart / not yet mapped). Maintained via the user admin form.
+  @Column({ name: 'manager_id', type: 'uuid', nullable: true }) managerId?: string;
   // Region access stored as a Postgres text[]. TypeORM serialises a
   // string[] into the array literal automatically.
   @Column({ name: 'region_access', type: 'text', array: true, default: () => "'{}'" })

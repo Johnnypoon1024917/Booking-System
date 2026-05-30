@@ -35,19 +35,30 @@ export class ScimService {
   ) {}
 
   // ----- token admin -----
-  async issue(tenantId: string, name: string) {
+  // Tokens are mandatorily time-boxed (NIST 800-53 IA-5). `expiresInDays`
+  // is clamped to a sane window; callers pick from a fixed UI list but we
+  // re-validate here since this is the security boundary.
+  private static readonly MAX_EXPIRY_DAYS = 365;
+  private static readonly DEFAULT_EXPIRY_DAYS = 90;
+
+  async issue(tenantId: string, name: string, expiresInDays?: number) {
+    const days = Math.min(
+      Math.max(Math.floor(expiresInDays ?? ScimService.DEFAULT_EXPIRY_DAYS), 1),
+      ScimService.MAX_EXPIRY_DAYS,
+    );
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
     const plain = `scim_${randomBytes(24).toString('hex')}`;
     const prefix = plain.slice(0, 12);
     const tokenHash = await bcrypt.hash(plain, 10);
     const t = await this.tokens.save(
-      this.tokens.create({ tenantId, name: name || 'SCIM client', prefix, tokenHash }),
+      this.tokens.create({ tenantId, name: name || 'SCIM client', prefix, tokenHash, expiresAt }),
     );
-    return { id: t.id, name: t.name, prefix: t.prefix, token: plain };
+    return { id: t.id, name: t.name, prefix: t.prefix, token: plain, expiresAt: t.expiresAt };
   }
   list(tenantId: string) {
     return this.tokens.find({
       where: { tenantId },
-      select: ['id', 'name', 'prefix', 'createdAt', 'lastUsedAt', 'active'],
+      select: ['id', 'name', 'prefix', 'createdAt', 'lastUsedAt', 'expiresAt', 'active'],
       order: { createdAt: 'DESC' },
     });
   }
@@ -66,6 +77,11 @@ export class ScimService {
     const candidates = await this.tokens.find({ where: { prefix, active: true } });
     for (const c of candidates) {
       if (await bcrypt.compare(plain, c.tokenHash)) {
+        // Reject expired (or legacy null-expiry) tokens — a matched hash is
+        // not enough once the token's lifetime has lapsed.
+        if (!c.expiresAt || c.expiresAt.getTime() <= Date.now()) {
+          throw new UnauthorizedException('token expired');
+        }
         c.lastUsedAt = new Date();
         await this.tokens.save(c);
         return c.tenantId;

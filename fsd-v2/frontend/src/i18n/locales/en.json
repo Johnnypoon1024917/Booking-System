@@ -20,6 +20,9 @@
   },
   "nav": {
     "dashboard": "Dashboard",
+    "schedule": "Schedule",
+    "newBooking": "New Booking",
+    "settings": "Settings",
     "search": "Find a Room",
     "myBookings": "My Bookings",
     "bookings": "All Bookings",
@@ -284,7 +287,12 @@
     "cancelReason": "Reason for cancelling? (optional)",
     "cancelled": "Booking cancelled",
     "empty": "No bookings yet",
-    "approvalLoadFailed": "Couldn't load approval status — tap to retry"
+    "approvalLoadFailed": "Couldn't load approval status — tap to retry",
+    "endAfterStart": "End time must be after start time.",
+    "recurringCancelTitle": "Cancel recurring booking",
+    "recurringCancelMessage": "This booking is part of a series. Cancel just this occurrence, or the entire series?",
+    "cancelOccurrence": "This occurrence",
+    "cancelSeries": "Entire series"
   },
   "approvals": {
     "title": "Approvals",
@@ -311,7 +319,8 @@
     "delegateApproval": "Delegate approval",
     "delegateHelp": "Reassign the current pending step to another approver. Recorded on the timeline.",
     "delegateTo": "Delegate to",
-    "selectApprover": "Select an approver…",
+    "selectApprover": "Search by name or email…",
+    "noMatches": "No matching users",
     "reasonOptional": "Reason (optional)",
     "approvalFailed": "Approval failed",
     "rejectFailed": "Reject failed",
@@ -336,6 +345,13 @@
     "levels": "Approval levels (in order)",
     "addLevel": "Add level",
     "levelName": "Level name (e.g. Department head)",
+    "approverType": "Approver",
+    "typeUser": "Specific people",
+    "typeRole": "By role",
+    "typeManager": "Requester's manager",
+    "typeDeptHead": "Department head",
+    "typeManagerHint": "Routes to the booking requester's line manager (set on the user's profile) when the booking is created.",
+    "typeDeptHeadHint": "Routes to the head of the booked resource's department (set on the department) when the booking is created.",
     "approverRole": "Required role",
     "minGrade": "Minimum grade",
     "specificApprovers": "Specific approvers (Ctrl/⌘-click for multiple)",
@@ -386,7 +402,17 @@
     "specificApproversCount": "Specific approvers ({{n}} selected)",
     "dependenciesInline": "Dependencies — must complete before this step. Empty = previous step only.",
     "stepN": "Step {{n}}",
-    "defaultLevelName": "Approval"
+    "defaultLevelName": "Approval",
+    "approverMode": "When there are multiple approvers",
+    "modeAny": "Any one approver can approve",
+    "modeAll": "All approvers must approve",
+    "modeAllShort": "all-of",
+    "validateTitle": "Can't save rule",
+    "validateNoApprover": "Step \"{{name}}\" has no approver — assign a role, a minimum grade, or specific people.",
+    "reorderStripWarn": "Reordering will drop a dependency that would point at a later step. Continue?",
+    "reorderConfirm": "Reorder anyway",
+    "userSearchPlaceholder": "Search people by name…",
+    "userSearchEmpty": "No matching people"
   },
   "webhooks": {
     "title": "Webhooks",
@@ -513,6 +539,9 @@
     "saved": "Permissions updated",
     "matrixSubtitle": "Per-role permission matrix. Changes are audited as a warning event.",
     "matrixHelp": "Each tick grants a role one permission key. Role membership is set per-user; permissions are inherited from the role.",
+    "rootLocked": "The System Admin role is the break-glass superuser and cannot be edited.",
+    "conflictTitle": "Changes not saved",
+    "conflictBody": "Someone else edited these permissions while you were working. Your view has been refreshed — please re-apply your changes.",
     "labels": {
       "booking_create": "Create new bookings",
       "booking_cancel": "Cancel own bookings",
@@ -649,7 +678,18 @@
     "activeTokens": "Active tokens",
     "created": "Created",
     "lastUsed": "Last used",
-    "revoke": "Revoke"
+    "revoke": "Revoke",
+    "expiry": "Token expiry",
+    "expiry30": "30 days",
+    "expiry90": "90 days",
+    "expiry180": "180 days",
+    "expiry365": "1 year",
+    "expires": "Expires",
+    "expiresOn": "Expires on {{date}}",
+    "noExpiry": "No expiry",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyToClipboard": "Copy to clipboard"
   },
   "admin": {
     "title": "Tenant Studio",
@@ -975,6 +1015,8 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "done": "Done",
+    "prev": "Previous",
+    "next": "Next",
     "yes": "Yes",
     "no": "No",
     "confirm": "Confirm",
@@ -1074,11 +1116,18 @@
     "password": "Password",
     "passwordKeepHint": "(leave blank to keep)",
     "grade": "Grade",
+    "lineManager": "Line manager",
+    "noManager": "— None —",
     "regionAccess": "Region access",
+    "noRegions": "No regions configured. Add locations with a region to grant scoped access.",
     "noDepartments": "No departments configured yet.",
     "activeAccount": "Active account",
     "initialPassword": "Initial password",
-    "forceReset": "Require password reset on first login"
+    "forceReset": "Require password reset on first login",
+    "searchPlaceholder": "Search by username or email…",
+    "noResults": "No users match your search.",
+    "totalCount": "{{count}} user(s)",
+    "pageOf": "Page {{page}} of {{pages}}"
   },
   "adminDepartments": {
     "title": "Departments",
@@ -1088,6 +1137,7 @@
     "nameRequired": "Name is required",
     "saveFailed": "Save failed",
     "deleteConfirm": "Delete department \"{{name}}\"? This cannot be undone.",
+    "deleteConfirmChildren": "\"{{name}}\" has {{count}} sub-unit(s). Deleting it may orphan them. Continue?",
     "deleted": "Deleted",
     "deleteFailed": "Delete failed",
     "emptyTitle": "No departments yet",
@@ -1098,7 +1148,9 @@
     "name": "Name",
     "code": "Code",
     "parent": "Parent",
-    "topLevel": "— (top level)"
+    "topLevel": "— (top level)",
+    "head": "Department head",
+    "noHead": "— None —"
   },
   "adminResources": {
     "title": "Resources",
@@ -1110,7 +1162,12 @@
     "capacityShort": "Cap.",
     "edit": "Edit",
     "deleteConfirm": "Delete {{name}}?",
-    "deleteFailed": "Delete failed"
+    "deleteFailed": "Delete failed",
+    "searchPlaceholder": "Search by name, location or region…",
+    "countLabel": "Showing {{shown}} of {{total}}",
+    "pageLabel": "Page {{page}} of {{pages}}",
+    "noMatches": "No resources match your search.",
+    "empty": "No resources yet."
   },
   "adminResourceTypes": {
     "title": "Resource Types",
@@ -1158,9 +1215,11 @@
     "filterBy": "Filter by",
     "locations": "Locations",
     "approvers": "Approvers",
-    "locationsCsv": "Locations (comma-separated)",
-    "approversCsv": "Approvers (emails, comma-separated)",
-    "memberIdsCsv": "Member IDs (comma-separated)",
+    "members": "Members",
+    "locationsPlaceholder": "Search and add locations…",
+    "usersPlaceholder": "Search and add users…",
+    "noLocations": "No matching locations",
+    "noUsers": "No matching users",
     "edit": "Edit",
     "saveFailed": "Save failed",
     "confirmDelete": "Delete {{name}}?"
@@ -1319,7 +1378,10 @@
     "confirmDelete": "Delete holiday \"{{name}}\"?",
     "editTitle": "Edit holiday",
     "addTitle": "Add holiday",
-    "blockNew": "Block new bookings on this date"
+    "blockNew": "Block new bookings on this date",
+    "colAppliesTo": "Applies to",
+    "tenantWide": "All regions (tenant-wide)",
+    "appliesToHelp": "Limit this closure to one region's resources, or leave as all regions to block the whole tenant."
   },
   "adminBookings": {
     "title": "All Bookings",

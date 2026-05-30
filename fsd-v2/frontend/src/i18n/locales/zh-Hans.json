@@ -20,6 +20,9 @@
   },
   "nav": {
     "dashboard": "概览",
+    "schedule": "日程",
+    "newBooking": "新建预约",
+    "settings": "设置",
     "search": "搜索房间",
     "myBookings": "我的预约",
     "bookings": "所有预约",
@@ -284,7 +287,12 @@
     "cancelReason": "取消原因？（可选）",
     "cancelled": "预约已取消",
     "empty": "尚无预约",
-    "approvalLoadFailed": "无法加载审批状态 — 点击重试"
+    "approvalLoadFailed": "无法加载审批状态 — 点击重试",
+    "endAfterStart": "结束时间必须晚于开始时间。",
+    "recurringCancelTitle": "取消周期性预约",
+    "recurringCancelMessage": "此预约属于一个系列。要仅取消此次，还是取消整个系列？",
+    "cancelOccurrence": "仅此次",
+    "cancelSeries": "整个系列"
   },
   "approvals": {
     "title": "审批",
@@ -311,7 +319,8 @@
     "delegateApproval": "委派审批",
     "delegateHelp": "将当前待处理步骤重新分配给另一位审批人。会记录在时间线上。",
     "delegateTo": "委派给",
-    "selectApprover": "选择审批人…",
+    "selectApprover": "按姓名或邮箱搜索…",
+    "noMatches": "没有匹配的用户",
     "reasonOptional": "原因（可选）",
     "approvalFailed": "审批失败",
     "rejectFailed": "拒绝失败",
@@ -336,6 +345,13 @@
     "levels": "审批层级（按顺序）",
     "addLevel": "新增层级",
     "levelName": "层级名称（例如：部门主管）",
+    "approverType": "审批人",
+    "typeUser": "指定人员",
+    "typeRole": "按角色",
+    "typeManager": "申请人的主管",
+    "typeDeptHead": "部门主管",
+    "typeManagerHint": "创建预约时，自动路由至申请人的直属主管（在用户资料中设置）。",
+    "typeDeptHeadHint": "创建预约时，自动路由至所预约资源所属部门的主管（在部门中设置）。",
     "approverRole": "所需角色",
     "minGrade": "最低职级",
     "specificApprovers": "指定审批人（按 Ctrl/⌘ 多选）",
@@ -386,7 +402,17 @@
     "specificApproversCount": "指定审批人（已选 {{n}} 个）",
     "dependenciesInline": "依赖项 — 必须在此步骤之前完成。留空 = 仅依赖上一步骤。",
     "stepN": "步骤 {{n}}",
-    "defaultLevelName": "审批"
+    "defaultLevelName": "审批",
+    "approverMode": "当存在多名审批人时",
+    "modeAny": "任一审批人批准即可",
+    "modeAll": "所有审批人都必须批准",
+    "modeAllShort": "需全部",
+    "validateTitle": "无法保存规则",
+    "validateNoApprover": "步骤“{{name}}”没有指定审批人——请指定角色、最低职级或具体人员。",
+    "reorderStripWarn": "重新排序将移除指向后续步骤的依赖关系。是否继续？",
+    "reorderConfirm": "仍然重新排序",
+    "userSearchPlaceholder": "按姓名搜索人员…",
+    "userSearchEmpty": "没有匹配的人员"
   },
   "webhooks": {
     "title": "Webhook",
@@ -513,6 +539,9 @@
     "saved": "权限已更新",
     "matrixSubtitle": "按角色划分的权限矩阵。变更将作为警告事件记入审计。",
     "matrixHelp": "每个勾选项授予某角色一个权限项。角色成员资格按用户设置；权限从角色继承。",
+    "rootLocked": "系统管理员是应急超级用户角色，不可编辑。",
+    "conflictTitle": "未能保存更改",
+    "conflictBody": "在您操作期间，他人已修改了这些权限。视图已刷新，请重新应用您的更改。",
     "labels": {
       "booking_create": "创建新预订",
       "booking_cancel": "取消自己的预订",
@@ -649,7 +678,18 @@
     "activeTokens": "活动令牌",
     "created": "创建时间",
     "lastUsed": "最近使用",
-    "revoke": "撤销"
+    "revoke": "撤销",
+    "expiry": "令牌有效期",
+    "expiry30": "30 天",
+    "expiry90": "90 天",
+    "expiry180": "180 天",
+    "expiry365": "1 年",
+    "expires": "到期",
+    "expiresOn": "到期日：{{date}}",
+    "noExpiry": "无有效期",
+    "copy": "复制",
+    "copied": "已复制",
+    "copyToClipboard": "复制到剪贴板"
   },
   "admin": {
     "title": "租户设置",
@@ -975,6 +1015,8 @@
     "cancel": "取消",
     "delete": "删除",
     "done": "完成",
+    "prev": "上一页",
+    "next": "下一页",
     "yes": "是",
     "no": "否",
     "confirm": "确认",
@@ -1074,11 +1116,18 @@
     "password": "密码",
     "passwordKeepHint": "（留空则保持不变）",
     "grade": "职级",
+    "lineManager": "直属主管",
+    "noManager": "— 无 —",
     "regionAccess": "区域权限",
+    "noRegions": "尚未配置区域。请先添加带区域的地点以授予范围访问权限。",
     "noDepartments": "尚未配置任何部门。",
     "activeAccount": "启用账户",
     "initialPassword": "初始密码",
-    "forceReset": "首次登录时强制重设密码"
+    "forceReset": "首次登录时强制重设密码",
+    "searchPlaceholder": "按用户名或邮箱搜索…",
+    "noResults": "没有符合搜索条件的用户。",
+    "totalCount": "共 {{count}} 个用户",
+    "pageOf": "第 {{page}} / {{pages}} 页"
   },
   "adminDepartments": {
     "title": "部门",
@@ -1088,6 +1137,7 @@
     "nameRequired": "名称为必填项",
     "saveFailed": "保存失败",
     "deleteConfirm": "删除部门“{{name}}”？此操作无法撤销。",
+    "deleteConfirmChildren": "“{{name}}”有 {{count}} 个下属单位。删除后它们可能成为孤立项。是否继续？",
     "deleted": "已删除",
     "deleteFailed": "删除失败",
     "emptyTitle": "暂无部门",
@@ -1098,7 +1148,9 @@
     "name": "名称",
     "code": "代码",
     "parent": "上级部门",
-    "topLevel": "—（顶层）"
+    "topLevel": "—（顶层）",
+    "head": "部门主管",
+    "noHead": "— 无 —"
   },
   "adminResources": {
     "title": "资源",
@@ -1110,7 +1162,12 @@
     "capacityShort": "容量",
     "edit": "编辑",
     "deleteConfirm": "删除 {{name}}？",
-    "deleteFailed": "删除失败"
+    "deleteFailed": "删除失败",
+    "searchPlaceholder": "按名称、位置或区域搜索…",
+    "countLabel": "显示 {{shown}} / {{total}}",
+    "pageLabel": "第 {{page}} / {{pages}} 页",
+    "noMatches": "没有符合搜索条件的资源。",
+    "empty": "尚无资源。"
   },
   "adminResourceTypes": {
     "title": "资源类型",
@@ -1158,9 +1215,11 @@
     "filterBy": "筛选方式",
     "locations": "地点",
     "approvers": "审批人",
-    "locationsCsv": "地点（以逗号分隔）",
-    "approversCsv": "审批人（电子邮件，以逗号分隔）",
-    "memberIdsCsv": "成员 ID（以逗号分隔）",
+    "members": "成员",
+    "locationsPlaceholder": "搜索并添加地点…",
+    "usersPlaceholder": "搜索并添加用户…",
+    "noLocations": "没有匹配的地点",
+    "noUsers": "没有匹配的用户",
     "edit": "编辑",
     "saveFailed": "保存失败",
     "confirmDelete": "删除 {{name}}？"
@@ -1319,7 +1378,10 @@
     "confirmDelete": "删除假期“{{name}}”？",
     "editTitle": "编辑假期",
     "addTitle": "添加假期",
-    "blockNew": "禁止在此日期进行新预订"
+    "blockNew": "禁止在此日期进行新预订",
+    "colAppliesTo": "适用范围",
+    "tenantWide": "所有地区（全租户）",
+    "appliesToHelp": "可将此停用限定于某个地区的资源，或保留为所有地区以封锁整个租户。"
   },
   "adminBookings": {
     "title": "所有预订",

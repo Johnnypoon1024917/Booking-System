@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
@@ -8,6 +8,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApprovalsService } from './approvals.service';
+import { UsersService } from '../users/users.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AuditService } from '../audit/audit.service';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
@@ -25,12 +26,14 @@ class DelegateDto {
 
 class LevelDto implements ApprovalLevel {
   @IsString() name!: string;
+  @IsOptional() @IsIn(['user', 'role', 'manager', 'department_head']) approver_type?: ApprovalLevel['approver_type'];
   @IsOptional() @IsArray() @IsString({ each: true }) approver_user_ids?: string[];
   @IsOptional() @IsString() approver_role?: string;
   @IsOptional() @IsString() min_grade?: string;
   @IsOptional() @IsInt() @Min(0) auto_after_hours?: number;
   @IsOptional() @IsArray() @IsInt({ each: true }) dependencies?: number[];
   @IsOptional() @IsBoolean() parallel?: boolean;
+  @IsOptional() @IsBoolean() require_all?: boolean;
 }
 class RuleDto {
   @IsString() name!: string;
@@ -47,12 +50,23 @@ class RuleDto {
 @ApiBearerAuth()
 @Controller('approvals')
 export class ApprovalsController {
-  constructor(private readonly svc: ApprovalsService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly svc: ApprovalsService,
+    private readonly users: UsersService,
+    private readonly audit: AuditService,
+  ) {}
 
   // Inbox: bookings the current user can act on.
   @Get()
   list(@CurrentUser() u: AuthUser) {
     return this.svc.listPendingForApprover(u);
+  }
+
+  // Typeahead directory for the delegate picker — avoids shipping the whole
+  // user list to the client. Available to any authenticated approver.
+  @Get('users/search')
+  searchUsers(@CurrentUser() u: AuthUser, @Query('q') q?: string) {
+    return this.users.search(u.tenantId, q ?? '');
   }
 
   @Get(':bookingId/chain')

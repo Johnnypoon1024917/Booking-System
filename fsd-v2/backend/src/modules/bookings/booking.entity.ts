@@ -47,6 +47,12 @@ export class Booking {
   @Column({ name: 'cost_center_code', type: 'varchar', length: 64, nullable: true })
   costCenterCode?: string | null;
 
+  // Legacy (single-level) approval hand-off. When an approver delegates a
+  // booking that has no materialized chain, the target approver's id lands
+  // here so the delegate can act on it and it surfaces in their inbox.
+  // Null for the common case (chain-based or undelegated bookings).
+  @Column({ name: 'delegated_to', type: 'uuid', nullable: true }) delegatedTo?: string;
+
   @Column({ name: 'is_private', default: false }) isPrivate!: boolean;
   @Column({ name: 'is_recurring', default: false }) isRecurring!: boolean;
   @Column({ name: 'recurrence_id', type: 'uuid', nullable: true }) recurrenceId?: string;

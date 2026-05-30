@@ -77,6 +77,12 @@ export class Resource {
   @Column({ name: 'cost_center_code', type: 'varchar', nullable: true })
   costCenterCode?: string | null;
 
+  // Microsoft 365 / Exchange room mailbox this resource maps to (e.g.
+  // boardroomA@company.com). Required by Graph two-way sync when the tenant
+  // has Outlook sync enabled; null when the integration is off or unmapped.
+  @Column({ name: 'exchange_mailbox', type: 'varchar', nullable: true })
+  exchangeMailbox?: string | null;
+
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }

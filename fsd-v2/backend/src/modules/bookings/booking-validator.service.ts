@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Holiday } from '../holidays/holiday.entity';
 import { CustomizationService } from '../customization/customization.service';
 import { utcToZonedWallClock } from '../../common/tz';
@@ -45,6 +45,11 @@ export class BookingValidatorService {
       maxDurationMinutes?: number;
       bookingHorizonDays?: number;
     } | null,
+    // Region of the booked resource. A holiday blocks the booking when it is
+    // tenant-wide (region '') OR scoped to this resource's region. Pass
+    // null/undefined for a resource with no region — only tenant-wide
+    // closures apply then.
+    resourceRegion?: string | null,
   ): Promise<void> {
     if (!(end > start)) throw new BadRequestException('end must be after start');
 
@@ -79,8 +84,11 @@ export class BookingValidatorService {
     if (blackout.includes(local.dateStr)) {
       throw new BadRequestException('selected date is a blackout / closed day');
     }
+    // Tenant-wide ('') plus this resource's region (if any). A row scoped to
+    // a different region does not block this booking.
+    const regions = resourceRegion ? ['', resourceRegion] : [''];
     const holiday = await this.holidays.findOne({
-      where: { tenantId, holidayDate: local.dateStr, isBlocker: true },
+      where: { tenantId, holidayDate: local.dateStr, isBlocker: true, region: In(regions) },
     });
     if (holiday) {
       throw new BadRequestException(`selected date is a closed holiday (${holiday.name || 'holiday'})`);

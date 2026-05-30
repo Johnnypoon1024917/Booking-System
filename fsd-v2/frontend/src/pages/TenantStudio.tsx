@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Palette, Languages, LayoutGrid, GitBranch, ListChecks, Plug, CalendarDays,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
+import { confirmDialog } from '../stores/confirm';
 import { Switch } from '../components/Switch';
 
 // Tenant Studio — full port of v1's Admin.vue: 7 tabs (branding, locale,
@@ -43,6 +44,20 @@ function withFieldIds(d: any): any {
   return { ...d, custom_fields: d.custom_fields.map((f: any) => (f._id ? f : { ...f, _id: fieldId() })) };
 }
 
+// The native <input type="color"> only accepts a strict 6-digit hex; anything
+// else snaps it to its fallback, desyncing it from the text twin ("tug-of-war").
+// Expand a 3-digit shorthand (#abc → #aabbcc) and pass through a valid 6-digit
+// value so what the admin types is what the swatch shows. Returns '' when the
+// text isn't yet a parseable hex, so the caller can apply its own fallback.
+function normalizeHex(v: string): string {
+  const s = (v || '').trim();
+  const m3 = /^#?([0-9a-fA-F]{3})$/.exec(s);
+  if (m3) { const [r, g, b] = m3[1].split(''); return `#${r}${r}${g}${g}${b}${b}`.toLowerCase(); }
+  const m6 = /^#?([0-9a-fA-F]{6})$/.exec(s);
+  if (m6) return `#${m6[1]}`.toLowerCase();
+  return '';
+}
+
 export function TenantStudio() {
   const toast = useToast();
   const [c, setC] = useState<any | null>(null);
@@ -53,13 +68,16 @@ export function TenantStudio() {
   // Holiday list shown inside the Holidays tab — loaded lazily the first time
   // the tab is opened (and refreshed after a sync).
   const [holidays, setHolidays] = useState<any[] | null>(null);
+  // Distinct resource regions, for the gov.hk holiday-scope picker. Regions are
+  // free-form on resources (no enum), so the options come from what's in use.
+  const [regions, setRegions] = useState<string[]>([]);
 
   useEffect(() => {
     api.customization().then((d) => { const wf = withFieldIds(d); setC(wf); setBaseline(JSON.stringify(wf)); });
   }, []);
 
   useEffect(() => {
-    if (tab === 'holidays' && holidays === null) loadHolidays();
+    if (tab === 'holidays' && holidays === null) { loadHolidays(); loadRegions(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -67,6 +85,13 @@ export function TenantStudio() {
     setHolidays(null); // show the loading state instead of flickering stale rows
     try { setHolidays(await api.listHolidays()); }
     catch { setHolidays([]); }
+  }
+
+  async function loadRegions() {
+    try {
+      const res: Array<{ region?: string }> = await api.adminResources();
+      setRegions([...new Set(res.map((r) => r.region).filter((r): r is string => !!r))].sort());
+    } catch { /* leave empty — picker shows the "no regions" hint */ }
   }
 
   if (!c) return <p className="muted">Loading…</p>;
@@ -101,16 +126,38 @@ export function TenantStudio() {
       const cleaned = { ...c,
         custom_fields: (c.custom_fields || []).map(({ _id, ...f }: any) =>
           f.type === 'select' ? { ...f, options: (f.options || []).filter((o: string) => o.trim()) } : f),
-        // Trim + de-dupe + drop blank cost-center codes so the configured
-        // allow-list the booking flow validates against stays clean.
-        cost_centers: [...new Set((c.cost_centers || []).map((s: string) => (s || '').trim()).filter(Boolean))],
+        // Split on commas AND newlines (admins paste "FIN-001, MKT-204"), then
+        // trim + de-dupe + drop blanks so the allow-list the booking flow
+        // validates against never holds a single mega-code.
+        cost_centers: [...new Set((c.cost_centers || [])
+          .flatMap((s: string) => String(s ?? '').split(/[\n,]+/))
+          .map((s: string) => s.trim())
+          .filter(Boolean))],
       };
       const saved = await api.saveCustomization(cleaned);
       const wf = withFieldIds(saved);
       setC(wf); setBaseline(JSON.stringify(wf));
       toast.success('Customization saved');
-    } catch (e: any) { toast.error('Save failed', e.displayMessage || e.message); }
-    finally { setBusy(false); }
+    } catch (e: any) {
+      // Optimistic-concurrency clash: another admin saved since we loaded. Don't
+      // silently overwrite their work — offer to reload the latest (discarding
+      // local edits) or keep editing so the admin can copy their changes out.
+      if (e?.response?.status === 409) {
+        const reload = await confirmDialog({
+          title: 'Settings changed elsewhere',
+          message: 'Another administrator saved changes since you opened this page. Reload the latest settings? Your unsaved changes here will be lost.',
+          confirmText: 'Reload latest',
+          cancelText: 'Keep editing',
+          tone: 'danger',
+        });
+        if (reload) {
+          const d = await api.customization();
+          const wf = withFieldIds(d); setC(wf); setBaseline(JSON.stringify(wf));
+        }
+        return;
+      }
+      toast.error('Save failed', e.displayMessage || e.message);
+    } finally { setBusy(false); }
   }
   function reset() { setC(JSON.parse(baseline)); }
   async function syncHolidays() {
@@ -132,6 +179,186 @@ export function TenantStudio() {
     set('custom_fields', arr('custom_fields').map((f, idx) => idx === i ? { ...f, ...patch } : f));
   }
   function removeField(i: number) { set('custom_fields', arr('custom_fields').filter((_, idx) => idx !== i)); }
+
+  // ---- Live preview ---------------------------------------------------------
+  // The preview is tab-aware (Shopify / Okta admin style): it renders whatever
+  // the admin is currently editing so they see the effect, not just a static
+  // mock. Brand colors run through the same hex expander the picker uses so an
+  // in-progress invalid value can't blow up the preview backgrounds.
+  const pColor = normalizeHex(c.brand_primary) || '#002147';
+  const sColor = normalizeHex(c.brand_secondary) || '#475569';
+  const aColor = normalizeHex(c.brand_accent) || '#f59e0b';
+  const locale: string = c.default_locale || 'en';
+  const localeLabel = (l: string) => (l === 'zh-Hant' ? '繁體中文' : l === 'zh-Hans' ? '简体中文' : 'English');
+  const fmtDur = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
+  const fieldLabel = (f: any) => f.label?.[locale] || f.label?.en || f.key || 'Field';
+  const badge: CSSProperties = { padding: '3px 8px', borderRadius: 999, background: 'var(--surface-inset)', border: '1px solid var(--border)', fontSize: 11 };
+
+  function renderPreviewBody() {
+    switch (tab) {
+      case 'branding':
+        return (
+          <>
+            <div className="preview-card" style={{ borderLeft: `3px solid ${pColor}` }}>
+              <small>BOARDROOM A</small>
+              <h4 style={{ margin: '2px 0 8px' }}>09:00 – 10:00</h4>
+              <div style={{ marginBottom: 8 }}>
+                <span style={{ background: aColor, color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12 }}>Requires approval</span>
+              </div>
+              <div className="row gap-sm">
+                <button style={{ background: pColor, color: '#fff' }}>Reserve</button>
+                <button style={{ background: 'transparent', color: sColor, border: `1px solid ${sColor}` }}>Details</button>
+              </div>
+            </div>
+            <div className="row gap-sm" style={{ justifyContent: 'space-around' }}>
+              {([['Primary', pColor], ['Secondary', sColor], ['Accent', aColor]] as const).map(([label, col]) => (
+                <div key={label} style={{ textAlign: 'center' }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 8, background: col, border: '1px solid rgba(0,0,0,0.1)', margin: '0 auto' }} />
+                  <small className="muted">{label}</small>
+                </div>
+              ))}
+            </div>
+          </>
+        );
+
+      case 'locale': {
+        let sample = '';
+        try {
+          sample = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: c.timezone || 'UTC' }).format(new Date());
+        } catch { sample = ''; }
+        return (
+          <div className="preview-card">
+            <small className="muted">Default locale</small>
+            <h4 style={{ margin: '2px 0 8px' }}>{localeLabel(locale)}</h4>
+            <div className="row gap-sm" style={{ flexWrap: 'wrap' }}>
+              {(c.available_locales || []).map((l: string) => (
+                <span key={l} style={{ ...badge, ...(l === locale ? { background: pColor, color: '#fff', borderColor: pColor } : {}) }}>{localeLabel(l)}</span>
+              ))}
+            </div>
+            {sample && <small className="muted" style={{ display: 'block', marginTop: 10 }}>{sample} · {c.timezone || 'UTC'}</small>}
+          </div>
+        );
+      }
+
+      case 'layout': {
+        const widgets = arr('dashboard_widgets').filter((w: string) => w !== 'none');
+        const widgetsHidden = arr('dashboard_widgets').includes('none');
+        return (
+          <div className="preview-card">
+            <small className="muted">Sidebar</small>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, margin: '6px 0 12px' }}>
+              {arr('sidebar_modules').length === 0
+                ? <span className="muted small">No modules visible</span>
+                : arr('sidebar_modules').map((m: string) => (
+                    <div key={m} style={{ padding: '4px 8px', borderRadius: 6, background: 'var(--surface-inset)', fontSize: 13 }}>{m}</div>
+                  ))}
+            </div>
+            <small className="muted">Dashboard widgets</small>
+            <div className="row gap-sm" style={{ flexWrap: 'wrap', marginTop: 6 }}>
+              {widgetsHidden ? <span className="muted small">All widgets hidden</span>
+                : widgets.length === 0 ? <span className="muted small">All widgets shown (default)</span>
+                : widgets.map((w: string) => <span key={w} style={badge}>{w}</span>)}
+            </div>
+          </div>
+        );
+      }
+
+      case 'workflow': {
+        const minD = c.min_duration_minutes ?? 15;
+        const maxD = c.max_duration_minutes ?? 480;
+        const stepD = Math.max(5, minD);
+        const durations: number[] = [];
+        for (let d = minD; d <= maxD && durations.length < 16; d += stepD) durations.push(d);
+        const startH = c.calendar_start_hour ?? 8;
+        const endH = c.calendar_end_hour ?? 20;
+        const startTimes: string[] = [];
+        for (let h = startH; h <= endH && startTimes.length < 24; h++) startTimes.push(`${String(h).padStart(2, '0')}:00`);
+        return (
+          <div className="preview-card">
+            <small className="muted">New booking</small>
+            {/* Mock dropdowns constrained by the live min/max duration + calendar
+                hours so the admin sees exactly what bookers will be offered. */}
+            <label className="field" style={{ marginTop: 6 }}><span>Start time</span>
+              <select defaultValue={startTimes[0]}>{startTimes.map((tm) => <option key={tm}>{tm}</option>)}</select>
+            </label>
+            <label className="field" style={{ marginTop: 8 }}><span>Duration</span>
+              <select defaultValue={durations[0]}>{durations.map((d) => <option key={d} value={d}>{fmtDur(d)}</option>)}</select>
+            </label>
+            <div className="row gap-sm" style={{ flexWrap: 'wrap', marginTop: 10 }}>
+              <span style={badge}>Horizon {c.booking_horizon_days ?? 180}d</span>
+              <span style={badge}>Approval {c.approval_window_hours ?? 24}h</span>
+              {!!c.weekend_require_approval && <span style={badge}>Weekend → approval</span>}
+              {!!c.holiday_blocking && <span style={badge}>Holidays blocked</span>}
+            </div>
+            <small className="muted" style={{ display: 'block', marginTop: 8 }}>
+              Duration {fmtDur(minD)}–{fmtDur(maxD)} · hours {String(startH).padStart(2, '0')}:00–{String(endH).padStart(2, '0')}:00
+            </small>
+          </div>
+        );
+      }
+
+      case 'fields': {
+        const fields = arr('custom_fields');
+        return (
+          <div className="preview-card">
+            <small className="muted">Booking form fields</small>
+            {fields.length === 0
+              ? <p className="muted small" style={{ marginTop: 6 }}>No custom fields yet — add some to see the form grow.</p>
+              : fields.map((f: any) => {
+                  const lbl = `${fieldLabel(f)}${f.required ? ' *' : ''}`;
+                  if (f.type === 'checkbox') {
+                    return (
+                      <label key={f._id} className="toggle" style={{ marginTop: 10 }}>
+                        <input type="checkbox" /> <span>{lbl}</span>
+                      </label>
+                    );
+                  }
+                  return (
+                    <label key={f._id} className="field" style={{ marginTop: 10 }}><span>{lbl}</span>
+                      {f.type === 'select'
+                        ? <select defaultValue=""><option value="">Choose…</option>{(f.options || []).filter((o: string) => o.trim()).map((o: string) => <option key={o}>{o}</option>)}</select>
+                        : <input type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'} placeholder={f.key} />}
+                    </label>
+                  );
+                })}
+          </div>
+        );
+      }
+
+      case 'integrations': {
+        const on = [
+          ['HKO weather', c.hko_weather_enabled],
+          ['gov.hk holidays', c.govhk_holidays_enabled],
+          ['Outlook sync', c.outlook_sync_enabled],
+          ['Teams app', c.teams_app_enabled],
+          ['Zoom', c.zoom_enabled],
+        ].filter(([, en]) => !!en) as [string, boolean][];
+        return (
+          <div className="preview-card">
+            <small className="muted">Active integrations</small>
+            <div className="row gap-sm" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+              {on.length === 0 ? <span className="muted small">None enabled</span>
+                : on.map(([label]) => <span key={label} style={{ ...badge, background: pColor, color: '#fff', borderColor: pColor }}>{label}</span>)}
+            </div>
+          </div>
+        );
+      }
+
+      case 'holidays':
+        return (
+          <div className="preview-card">
+            <small className="muted">Holidays</small>
+            <p className="small" style={{ marginTop: 6 }}>
+              {holidays === null ? 'Loading…' : `${holidays.length} configured`}
+              {c.holiday_blocking ? ' · bookings blocked on blocker dates' : ''}
+            </p>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  }
 
   return (
     <div>
@@ -171,8 +398,10 @@ export function TenantStudio() {
                     <div className="row gap-sm">
                       {/* The native color input silently breaks (and desyncs from
                           the text twin) on any value that isn't a strict 6-digit
-                          hex, so feed it a safe fallback until the text is valid. */}
-                      <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(c[k] || '') ? c[k] : '#002147'} onChange={(e) => set(k, e.target.value)} />
+                          hex. Expand 3-digit shorthand (#abc) and normalise valid
+                          input so #fff shows as white instead of snapping to the
+                          fallback; only fall back when the text is unparseable. */}
+                      <input type="color" value={normalizeHex(c[k]) || '#002147'} onChange={(e) => set(k, e.target.value)} />
                       <input type="text" value={c[k] || ''} maxLength={7} placeholder="#002147"
                         onChange={(e) => {
                           // Keep the leading # so the two controls stay bound.
@@ -382,7 +611,7 @@ export function TenantStudio() {
             <section className="card">
               {[
                 { icon: CloudRain, key: 'hko_weather_enabled', title: 'HKO weather', help: 'Show the live Hong Kong Observatory signal on the dashboard.' },
-                { icon: Calendar, key: 'gov_hk_holiday_feed', title: 'gov.hk holidays', help: 'Auto-import Hong Kong public holidays nightly.' },
+                { icon: Calendar, key: 'govhk_holidays_enabled', title: 'gov.hk holidays', help: 'Auto-import Hong Kong public holidays nightly.' },
                 { icon: Mail, key: 'outlook_sync_enabled', title: 'Outlook sync', help: 'Microsoft Graph two-way sync to room mailboxes.' },
                 { icon: MessageSquare, key: 'teams_app_enabled', title: 'Teams app', help: 'Book and manage rooms from inside Microsoft Teams.' },
                 { icon: Video, key: 'zoom_enabled', title: 'Zoom', help: 'Mask Zoom join links through a redirect gateway.' },
@@ -413,6 +642,29 @@ export function TenantStudio() {
                 <Link className="btn-fsd ghost" to="/admin/holidays"><Plus size={14} /> Add manually</Link>
               </div>
 
+              {/* gov.hk scope. The feed is Hong Kong public holidays; on a
+                  multi-region tenant (e.g. HK + Singapore) limit it to the HK
+                  regions so it doesn't close offices elsewhere. None selected =
+                  tenant-wide. Used by both this Sync button and the nightly cron. */}
+              <div style={{ marginTop: 18 }}>
+                <label className="field"><span>gov.hk holiday scope</span></label>
+                <p className="muted text-sm">Regions that Hong Kong public holidays close. None selected applies tenant-wide (every resource).</p>
+                {regions.length === 0 ? (
+                  <p className="muted text-sm" style={{ marginTop: 6 }}>No resource regions defined yet — holidays apply tenant-wide.</p>
+                ) : (
+                  <div className="row gap-sm" style={{ flexWrap: 'wrap', marginTop: 6 }}>
+                    {regions.map((r) => (
+                      <label key={r} className="row gap-xs" style={{ alignItems: 'center' }}>
+                        <input type="checkbox" checked={arr('govhk_holiday_regions').includes(r)}
+                               onChange={() => toggleIn('govhk_holiday_regions', r)} />
+                        {r}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="muted text-sm" style={{ marginTop: 6 }}>Save settings before syncing for a changed scope to take effect.</p>
+              </div>
+
               {/* The configured holidays, mirrored from the dedicated admin page
                   so this tab shows what's actually in effect — not just the
                   sync controls. Manage (edit/delete) still lives on /admin/holidays. */}
@@ -422,13 +674,14 @@ export function TenantStudio() {
                 <p className="muted text-sm" style={{ marginTop: 14 }}>No holidays configured yet.</p>
               ) : (
                 <table className="data" style={{ marginTop: 14 }}>
-                  <thead><tr><th>Date</th><th>Name</th><th>Scope</th><th>Blocks bookings?</th></tr></thead>
+                  <thead><tr><th>Date</th><th>Name</th><th>Scope</th><th>Applies to</th><th>Blocks bookings?</th></tr></thead>
                   <tbody>
                     {holidays.map((h) => (
-                      <tr key={h.id || h.holidayDate}>
+                      <tr key={h.id || `${h.holidayDate}-${h.region || ''}`}>
                         <td>{h.holidayDate}</td>
                         <td>{h.name || <span className="muted">—</span>}</td>
                         <td className="small muted">{h.scope || 'manual'}</td>
+                        <td className="small">{h.region || <span className="muted">All regions</span>}</td>
                         <td>{h.isBlocker ? 'Yes' : 'No'}</td>
                       </tr>
                     ))}
@@ -442,14 +695,18 @@ export function TenantStudio() {
         <aside className="preview">
           <div className="muted small"><Eye size={13} /> LIVE PREVIEW {dirty && <span className="preview-dirty">● unsaved</span>}</div>
           <div className="preview-window">
-            <div className="preview-bar" style={{ background: c.brand_primary, color: '#fff' }}>
+            {/* Brand bar reflects branding + locale on every tab. Fallbacks so a
+                freshly-created tenant that hasn't saved a locale/timezone yet
+                doesn't render the literal "UNDEFINED". Color runs through the hex
+                expander so a half-typed value doesn't break the bar. */}
+            <div className="preview-bar" style={{ background: pColor, color: '#fff' }}>
               <strong>{c.brand_name || 'FSD MRBS'}</strong>
-              <small style={{ marginLeft: 8, opacity: 0.7 }}>{c.timezone} · {String(c.default_locale).toUpperCase()}</small>
+              <small style={{ marginLeft: 8, opacity: 0.7 }}>{c.timezone || 'UTC'} · {(c.default_locale || 'en').toUpperCase()}</small>
             </div>
-            <div className="preview-card" style={{ borderLeft: `3px solid ${c.brand_primary}` }}>
-              <small>BOARDROOM A</small>
-              <h4>09:00 – 10:00</h4>
-              <button style={{ background: c.brand_primary, color: '#fff' }}>Reserve</button>
+            {/* Tab-aware body: shows whatever the admin is editing. Scrolls so a
+                long custom-field form doesn't push the page. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 440, overflowY: 'auto' }}>
+              {renderPreviewBody()}
             </div>
           </div>
         </aside>
