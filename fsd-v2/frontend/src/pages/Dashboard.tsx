@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart3, PieChart, CheckCircle2, Calendar, Clock, CloudSun } from 'lucide-react';
+import { BarChart3, PieChart, CheckCircle2, Calendar, Clock, CloudSun, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api/client';
 import { Skeleton } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
 import { useTenant } from '../stores/tenant';
+import { useToast } from '../stores/toast';
 import { useRealtime } from '../hooks/useRealtime';
 import { useT } from '../hooks/useT';
 
@@ -14,19 +15,24 @@ import { useT } from '../hooks/useT';
 function pad2(n: number) { return String(n).padStart(2, '0'); }
 function iso(d: Date) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
 
-function rangePeriod(range: string) {
+// `offset` shifts the window by whole periods relative to now: 0 = current,
+// -1 = previous week/month/quarter, +1 = next. Lets a manager review last
+// month's utilisation or last quarter's no-shows instead of being pinned to
+// the current period (QA #5). Date() math rolls month/quarter underflow into
+// the previous year automatically.
+function rangePeriod(range: string, offset = 0) {
   const now = new Date();
   if (range === 'week') {
-    const s = new Date(now); s.setDate(now.getDate() - now.getDay());
+    const s = new Date(now); s.setDate(now.getDate() - now.getDay() + offset * 7);
     const e = new Date(s);   e.setDate(s.getDate() + 6);
     return { start: iso(s), end: iso(e) };
   }
   if (range === 'month') {
-    const s = new Date(now.getFullYear(), now.getMonth(), 1);
-    const e = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const s = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const e = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
     return { start: iso(s), end: iso(e) };
   }
-  const q = Math.floor(now.getMonth() / 3);
+  const q = Math.floor(now.getMonth() / 3) + offset;
   const s = new Date(now.getFullYear(), q * 3, 1);
   const e = new Date(now.getFullYear(), q * 3 + 3, 0);
   return { start: iso(s), end: iso(e) };
@@ -36,7 +42,11 @@ const PALETTE = ['#059669', '#2563eb', '#dc2626', '#d97706', '#7c3aed', '#0891b2
 
 export function Dashboard() {
   const { t } = useT();
+  const toast = useToast();
   const [range, setRange] = useState<'week' | 'month' | 'quarter'>('week');
+  // How many whole periods back/forward from now the dashboard is showing
+  // (0 = current). Driven by the ◀ ▶ controls next to the range picker.
+  const [periodOffset, setPeriodOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [util, setUtil] = useState<{ name: string; short: string; count: number }[]>([]);
   const [byDept, setByDept] = useState<{ name: string; count: number }[]>([]);
@@ -73,7 +83,11 @@ export function Dashboard() {
 
   const rangeLabel = useMemo(() => ({ week: t('dashboard.rangeWeek'), month: t('dashboard.rangeMonth'), quarter: t('dashboard.rangeQuarter') }[range]), [range, t]);
 
-  useEffect(() => { load(); }, [range, region, location]);
+  // Resolved start/end of the currently-viewed period, shown between the
+  // ◀ ▶ controls so the user always knows which window the figures cover.
+  const periodDates = useMemo(() => rangePeriod(range, periodOffset), [range, periodOffset]);
+
+  useEffect(() => { load(); }, [range, periodOffset, region, location]);
   useEffect(() => { api.weather().then((w) => setWeather(w?.enabled ? w : null)).catch(() => undefined); }, []);
   useEffect(() => { api.resources().then(setResources).catch(() => setResources([])); }, []);
 
@@ -94,7 +108,7 @@ export function Dashboard() {
   async function load() {
     setLoading(true);
     try {
-      const { start, end } = rangePeriod(range);
+      const { start, end } = rangePeriod(range, periodOffset);
       const d: any = await api.dashboard(start, end, region, location);
       setScope(d.scope || 'all');
       setUtil((d.roomUtilisation || []).map((x: any) => ({
@@ -166,11 +180,26 @@ export function Dashboard() {
             <option value="">{t('dashboard.allLocations')}</option>
             {locationOptions.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
-          <select className="range-sel" aria-label={t('dashboard.roomUtilization')} value={range} onChange={(e) => setRange(e.target.value as any)}>
+          <select className="range-sel" aria-label={t('dashboard.roomUtilization')} value={range}
+                  onChange={(e) => { setRange(e.target.value as any); setPeriodOffset(0); }}>
             <option value="week">{t('dashboard.rangeWeek')}</option>
             <option value="month">{t('dashboard.rangeMonth')}</option>
             <option value="quarter">{t('dashboard.rangeQuarter')}</option>
           </select>
+          {/* Period navigation — step the window back/forward (QA #5). */}
+          <div className="row gap-sm" style={{ alignItems: 'center' }}>
+            <button className="iconbtn" aria-label={t('dashboard.prevPeriod')} title={t('dashboard.prevPeriod')}
+                    onClick={() => setPeriodOffset((o) => o - 1)}>
+              <ChevronLeft size={16} />
+            </button>
+            <span className="muted text-sm" style={{ whiteSpace: 'nowrap' }}>
+              {periodDates.start} → {periodDates.end}
+            </span>
+            <button className="iconbtn" aria-label={t('dashboard.nextPeriod')} title={t('dashboard.nextPeriod')}
+                    disabled={periodOffset >= 0} onClick={() => setPeriodOffset((o) => Math.min(0, o + 1))}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -182,8 +211,16 @@ export function Dashboard() {
           : (
             <div className="vbar-scroll" tabIndex={0} role="group" aria-label={t('dashboard.roomUtilization')}>
               <div className="vbar-chart">
-                {util.map((b) => (
-                  <div className="vbar-col" key={b.name} title={`${b.name} — ${b.count} booking(s)`}>
+                {util.map((b) => {
+                  // Native `title` only reveals on hover, so touch users (iPad /
+                  // iPhone) can never read a truncated room name. Make the column
+                  // tap/Enter-activate to surface the full name + count in a toast
+                  // that works on any input device (QA #6).
+                  const reveal = () => toast.info(b.name, t('dashboard.bookingsCount', { count: b.count }));
+                  return (
+                  <div className="vbar-col" key={b.name} title={`${b.name} — ${b.count} booking(s)`}
+                       role="button" tabIndex={0} onClick={reveal}
+                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); reveal(); } }}>
                     <div className="vbar-plot">
                       <div className="vbar-bar" style={{ height: `${Math.max(2, Math.round((b.count / maxCount) * 100))}%` }}>
                         <span className="vbar-val">{b.count}</span>
@@ -191,7 +228,8 @@ export function Dashboard() {
                     </div>
                     <span className="vbar-label">{b.name}</span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

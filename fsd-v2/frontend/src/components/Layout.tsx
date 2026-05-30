@@ -33,6 +33,10 @@ export function Layout() {
   // on pending bookings; general users don't see it to avoid nav clutter (#15).
   const canApprove = canAdmin || user?.role === 'Secretary';
   const inAdmin = pathname.startsWith('/admin/') || pathname === '/admin';
+  // Reports is a top-level sidebar destination, not one of the admin *settings*
+  // sections — so it shouldn't carry the settings sub-nav (none of whose groups
+  // even point at it, leaving an orphaned bar). Only the real settings pages do.
+  const showAdminSubnav = inAdmin && pathname !== '/admin/reports';
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 880;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -309,7 +313,7 @@ export function Layout() {
         <BroadcastBanner />
 
         <main className="main">
-          {inAdmin && <AdminSubnav />}
+          {showAdminSubnav && <AdminSubnav />}
           <Outlet />
         </main>
       </div>

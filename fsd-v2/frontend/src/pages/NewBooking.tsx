@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useT } from '../hooks/useT';
 import { useTimezone } from '../hooks/useTimezone';
+import { useToast } from '../stores/toast';
+import { weekdayOfDate } from '../utils/datetime';
 
 // NewBooking is the multi-step booking wizard, separate from the
 // drag-create flow on the calendar page. Three steps:
@@ -21,6 +23,7 @@ export function NewBooking() {
   const { t } = useT();
   const nav = useNavigate();
   const tz = useTimezone();
+  const toast = useToast();
   const today = new Date().toISOString().slice(0, 10);
 
   // Step 1 inputs
@@ -48,22 +51,30 @@ export function NewBooking() {
   // Pre-select the weekday from `when.date` once the user opens
   // weekly recurrence — convenient default, can still be edited.
   useEffect(() => {
-    if (recurring && pattern === 'weekly' && byday.length === 0) {
-      const d = new Date(`${when.date}T${when.startTime}:00`);
-      if (!isNaN(+d)) setByday([d.getDay()]);
+    if (recurring && pattern === 'weekly' && byday.length === 0 && when.date) {
+      setByday([weekdayOfDate(when.date)]);
     }
   }, [recurring, pattern, when.date, when.startTime]);
 
+  // Build the ISO instants from the tenant-zone wall clock (not the browser's)
+  // so a viewer in another timezone still books the slot they see (QA #1).
   const startIso = useMemo(
-    () => new Date(`${when.date}T${when.startTime}:00`).toISOString(),
-    [when.date, when.startTime],
+    () => tz.toUtcIso(when.date, when.startTime),
+    [when.date, when.startTime, tz],
   );
   const endIso = useMemo(
-    () => new Date(`${when.date}T${when.endTime}:00`).toISOString(),
-    [when.date, when.endTime],
+    () => tz.toUtcIso(when.date, when.endTime),
+    [when.date, when.endTime, tz],
   );
 
   async function search() {
+    // Guard against an inverted window (e.g. 14:00 → 10:00) before firing the
+    // search — otherwise the server is queried for a negative range and the
+    // user gets a confusing empty result instead of a clear reason (QA #3).
+    if (when.startTime >= when.endTime) {
+      toast.error('End time must be after start time');
+      return;
+    }
     setSearching(true);
     try {
       const list = await api.searchResources(when);
@@ -79,6 +90,17 @@ export function NewBooking() {
 
   function toggleByday(wd: number) {
     setByday((cur) => cur.includes(wd) ? cur.filter((d) => d !== wd) : [...cur, wd].sort());
+  }
+
+  // Reset the wizard to step 1 for a fresh booking, keeping the user on the
+  // page after a success rather than auto-bouncing them away (QA #2).
+  function bookAnother() {
+    setResult(null);
+    setPickedRoom(null);
+    setRooms(null);
+    setRecurring(false);
+    setDetail({ title: '', meetingUrl: '', isPrivate: false });
+    setStep(1);
   }
 
   async function submit() {
@@ -104,7 +126,7 @@ export function NewBooking() {
           pattern,
           interval,
           count: until ? undefined : count,
-          until: until ? new Date(`${until}T23:59:59`).toISOString() : undefined,
+          until: until ? tz.toUtcIso(until, '23:59:59') : undefined,
           byday: pattern === 'weekly' ? byday : undefined,
           title: detail.title,
           meetingUrl: detail.meetingUrl,
@@ -117,8 +139,9 @@ export function NewBooking() {
           warn: skipped ? t('booking.occurrencesSkipped', { count: skipped }) : undefined,
         });
       }
-      // Hop to My Bookings after a short pause so the user can see the toast.
-      setTimeout(() => nav('/my'), 1500);
+      // Success stays on screen with explicit next-step buttons (below) — no
+      // auto-redirect, so the confirmation is readable and the user, not a
+      // timer, decides when to move on (QA #2).
     } catch (e: any) {
       setResult({ ok: '', warn: e.displayMessage || t('booking.bookingFailed') });
     } finally { setSubmitting(false); }
@@ -236,12 +259,21 @@ export function NewBooking() {
             </div>
           )}
 
-          <button className="btn primary" disabled={submitting} onClick={submit}>
-            {submitting ? t('common.saving') : recurring ? t('booking.createSeries') : t('booking.confirm')}
-          </button>
+          {!result?.ok && (
+            <button className="btn primary" disabled={submitting} onClick={submit}>
+              {submitting ? t('common.saving') : recurring ? t('booking.createSeries') : t('booking.confirm')}
+            </button>
+          )}
 
           {result?.ok && <div className="alert success">{result.ok}</div>}
           {result?.warn && <div className="alert warn">{result.warn}</div>}
+
+          {result?.ok && (
+            <div className="row gap" style={{ flexWrap: 'wrap' }}>
+              <button className="btn primary" onClick={() => nav('/my')}>{t('booking.viewMyBookings')}</button>
+              <button className="btn" onClick={bookAnother}>{t('booking.bookAnother')}</button>
+            </div>
+          )}
         </div>
 
         {/* Room Detail panel — mirrors v1's NewBooking.vue side panel. */}

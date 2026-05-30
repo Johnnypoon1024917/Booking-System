@@ -65,6 +65,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   const [recur, setRecur] = useState(false);
   const [pattern, setPattern] = useState<'daily' | 'weekly' | 'bi-weekly' | 'monthly'>('weekly');
   const [count, setCount] = useState(4);
+  const [until, setUntil] = useState('');   // optional end-date for the series (QA #7)
   const [services, setServices] = useState<string[]>([]);
   const [cfValues, setCfValues] = useState<Record<string, any>>({});
   const [busy, setBusy] = useState(false);
@@ -120,8 +121,11 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
     const customFieldValues = Object.keys(cfValues).length ? cfValues : undefined;
     setBusy(true);
     try {
-      const startIso = new Date(`${date}T${start}:00`).toISOString();
-      const endIso = new Date(`${date}T${end}:00`).toISOString();
+      // Lock the wall-clock slot to the tenant zone (not the browser's) so a
+      // traveller doesn't silently book a different instant than the labelled
+      // "times shown in <zone>" (QA #1).
+      const startIso = tz.toUtcIso(date, start);
+      const endIso = tz.toUtcIso(date, end);
       let r: any;
       if (recur) {
         // Recurring bookings go to the dedicated /bookings/recurring
@@ -132,7 +136,10 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
           firstStart: startIso,
           firstEnd: endIso,
           pattern,
-          count,
+          // End the series either by a fixed occurrence count or by an
+          // explicit until-date — mirrors the NewBooking wizard (QA #7).
+          count: until ? undefined : count,
+          until: until ? tz.toUtcIso(until, '23:59:59') : undefined,
           title: title.trim(),
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
@@ -152,7 +159,8 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
       }
       setResult(r || { status: 'Confirmed' });
       toast.success(recur ? t('bookingModal.recurringSubmitted') : t('bookingModal.submitted'));
-      setTimeout(() => { onBooked?.(r); onClose(); }, 900);
+      // Leave the confirmation on screen; the footer swaps to a "Done" button
+      // so the user reads the result and dismisses it themselves (QA #2).
     } catch (e: any) {
       toast.error(t('bookingModal.bookingFailed'), e.displayMessage || e.message);
     } finally { setBusy(false); }
@@ -162,10 +170,15 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
     <Modal
       title={t('bookingModal.confirmTitle')}
       onClose={onClose}
-      footer={<>
+      footer={result ? <>
+        <span className="spacer" />
+        <button className="btn primary" onClick={() => { onBooked?.(result); onClose(); }}>
+          {t('bookingModal.done')}
+        </button>
+      </> : <>
         <span className="spacer" />
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
-        <button className="btn primary" disabled={busy || !!result || !!ruleError || !resId} onClick={submit}>
+        <button className="btn primary" disabled={busy || !!ruleError || !resId} onClick={submit}>
           {busy && <Loader2 size={14} className="spin" />} {t('bookingModal.confirm')}
         </button>
       </>}
@@ -279,7 +292,11 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
             </label>
             <label>{t('bookingModal.occurrences')}
               <input type="number" min={1} max={100} value={count}
-                     onChange={(e) => setCount(+e.target.value || 1)} />
+                     onChange={(e) => setCount(+e.target.value || 1)} disabled={!!until} />
+            </label>
+            <label>{t('bookingModal.until')} <span className="muted">({t('bookingModal.or')})</span>
+              <input type="date" value={until} min={date}
+                     onChange={(e) => setUntil(e.target.value)} />
             </label>
           </div>
         )}

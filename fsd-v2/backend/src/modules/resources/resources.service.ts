@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Resource } from './resource.entity';
+import { normalizeOperatingHours } from '../../common/operating-hours';
 
 export interface SearchCriteria {
   tenantId: string;
@@ -35,6 +36,9 @@ export class ResourcesService {
 
   async create(tenantId: string, dto: ResourceWriteDto) {
     const { subResources, ...fields } = dto;
+    if ('operatingHours' in fields) {
+      fields.operatingHours = normalizeOperatingHours(fields.operatingHours);
+    }
     // A space with sub-rooms is a composite parent; otherwise honour whatever
     // compositeMode was supplied (default 'standalone' on the entity).
     if (subResources && subResources.length) fields.compositeMode = 'parent';
@@ -47,6 +51,9 @@ export class ResourcesService {
 
   async update(tenantId: string, id: string, dto: ResourceWriteDto) {
     const { subResources, ...fields } = dto;
+    if ('operatingHours' in fields) {
+      fields.operatingHours = normalizeOperatingHours(fields.operatingHours);
+    }
     const r = await this.get(tenantId, id);
     if (subResources && subResources.length) fields.compositeMode = 'parent';
     Object.assign(r, fields, { id: r.id, tenantId: r.tenantId });

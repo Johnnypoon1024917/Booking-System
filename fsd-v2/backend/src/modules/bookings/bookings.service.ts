@@ -11,6 +11,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CustomizationService } from '../customization/customization.service';
 import { BookingValidatorService } from './booking-validator.service';
 import { utcToZonedWallClock, hhmmToMinutes } from '../../common/tz';
+import { windowForWeekday, weekdayName } from '../../common/operating-hours';
 
 // Terminal booking states are settled — their time window can no longer be
 // rescheduled, and they can't be cancelled again. Guards reschedule/cancel
@@ -322,25 +323,31 @@ export class BookingsService {
     if (clash) throw new ConflictException('time conflict — slot already booked');
   }
 
-  // Reject bookings that fall outside the resource's local operating-hours
-  // window. null/absent operatingHours = open 24h (no restriction). The
-  // window is wall-clock in the tenant's timezone, so we project the booking's
-  // UTC instants back to local time before comparing. A booking must lie
-  // wholly inside [open, close); a window with close <= open is treated as
-  // misconfigured and skipped rather than rejecting everything.
+  // Reject bookings that fall outside the resource's local operating hours.
+  // null/absent operatingHours = open 24h (no restriction). Hours are a
+  // per-weekday schedule (Mon–Fri 08:00–18:00, Sat 10:00–17:00, Sun closed,
+  // etc.) evaluated in the tenant's timezone, so we project the booking's UTC
+  // instants back to local time and resolve the window for the booking's local
+  // weekday. A booking on a closed day, or one that falls outside that day's
+  // window, is rejected. The window is selected by the booking's *start* day.
   private async assertWithinOperatingHours(
     tenantId: string, resource: Resource, start: Date, end: Date,
   ) {
     const oh = resource.operatingHours;
     if (!oh) return;
-    const open = hhmmToMinutes(oh.open);
-    const close = hhmmToMinutes(oh.close);
-    if (open == null || close == null || close <= open) return;
 
     const cust = await this.customization.get(tenantId);
     const tz = (cust as { timezone?: string }).timezone;
     const s = utcToZonedWallClock(start, tz);
     const e = utcToZonedWallClock(end, tz);
+
+    const win = windowForWeekday(oh, s.weekday);
+    if (!win) {
+      throw new ConflictException(`${resource.name} is closed on ${weekdayName(s.weekday)}`);
+    }
+    const open = hhmmToMinutes(win.open);
+    const close = hhmmToMinutes(win.close);
+    if (open == null || close == null || close <= open) return; // misconfigured — don't block
 
     // end-of-day bookings land exactly on close (e.g. 18:00) — allow that by
     // treating a local-midnight end (00:00, weekday rolled over) as the close.
@@ -348,7 +355,7 @@ export class BookingsService {
 
     if (s.minutes < open || endMinutes > close) {
       throw new ConflictException(
-        `outside operating hours (${oh.open}–${oh.close})`,
+        `outside ${weekdayName(s.weekday)} operating hours (${win.open}–${win.close})`,
       );
     }
   }

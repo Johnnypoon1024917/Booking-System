@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastHost } from './components/ToastHost';
 import { ConfirmHost } from './components/ConfirmHost';
+import { SessionExpiredModal } from './components/SessionExpiredModal';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { CalendarView } from './pages/CalendarView';
@@ -100,6 +101,7 @@ export function App() {
       </Routes>
       <ToastHost />
       <ConfirmHost />
+      <SessionExpiredModal />
     </>
   );
 }

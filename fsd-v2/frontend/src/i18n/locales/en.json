@@ -87,7 +87,10 @@
     "colName": "Name",
     "colDepartment": "Department",
     "colRoom": "Room",
-    "colDateTime": "Date/Time"
+    "colDateTime": "Date/Time",
+    "prevPeriod": "Previous period",
+    "nextPeriod": "Next period",
+    "bookingsCount": "{{count}} booking(s)"
   },
   "search": {
     "title": "Find a Resource",
@@ -193,7 +196,9 @@
     "bookedId": "Booked! id={{id}}",
     "seriesCreated": "Series created — {{count}} bookings",
     "occurrencesSkipped": "{{count}} occurrence(s) skipped due to conflicts",
-    "bookingFailed": "Booking failed"
+    "bookingFailed": "Booking failed",
+    "viewMyBookings": "View My Bookings",
+    "bookAnother": "Book Another"
   },
   "bookingModal": {
     "confirmTitle": "Confirm booking",
@@ -229,7 +234,10 @@
     "requiredField": "{{field}} is required",
     "submitted": "Booking submitted",
     "recurringSubmitted": "Recurring booking submitted",
-    "bookingFailed": "Booking failed"
+    "bookingFailed": "Booking failed",
+    "until": "Until",
+    "or": "or",
+    "done": "Done"
   },
   "myBookings": {
     "title": "My Bookings",
@@ -1001,7 +1009,9 @@
     "confirmPassword": "Confirm password",
     "setPasswordContinue": "Set password & continue",
     "passwordsMismatch": "Passwords do not match",
-    "changeFailed": "Could not set password"
+    "changeFailed": "Could not set password",
+    "reauthHint": "Your session expired. Sign in again to pick up where you left off — your form is preserved.",
+    "sessionExpiredTitle": "Session expired"
   },
   "adminUsers": {
     "title": "Users",

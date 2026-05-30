@@ -23,7 +23,53 @@ interface Resource {
   compositeMode?: 'parent' | 'child' | '';
   subResources?: SubResource[];
   customFields?: CustomField[];
-  operatingHours?: { open: string; close: string } | null;
+  operatingHours?: OperatingHours | null;
+}
+
+// Per-weekday operating hours. days keyed "0"=Sun … "6"=Sat; a window = open
+// that day, null = closed. Legacy { open, close } (applied to every day) is
+// still read from older resources. Mirrors backend common/operating-hours.ts.
+interface DayWindow { open: string; close: string }
+interface OperatingHours { days?: Record<string, DayWindow | null>; open?: string; close?: string }
+
+// Local editor row state, one per weekday index 0..6.
+interface DayRow { closed: boolean; open: string; close: string }
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Display Monday-first; the underlying array stays indexed 0=Sun..6=Sat.
+const WEEKDAY_DISPLAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+
+// Expand any stored operatingHours (per-day or legacy) into 7 editable rows.
+function toDayRows(oh: OperatingHours | null | undefined): DayRow[] {
+  const rows: DayRow[] = [];
+  for (let wd = 0; wd < 7; wd++) {
+    let win: DayWindow | null = null;
+    if (oh?.days) {
+      win = Object.prototype.hasOwnProperty.call(oh.days, String(wd)) ? (oh.days[String(wd)] ?? null) : null;
+    } else if (oh?.open && oh?.close) {
+      win = { open: oh.open, close: oh.close }; // legacy single window → every day
+    }
+    rows[wd] = win
+      ? { closed: false, open: win.open, close: win.close }
+      : { closed: true, open: '09:00', close: '18:00' };
+  }
+  return rows;
+}
+
+// Sensible default when an admin first enables hours: Mon–Fri 09:00–18:00,
+// weekend closed. They can adjust any day (e.g. Sat 10:00–17:00).
+function defaultDayRows(): DayRow[] {
+  return Array.from({ length: 7 }, (_, wd): DayRow =>
+    wd >= 1 && wd <= 5
+      ? { closed: false, open: '09:00', close: '18:00' }
+      : { closed: true, open: '10:00', close: '17:00' });
+}
+
+// Collapse the editor rows back into the stored per-day shape.
+function fromDayRows(rows: DayRow[]): OperatingHours {
+  const days: Record<string, DayWindow | null> = {};
+  rows.forEach((r, wd) => { days[String(wd)] = r.closed ? null : { open: r.open, close: r.close }; });
+  return { days };
 }
 
 interface SubResource { id?: string; name: string; capacity: number; }
@@ -68,8 +114,13 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     : 'whole';
   const [mode, setMode] = useState<Mode>(initialMode);
 
-  // Operating-hours toggle: on when the resource already has a window.
+  // Operating-hours toggle + per-weekday rows. On when the resource already
+  // has a schedule; rows are hydrated from whatever shape was stored.
   const [hoursEnabled, setHoursEnabled] = useState<boolean>(!!resource.operatingHours);
+  const [dayRows, setDayRows] = useState<DayRow[]>(() => toDayRows(resource.operatingHours));
+  function setDay(wd: number, p: Partial<DayRow>) {
+    setDayRows((rows) => rows.map((r, i) => (i === wd ? { ...r, ...p } : r)));
+  }
 
   // Re-hydrate child sub-resources when editing an existing splittable parent —
   // they live as separate child rows on the server, not nested on the parent.
@@ -124,20 +175,26 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
 
   async function save() {
     if (!form.name?.trim()) { toast.warning('Name is required'); return; }
-    // Operating hours are optional; when enabled, validate open < close so the
-    // server doesn't silently ignore a backwards window.
-    if (hoursEnabled && form.operatingHours) {
-      const { open, close } = form.operatingHours;
-      if (!open || !close) { toast.warning('Set both open and close times'); return; }
-      if (close <= open) { toast.warning('Close time must be after open time'); return; }
+    // Operating hours are optional; when enabled, validate each open day's
+    // window (close after open) and require at least one open day.
+    if (hoursEnabled) {
+      for (let wd = 0; wd < 7; wd++) {
+        const r = dayRows[wd];
+        if (r.closed) continue;
+        if (!r.open || !r.close) { toast.warning(`Set open and close for ${WEEKDAY_LABELS[wd]}`); return; }
+        if (r.close <= r.open) { toast.warning(`${WEEKDAY_LABELS[wd]}: close must be after open`); return; }
+      }
+      if (dayRows.every((r) => r.closed)) {
+        toast.warning('Set hours for at least one day, or turn off operating-hour restriction'); return;
+      }
     }
     // Build the payload explicitly so we control exactly what is sent: blank
     // location falls back to region (keeps the server equality filter happy),
-    // and operatingHours is null unless the toggle is on.
+    // and operatingHours is the per-day schedule unless the toggle is off.
     const payload: Resource = {
       ...form,
       location: form.location?.trim() || form.region || '',
-      operatingHours: hoursEnabled ? form.operatingHours : null,
+      operatingHours: hoursEnabled ? fromDayRows(dayRows) : null,
     };
     setBusy(true);
     try {
@@ -222,26 +279,44 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
         <label className="row" style={{ alignItems: 'center' }}>
           <input type="checkbox" checked={hoursEnabled}
             onChange={(e) => {
-              setHoursEnabled(e.target.checked);
-              if (e.target.checked && !form.operatingHours) {
-                patch({ operatingHours: { open: '08:00', close: '20:00' } });
+              const on = e.target.checked;
+              setHoursEnabled(on);
+              // Seed sensible defaults the first time hours are enabled on a
+              // resource that has none yet (Mon–Fri 09:00–18:00, weekend closed).
+              if (on && !resource.operatingHours && dayRows.every((r) => r.closed)) {
+                setDayRows(defaultDayRows());
               }
             }} />
           <span style={{ marginLeft: 6 }}>Restrict to operating hours</span>
         </label>
         {hoursEnabled && (
-          <div className="grid-2 mt">
-            <label>Opens
-              <input type="time" value={form.operatingHours?.open || '08:00'}
-                onChange={(e) => patch({ operatingHours: { open: e.target.value, close: form.operatingHours?.close || '20:00' } })} />
-            </label>
-            <label>Closes
-              <input type="time" value={form.operatingHours?.close || '20:00'}
-                onChange={(e) => patch({ operatingHours: { open: form.operatingHours?.open || '08:00', close: e.target.value } })} />
-            </label>
+          <div className="oh-grid mt" style={{ display: 'grid', gap: 6 }}>
+            {WEEKDAY_DISPLAY_ORDER.map((wd) => {
+              const r = dayRows[wd];
+              return (
+                <div key={wd} className="row" style={{ alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 42, fontWeight: 600 }}>{WEEKDAY_LABELS[wd]}</span>
+                  <label className="row" style={{ alignItems: 'center', gap: 4, width: 86 }}>
+                    <input type="checkbox" checked={!r.closed}
+                      onChange={(e) => setDay(wd, { closed: !e.target.checked })} />
+                    <span className="muted">{r.closed ? 'Closed' : 'Open'}</span>
+                  </label>
+                  <input type="time" value={r.open} disabled={r.closed}
+                    onChange={(e) => setDay(wd, { open: e.target.value })}
+                    style={{ width: 110, opacity: r.closed ? 0.5 : 1 }} />
+                  <span className="muted">–</span>
+                  <input type="time" value={r.close} disabled={r.closed}
+                    onChange={(e) => setDay(wd, { close: e.target.value })}
+                    style={{ width: 110, opacity: r.closed ? 0.5 : 1 }} />
+                </div>
+              );
+            })}
           </div>
         )}
-        <small className="muted">Bookings outside this window are rejected. Leave off for 24-hour availability.</small>
+        <small className="muted">
+          Set open/close per day; untick a day to mark it closed. Bookings outside a day's
+          window — or on a closed day — are rejected. Leave the whole option off for 24-hour availability.
+        </small>
       </div>
 
       <div className="row gap mt" style={{ flexWrap: 'wrap' }}>

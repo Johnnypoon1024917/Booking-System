@@ -1,4 +1,6 @@
 import axios, { AxiosError } from 'axios';
+import { useAuth } from '../hooks/useAuth';
+import { useSession } from '../stores/session';
 
 // Single axios instance. The request interceptor injects the JWT from
 // localStorage; the response interceptor lifts ValidationPipe error
@@ -19,17 +21,25 @@ http.interceptors.response.use(
   (r) => r,
   (err: AxiosError<any>) => {
     if (err.response?.status === 401) {
+      // Drop the dead token so no further request carries it, but keep the
+      // zustand `user` so <RequireAuth> doesn't unmount the current route.
       localStorage.removeItem('fsd_jwt');
-      localStorage.removeItem('fsd_user');
-      // Session expired mid-use. Don't bounce silently: remember where the
-      // user was so we can return them there after re-login, and leave a
-      // reason flag the Login screen surfaces as "your session expired".
-      // Guard on pathname so a failed login POST (already on /login) doesn't
-      // loop or get mislabelled as an expiry.
-      if (location.pathname !== '/login') {
+      const path = location.pathname;
+      const onLogin = path === '/login';
+      const onKiosk = path.startsWith('/kiosk');
+      const hasSession = !!useAuth.getState().user;
+
+      if (hasSession && !onLogin && !onKiosk) {
+        // Soft re-auth: raise the in-place login modal instead of a hard
+        // redirect, so an in-progress form keeps its React state (QA #4).
+        useSession.getState().markExpired();
+      } else if (!onLogin) {
+        // No live session to preserve (or on kiosk) — fall back to the old
+        // full redirect, remembering where to return after sign-in.
+        localStorage.removeItem('fsd_user');
         try {
           sessionStorage.setItem('fsd_session_expired', '1');
-          sessionStorage.setItem('fsd_return_to', location.pathname + location.search);
+          sessionStorage.setItem('fsd_return_to', path + location.search);
         } catch { /* storage may be unavailable (private mode) — still redirect */ }
         location.href = '/login';
       }

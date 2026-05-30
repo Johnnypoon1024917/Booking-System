@@ -1,23 +1,17 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
-  IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Matches,
+  IsArray, IsBoolean, IsInt, IsNumber, IsObject, IsOptional, IsString,
   Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { OperatingHours } from '../../common/operating-hours';
 import { ResourcesService } from './resources.service';
 import { CustomizationService } from '../customization/customization.service';
 import { zonedTimeToUtc } from '../../common/tz';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
-
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-class OperatingHoursDto {
-  @Matches(HHMM, { message: 'open must be HH:mm' }) open!: string;
-  @Matches(HHMM, { message: 'close must be HH:mm' }) close!: string;
-}
 
 class SubResourceDto {
   @IsOptional() @IsString() id?: string;
@@ -50,10 +44,12 @@ class ResourceDto {
   @IsOptional() @IsString() bookingMode?: string;
   @IsOptional() @IsInt() @Min(1) sharedCapacity?: number;
 
-  // Operating hours — null/omitted means open 24h. Validated nested so a
-  // malformed time is rejected up front rather than silently stored.
-  @IsOptional() @ValidateNested() @Type(() => OperatingHoursDto)
-  operatingHours?: OperatingHoursDto | null;
+  // Operating hours — null/omitted means open 24h. Per-weekday schedule (or
+  // legacy single window); kept as a loose object here and validated +
+  // canonicalised in the service via normalizeOperatingHours so the dynamic
+  // weekday keys survive the whitelisting ValidationPipe.
+  @IsOptional() @IsObject()
+  operatingHours?: OperatingHours | null;
 
   @IsOptional() @IsArray() @IsString({ each: true }) equipment?: string[];
 

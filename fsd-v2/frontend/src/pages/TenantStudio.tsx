@@ -39,10 +39,23 @@ export function TenantStudio() {
   const [tab, setTab] = useState<typeof TABS[number]['key']>('branding');
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Holiday list shown inside the Holidays tab — loaded lazily the first time
+  // the tab is opened (and refreshed after a sync).
+  const [holidays, setHolidays] = useState<any[] | null>(null);
 
   useEffect(() => {
     api.customization().then((d) => { setC(d); setBaseline(JSON.stringify(d)); });
   }, []);
+
+  useEffect(() => {
+    if (tab === 'holidays' && holidays === null) loadHolidays();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  async function loadHolidays() {
+    try { setHolidays(await api.listHolidays()); }
+    catch { setHolidays([]); }
+  }
 
   if (!c) return <p className="muted">Loading…</p>;
   const dirty = baseline !== JSON.stringify(c);
@@ -66,7 +79,11 @@ export function TenantStudio() {
   function reset() { setC(JSON.parse(baseline)); }
   async function syncHolidays() {
     setSyncing(true);
-    try { const r = await api.syncHKHolidays(); toast.success(`Synced ${r?.count ?? ''} holidays`.trim()); }
+    try {
+      const r = await api.syncHKHolidays();
+      toast.success(`Synced ${r?.count ?? ''} holidays`.trim());
+      await loadHolidays();
+    }
     catch (e: any) { toast.error('Sync failed', e.displayMessage || e.message); }
     finally { setSyncing(false); }
   }
@@ -89,7 +106,8 @@ export function TenantStudio() {
         </div>
         <div className="row gap-sm" style={{ alignItems: 'center' }}>
           {dirty && <span className="dirty-chip">● Unsaved changes</span>}
-          <button className="btn-fsd ghost" onClick={syncHolidays} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} /> Sync holidays</button>
+          {/* Sync holidays lives inside the Holidays tab (contextual) — having a
+              second always-on copy here was a duplicate control. */}
           <button className="btn-fsd ghost" onClick={reset} disabled={!dirty}><RotateCcw size={14} /> Reset</button>
           <button className="btn-fsd" onClick={save} disabled={busy || !dirty}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</button>
         </div>
@@ -297,6 +315,29 @@ export function TenantStudio() {
                 <button className="btn-fsd" onClick={syncHolidays} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} /> Sync holidays</button>
                 <Link className="btn-fsd ghost" to="/admin/holidays"><Plus size={14} /> Add manually</Link>
               </div>
+
+              {/* The configured holidays, mirrored from the dedicated admin page
+                  so this tab shows what's actually in effect — not just the
+                  sync controls. Manage (edit/delete) still lives on /admin/holidays. */}
+              {holidays === null ? (
+                <p className="muted text-sm" style={{ marginTop: 14 }}>Loading…</p>
+              ) : holidays.length === 0 ? (
+                <p className="muted text-sm" style={{ marginTop: 14 }}>No holidays configured yet.</p>
+              ) : (
+                <table className="data" style={{ marginTop: 14 }}>
+                  <thead><tr><th>Date</th><th>Name</th><th>Scope</th><th>Blocks bookings?</th></tr></thead>
+                  <tbody>
+                    {holidays.map((h) => (
+                      <tr key={h.id || h.holidayDate}>
+                        <td>{h.holidayDate}</td>
+                        <td>{h.name || <span className="muted">—</span>}</td>
+                        <td className="small muted">{h.scope || 'manual'}</td>
+                        <td>{h.isBlocker ? 'Yes' : 'No'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </section>
           )}
         </div>

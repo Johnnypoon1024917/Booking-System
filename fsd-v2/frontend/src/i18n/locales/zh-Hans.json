@@ -87,7 +87,10 @@
     "colName": "姓名",
     "colDepartment": "部门",
     "colRoom": "房间",
-    "colDateTime": "日期/时间"
+    "colDateTime": "日期/时间",
+    "prevPeriod": "上一期",
+    "nextPeriod": "下一期",
+    "bookingsCount": "{{count}} 个预约"
   },
   "search": {
     "title": "搜索资源",
@@ -193,7 +196,9 @@
     "bookedId": "已预订！编号={{id}}",
     "seriesCreated": "已创建系列 — {{count}} 个预订",
     "occurrencesSkipped": "因冲突跳过了 {{count}} 次",
-    "bookingFailed": "预订失败"
+    "bookingFailed": "预订失败",
+    "viewMyBookings": "查看我的预约",
+    "bookAnother": "再预约一笔"
   },
   "bookingModal": {
     "confirmTitle": "确认预订",
@@ -229,7 +234,10 @@
     "requiredField": "请填写{{field}}",
     "submitted": "预订已提交",
     "recurringSubmitted": "重复预订已提交",
-    "bookingFailed": "预订失败"
+    "bookingFailed": "预订失败",
+    "until": "直到",
+    "or": "或",
+    "done": "完成"
   },
   "myBookings": {
     "title": "我的预约",
@@ -1001,7 +1009,9 @@
     "confirmPassword": "确认密码",
     "setPasswordContinue": "设置密码并继续",
     "passwordsMismatch": "两次输入的密码不一致",
-    "changeFailed": "无法设置密码"
+    "changeFailed": "无法设置密码",
+    "reauthHint": "您的会话已超时。请重新登录以继续，您填写的表单会保留。",
+    "sessionExpiredTitle": "会话已超时"
   },
   "adminUsers": {
     "title": "用户",

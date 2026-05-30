@@ -1,6 +1,7 @@
 import {
   Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn,
 } from 'typeorm';
+import { OperatingHours } from '../../common/operating-hours';
 
 // Mirrors the v1 `resources` table — enough fields to drive search,
 // the Day grid, and the booking modal. Composite/split (parent/child)
@@ -36,10 +37,13 @@ export class Resource {
   @Column({ name: 'shared_capacity', type: 'int', default: 1 })
   sharedCapacity!: number;
 
-  // Local operating-hours window, enforced at booking time. null = open 24h.
-  // Stored as { open: 'HH:mm', close: 'HH:mm' } in the tenant's timezone.
+  // Local operating-hours schedule, enforced at booking time. null = open 24h.
+  // Per-weekday windows in the tenant's timezone: { days: { "0".."6":
+  // { open:'HH:mm', close:'HH:mm' } | null } } where 0=Sun..6=Sat and null =
+  // closed that day. Legacy { open, close } rows are still read. See
+  // common/operating-hours.ts.
   @Column({ name: 'operating_hours', type: 'jsonb', nullable: true })
-  operatingHours?: { open: string; close: string } | null;
+  operatingHours?: OperatingHours | null;
 
   // Free-form equipment tags (e.g. ['Projector','Whiteboard']) and the
   // per-resource custom booking-form questions. Both surface in the booking

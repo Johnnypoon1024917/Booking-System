@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useTenant } from '../stores/tenant';
+import { zonedWallTimeToUtcIso } from '../utils/datetime';
 
 // Booking times are wall-clock in the *tenant's* timezone, but the SPA was
 // rendering them with bare toLocale* calls — i.e. in the browser's zone, with
@@ -50,6 +51,12 @@ export function useTimezone() {
       return `${s} ${offset}`;
     };
 
-    return { tz, offset, label, formatTime, formatDateTime };
+    // Build a UTC ISO from a wall-clock date+time the user entered *in the
+    // tenant zone* (not the browser zone). Use this for every booking write
+    // so the stored instant matches the labelled "times shown in <zone>".
+    const toUtcIso = (dateStr: string, timeStr: string) =>
+      zonedWallTimeToUtcIso(dateStr, timeStr, tz);
+
+    return { tz, offset, label, formatTime, formatDateTime, toUtcIso };
   }, [tz]);
 }

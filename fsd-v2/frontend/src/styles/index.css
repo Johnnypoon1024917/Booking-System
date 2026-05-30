@@ -1070,6 +1070,14 @@ table.dt td .icon-btn.del  { color: var(--fsd-danger); }
   display: flex; justify-content: space-between; align-items: center;
   gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
 }
+/* The header is title-first, then one or more action buttons. `space-between`
+   alone scatters those buttons across the row (a lone Refresh ends up dead
+   centre). Letting the first child — the title/title-wrapper — eat the free
+   space packs every action button together against the right edge. */
+.page-header > :first-child,
+.page-head > :first-child {
+  margin-right: auto;
+}
 .page-header > div:first-child h1,
 .page-header > h1,
 .page-head > div:first-child h1,

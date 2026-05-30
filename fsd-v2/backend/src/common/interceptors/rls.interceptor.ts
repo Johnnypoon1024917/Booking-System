@@ -1,69 +1,63 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { Observable, from, switchMap, finalize, throwError, catchError, of } from 'rxjs';
+import { Observable, finalize } from 'rxjs';
+import { tenantContext } from '../tenant-context';
 
-// RLS plumbing: each request opens a transaction, sets the
-// `app.current_tenant_id` GUC, then runs the handler with that
-// transaction as the request's "scoped" EntityManager. Postgres RLS
-// policies on every tenant-owned table evaluate the GUC and filter
-// rows to the caller's tenant.
+// RLS request plumbing. For every authenticated request we:
+//   1. pin a dedicated DB connection (QueryRunner) for the request,
+//   2. set the `app.current_tenant_id` GUC on it (session scope),
+//   3. run the whole handler inside an AsyncLocalStorage context holding that
+//      runner, so the patched DataSource.createQueryRunner (RlsService) routes
+//      *every* query — repos, query builders, manager.transaction — onto it.
+// Postgres RLS policies (fail-open when the GUC is empty) then filter every
+// tenant-owned table to the caller's tenant, as a real backstop behind the
+// hand-written `where: { tenantId }` clauses.
 //
-// Read paths within a request all see the same isolation snapshot;
-// write paths inherit the transaction so DELETE+INSERT pairs are
-// atomic (the bug we just hit in v1's admin user route is impossible
-// here because the transaction wraps the whole controller invocation).
-//
-// Controllers/services access the per-request EntityManager via
-// `@Inject(REQUEST_EM)`. Outside an authenticated request (login,
-// health, swagger) there is no tx and queries go straight to the
-// connection pool — same model as v1's GetByID-before-tenant path.
-export const REQUEST_EM = 'REQUEST_EM';
-
+// The pinned runner's release() is neutered so inner `manager.transaction`
+// blocks can't hand our connection back to the pool mid-request; the
+// interceptor resets the GUC and performs the real release on completion.
+// Unauthenticated routes (login, health, swagger) have no tenant context and
+// run on the normal pool — the policies fail open for them.
 @Injectable()
 export class RlsInterceptor implements NestInterceptor {
   constructor(private readonly dataSource: DataSource) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
     const req = context.switchToHttp().getRequest();
     const tenantId: string | undefined = req.user?.tenantId;
-    if (!tenantId) {
-      // Unauthenticated route — no RLS context to set.
-      return next.handle();
-    }
+    if (!tenantId) return next.handle();
 
+    // Created OUTSIDE the ALS context, so the patched createQueryRunner hands
+    // back a real pooled runner here rather than recursing into itself.
     const qr = this.dataSource.createQueryRunner();
-    return from(qr.connect()).pipe(
-      switchMap(() => qr.startTransaction()),
-      switchMap(() =>
-        qr.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantId]),
-      ),
-      switchMap(() => {
-        // Stash the tx-scoped manager on the request so services can
-        // grab it without injecting RlsInterceptor everywhere.
-        req[REQUEST_EM] = qr.manager;
-        return next.handle();
-      }),
-      switchMap(async (result) => {
-        await qr.commitTransaction();
-        return result;
-      }),
-      catchError(async (err) => {
-        await qr.rollbackTransaction();
-        throw err;
-      }),
-      finalize(async () => {
-        await qr.release();
-      }),
-      // catchError above re-throws inside an async function, which RxJS
-      // wraps in a promise — surface that back as a stream error.
-      switchMap((v) => (v instanceof Error ? throwError(() => v) : of(v))),
-    );
-  }
-}
+    await qr.connect();
+    await qr.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [tenantId]);
 
-// Helper for services: pull the request-scoped manager off the request
-// object. If absent (unauthenticated path) the caller should fall back
-// to the default data source.
-export function emFor(req: any) {
-  return req?.[REQUEST_EM];
+    const realRelease = qr.release.bind(qr);
+    // Inner manager.transaction() calls release() in their finally; neuter it
+    // so they don't return our pinned connection to the pool prematurely.
+    qr.release = (async () => { /* deferred to interceptor cleanup */ }) as typeof qr.release;
+
+    let cleaned = false;
+    const cleanup = async () => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        // Reset the GUC before returning the connection to the pool so a later
+        // request that reuses it can never inherit a stale tenant filter.
+        await qr.query(`SELECT set_config('app.current_tenant_id', '', false)`);
+      } catch { /* connection already broken — pool will discard it */ }
+      try { await realRelease(); } catch { /* already released */ }
+    };
+
+    return new Observable((subscriber) => {
+      let sub: { unsubscribe(): void } | undefined;
+      // Subscribe INSIDE the ALS context so the handler and all its awaited DB
+      // calls observe the pinned runner.
+      tenantContext.run({ queryRunner: qr, tenantId }, () => {
+        sub = next.handle().pipe(finalize(() => { void cleanup(); })).subscribe(subscriber);
+      });
+      return () => sub?.unsubscribe();
+    });
+  }
 }

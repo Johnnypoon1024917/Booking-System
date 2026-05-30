@@ -87,7 +87,10 @@
     "colName": "姓名",
     "colDepartment": "部門",
     "colRoom": "房間",
-    "colDateTime": "日期/時間"
+    "colDateTime": "日期/時間",
+    "prevPeriod": "上一期",
+    "nextPeriod": "下一期",
+    "bookingsCount": "{{count}} 個預約"
   },
   "search": {
     "title": "搜尋資源",
@@ -193,7 +196,9 @@
     "bookedId": "已預訂！編號={{id}}",
     "seriesCreated": "已建立系列 — {{count}} 個預訂",
     "occurrencesSkipped": "因衝突略過了 {{count}} 次",
-    "bookingFailed": "預訂失敗"
+    "bookingFailed": "預訂失敗",
+    "viewMyBookings": "查看我的預約",
+    "bookAnother": "再預約一筆"
   },
   "bookingModal": {
     "confirmTitle": "確認預訂",
@@ -229,7 +234,10 @@
     "requiredField": "請填寫{{field}}",
     "submitted": "預訂已提交",
     "recurringSubmitted": "重複預訂已提交",
-    "bookingFailed": "預訂失敗"
+    "bookingFailed": "預訂失敗",
+    "until": "直到",
+    "or": "或",
+    "done": "完成"
   },
   "myBookings": {
     "title": "我的預約",
@@ -1001,7 +1009,9 @@
     "confirmPassword": "確認密碼",
     "setPasswordContinue": "設定密碼並繼續",
     "passwordsMismatch": "兩次輸入的密碼不一致",
-    "changeFailed": "無法設定密碼"
+    "changeFailed": "無法設定密碼",
+    "reauthHint": "您的工作階段已逾時。請重新登入以繼續，您填寫的表單會保留。",
+    "sessionExpiredTitle": "工作階段已逾時"
   },
   "adminUsers": {
     "title": "使用者",
