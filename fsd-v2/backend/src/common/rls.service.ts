@@ -6,24 +6,23 @@ import { tenantContext } from './tenant-context';
 // RlsService does two things at boot:
 //
 //   1. Patches DataSource.createQueryRunner so that, inside an authenticated
-//      request's AsyncLocalStorage context, every query funnels onto the one
-//      pinned connection that carries the tenant GUC. This is the single
-//      interception point all TypeORM reads/writes pass through (repos, query
-//      builders, manager.transaction all call connection.createQueryRunner()).
+//      request's AsyncLocalStorage context (set by TenantTxInterceptor), every
+//      query funnels onto the one transaction-bound connection that carries the
+//      tenant GUC. This is the single interception point all TypeORM
+//      reads/writes pass through (repos, query builders, manager.transaction).
 //
 //   2. Installs Postgres RLS policies on every table with a `tenant_id`
 //      column. Policies are FAIL-OPEN: when the GUC is unset/empty (crons,
-//      seeders, login, unauthenticated paths, or any non-pinned connection)
-//      they allow all rows, so enabling RLS can never cause an outage. When
-//      the GUC is set (authenticated requests) they enforce tenant isolation
-//      as a true backstop behind the application's `where: { tenantId }`.
+//      seeders, login, unauthenticated paths, SSE) they allow all rows, so
+//      enabling RLS can never cause an outage; when the GUC is set they enforce
+//      tenant isolation as a backstop behind the explicit `where:{tenantId}`.
 //
-// IMPORTANT (production): RLS is bypassed for Postgres SUPERUSERS and table
-// owners unless FORCE ROW LEVEL SECURITY is set (we set it). It is ALSO
-// bypassed for superusers regardless of FORCE — so for the policy to actually
-// bite, the application must connect as a NON-superuser role. The local docker
-// image connects as a superuser, so the policies install but stay inert there;
-// point the app at a least-privileged role in production to activate them.
+// IMPORTANT (production): RLS is bypassed for Postgres SUPERUSERS regardless of
+// FORCE, so for the policies to actually bite the application must connect as a
+// NON-superuser role. The reference docker image connects as a superuser, so
+// the policies install but stay inert there; point the app at a
+// least-privileged role in production to activate them. The GUC routing + the
+// explicit per-request transaction are always active regardless.
 @Injectable()
 export class RlsService implements OnApplicationBootstrap {
   private readonly log = new Logger(RlsService.name);
@@ -39,7 +38,8 @@ export class RlsService implements OnApplicationBootstrap {
     await this.installPolicies();
   }
 
-  // Route per-request queries onto the pinned, GUC-bearing connection.
+  // Route per-request queries onto the transaction-bound, GUC-bearing connection
+  // that TenantTxInterceptor stashed in the AsyncLocalStorage context.
   private patchCreateQueryRunner() {
     const ds = this.dataSource as DataSource & { __rlsPatched?: boolean };
     if (ds.__rlsPatched) return;

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Palette, Languages, LayoutGrid, GitBranch, ListChecks, Plug, CalendarDays,
-  RefreshCcw, RotateCcw, Save, Plus, Trash2, X, CloudRain, Calendar, Mail, MessageSquare, Eye,
+  RefreshCcw, RotateCcw, Save, Plus, Trash2, X, CloudRain, Calendar, Mail, MessageSquare, Video, Eye,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
@@ -32,6 +32,17 @@ const ALL_REPORTS = [
 ];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+// Stable per-row id for custom fields. Using the array index as a React key
+// bleeds DOM state (focus / unsaved typing) between rows when one is deleted,
+// so each field carries a local-only `_id` (stripped before save).
+function fieldId(): string {
+  return (globalThis.crypto?.randomUUID?.() ?? `f_${Math.random().toString(36).slice(2)}_${Date.now()}`);
+}
+function withFieldIds(d: any): any {
+  if (!d || !Array.isArray(d.custom_fields)) return d;
+  return { ...d, custom_fields: d.custom_fields.map((f: any) => (f._id ? f : { ...f, _id: fieldId() })) };
+}
+
 export function TenantStudio() {
   const toast = useToast();
   const [c, setC] = useState<any | null>(null);
@@ -44,7 +55,7 @@ export function TenantStudio() {
   const [holidays, setHolidays] = useState<any[] | null>(null);
 
   useEffect(() => {
-    api.customization().then((d) => { setC(d); setBaseline(JSON.stringify(d)); });
+    api.customization().then((d) => { const wf = withFieldIds(d); setC(wf); setBaseline(JSON.stringify(wf)); });
   }, []);
 
   useEffect(() => {
@@ -53,6 +64,7 @@ export function TenantStudio() {
   }, [tab]);
 
   async function loadHolidays() {
+    setHolidays(null); // show the loading state instead of flickering stale rows
     try { setHolidays(await api.listHolidays()); }
     catch { setHolidays([]); }
   }
@@ -63,15 +75,39 @@ export function TenantStudio() {
   const arr = (k: string): any[] => c[k] || [];
   const toggleIn = (k: string, v: any) =>
     set(k, arr(k).includes(v) ? arr(k).filter((x) => x !== v) : [...arr(k), v]);
+  // Patch one key inside the nested auto_release config object.
+  const auto = c.auto_release || {};
+  const setAuto = (k: string, v: any) => set('auto_release', { ...auto, [k]: v });
+
+  // Cross-field validation — inverted ranges silently corrupt the booking UI
+  // and reservation logic for every user under the tenant, so block the save.
+  function validationError(): string | null {
+    const minD = c.min_duration_minutes ?? 15;
+    const maxD = c.max_duration_minutes ?? 480;
+    if (minD > maxD) return 'Min duration cannot exceed max duration.';
+    const sh = c.calendar_start_hour ?? 8;
+    const eh = c.calendar_end_hour ?? 20;
+    if (sh >= eh) return 'Calendar start hour must be before the end hour.';
+    return null;
+  }
 
   async function save() {
+    const err = validationError();
+    if (err) { toast.error('Cannot save', err); return; }
     setBusy(true);
     try {
-      // Drop blank custom-field option lines that accumulate while typing.
-      const cleaned = { ...c, custom_fields: (c.custom_fields || []).map((f: any) =>
-        f.type === 'select' ? { ...f, options: (f.options || []).filter((o: string) => o.trim()) } : f) };
+      // Strip the local-only _id and drop blank custom-field option lines that
+      // accumulate while typing.
+      const cleaned = { ...c,
+        custom_fields: (c.custom_fields || []).map(({ _id, ...f }: any) =>
+          f.type === 'select' ? { ...f, options: (f.options || []).filter((o: string) => o.trim()) } : f),
+        // Trim + de-dupe + drop blank cost-center codes so the configured
+        // allow-list the booking flow validates against stays clean.
+        cost_centers: [...new Set((c.cost_centers || []).map((s: string) => (s || '').trim()).filter(Boolean))],
+      };
       const saved = await api.saveCustomization(cleaned);
-      setC(saved); setBaseline(JSON.stringify(saved));
+      const wf = withFieldIds(saved);
+      setC(wf); setBaseline(JSON.stringify(wf));
       toast.success('Customization saved');
     } catch (e: any) { toast.error('Save failed', e.displayMessage || e.message); }
     finally { setBusy(false); }
@@ -90,7 +126,7 @@ export function TenantStudio() {
 
   // Custom-field helpers
   function addField() {
-    set('custom_fields', [...arr('custom_fields'), { key: '', type: 'text', required: false, label: { en: '', 'zh-Hant': '', 'zh-Hans': '' }, options: [] }]);
+    set('custom_fields', [...arr('custom_fields'), { _id: fieldId(), key: '', type: 'text', required: false, label: { en: '', 'zh-Hant': '', 'zh-Hans': '' }, options: [] }]);
   }
   function patchField(i: number, patch: any) {
     set('custom_fields', arr('custom_fields').map((f, idx) => idx === i ? { ...f, ...patch } : f));
@@ -133,8 +169,17 @@ export function TenantStudio() {
                 {(['brand_primary', 'brand_secondary', 'brand_accent'] as const).map((k, i) => (
                   <label key={k} className="field"><span>{['Primary', 'Secondary', 'Accent'][i]}</span>
                     <div className="row gap-sm">
-                      <input type="color" value={c[k] || '#002147'} onChange={(e) => set(k, e.target.value)} />
-                      <input type="text" value={c[k] || ''} onChange={(e) => set(k, e.target.value)} />
+                      {/* The native color input silently breaks (and desyncs from
+                          the text twin) on any value that isn't a strict 6-digit
+                          hex, so feed it a safe fallback until the text is valid. */}
+                      <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(c[k] || '') ? c[k] : '#002147'} onChange={(e) => set(k, e.target.value)} />
+                      <input type="text" value={c[k] || ''} maxLength={7} placeholder="#002147"
+                        onChange={(e) => {
+                          // Keep the leading # so the two controls stay bound.
+                          let v = e.target.value.trim();
+                          if (v && !v.startsWith('#')) v = '#' + v;
+                          set(k, v);
+                        }} />
                     </div>
                   </label>
                 ))}
@@ -173,14 +218,23 @@ export function TenantStudio() {
           {tab === 'layout' && (
             <section className="card">
               <label className="field"><span>Dashboard widgets</span></label>
-              <p className="text-sm muted">Which panels appear on the dashboard (empty = all).</p>
+              <p className="text-sm muted">Which panels appear on the dashboard. Add none to show all (the default); remove every panel to hide them all.</p>
               <div className="chip-list">
-                {arr('dashboard_widgets').map((w, i) => (
+                {/* 'none' is an internal sentinel meaning "explicitly hide all" —
+                    it must never render as a chip. Remove by value (indices
+                    shift once 'none' is filtered out). */}
+                {arr('dashboard_widgets').filter((w) => w !== 'none').map((w) => (
                   <span key={w} className="chip active">{w}
-                    <button className="icon-btn" style={{ width: 22, height: 22 }} onClick={() => set('dashboard_widgets', arr('dashboard_widgets').filter((_, idx) => idx !== i))} aria-label="remove"><X size={12} /></button>
+                    <button className="icon-btn" style={{ width: 22, height: 22 }} onClick={() => {
+                      const next = arr('dashboard_widgets').filter((x) => x !== w && x !== 'none');
+                      // Empty array = "show all" (wildcard). When the admin removes
+                      // the last panel they mean "show none", so park a sentinel
+                      // that keeps the array non-empty without rendering anything.
+                      set('dashboard_widgets', next.length === 0 ? ['none'] : next);
+                    }} aria-label="remove"><X size={12} /></button>
                   </span>
                 ))}
-                <select className="chip" value="" onChange={(e) => { if (e.target.value) set('dashboard_widgets', [...arr('dashboard_widgets'), e.target.value]); }}>
+                <select className="chip" value="" onChange={(e) => { if (e.target.value) set('dashboard_widgets', [...arr('dashboard_widgets').filter((w) => w !== 'none'), e.target.value]); }}>
                   <option value="">+ Widget…</option>
                   {ALL_WIDGETS.filter((w) => !arr('dashboard_widgets').includes(w)).map((w) => <option key={w} value={w}>{w}</option>)}
                 </select>
@@ -231,7 +285,20 @@ export function TenantStudio() {
                 <div className="chip-list">
                   {ALL_REPORTS.map((r) => (
                     <label key={r.key} className={`chip${(!arr('report_types').length || arr('report_types').includes(r.key)) ? ' active' : ''}`}>
-                      <input type="checkbox" checked={!arr('report_types').length || arr('report_types').includes(r.key)} onChange={() => toggleIn('report_types', r.key)} /> {r.label}
+                      <input type="checkbox" checked={!arr('report_types').length || arr('report_types').includes(r.key)}
+                        onChange={() => {
+                          // Empty array = wildcard "all enabled". Naively pushing the
+                          // clicked key would invert the selection (unchecking one
+                          // would leave only that one). When breaking out of the
+                          // wildcard, materialise the full list minus the one just
+                          // unticked; otherwise toggle normally.
+                          const current = arr('report_types');
+                          if (current.length === 0) {
+                            set('report_types', ALL_REPORTS.map((x) => x.key).filter((k) => k !== r.key));
+                          } else {
+                            toggleIn('report_types', r.key);
+                          }
+                        }} /> {r.label}
                     </label>
                   ))}
                 </div>
@@ -246,13 +313,38 @@ export function TenantStudio() {
                   ))}
                 </div>
               </div>
+
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border, #e5e7eb)' }}>
+                <label className="field"><span>Auto-release no-shows (ghost bookings)</span></label>
+                <p className="text-sm muted">
+                  Release a room automatically when nobody checks in within the grace period after the
+                  start time, and email the booker. A resource can tighten the grace further in its editor.
+                </p>
+                <div className="row gap" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <label className="toggle"><input type="checkbox" checked={!!auto.enabled} onChange={(e) => setAuto('enabled', e.target.checked)} /><span>Enable auto-release</span></label>
+                  <label className="field" style={{ maxWidth: 200 }}><span>Grace period (min)</span>
+                    <input type="number" min={1} value={auto.grace_minutes ?? 15} onChange={(e) => setAuto('grace_minutes', +e.target.value)} />
+                  </label>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border, #e5e7eb)' }}>
+                <label className="field"><span>Cost centers / chargeback codes</span></label>
+                <p className="text-sm muted">
+                  One code per line. When any codes are configured, every booking must be billed to one
+                  of them (chosen at booking time). Leave empty to disable chargeback codes.
+                </p>
+                <textarea rows={4} value={(c.cost_centers || []).join('\n')}
+                  placeholder={'FIN-001\nMKT-204\nOPS-310'}
+                  onChange={(e) => set('cost_centers', e.target.value.split('\n'))} />
+              </div>
             </section>
           )}
 
           {tab === 'fields' && (
             <section className="card">
               {arr('custom_fields').map((f: any, i: number) => (
-                <div key={i} className="card" style={{ background: 'var(--surface-inset)', marginBottom: 12 }}>
+                <div key={f._id ?? i} className="card" style={{ background: 'var(--surface-inset)', marginBottom: 12 }}>
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <h4 style={{ margin: 0 }}>{f.label?.en || f.key || 'New field'}</h4>
                     <button className="btn-fsd ghost danger" onClick={() => removeField(i)}><Trash2 size={13} /> Remove</button>
@@ -293,6 +385,7 @@ export function TenantStudio() {
                 { icon: Calendar, key: 'gov_hk_holiday_feed', title: 'gov.hk holidays', help: 'Auto-import Hong Kong public holidays nightly.' },
                 { icon: Mail, key: 'outlook_sync_enabled', title: 'Outlook sync', help: 'Microsoft Graph two-way sync to room mailboxes.' },
                 { icon: MessageSquare, key: 'teams_app_enabled', title: 'Teams app', help: 'Book and manage rooms from inside Microsoft Teams.' },
+                { icon: Video, key: 'zoom_enabled', title: 'Zoom', help: 'Mask Zoom join links through a redirect gateway.' },
               ].map((row) => (
                 <div key={row.key} className="integration-row">
                   <row.icon size={20} className="muted" />
@@ -300,11 +393,15 @@ export function TenantStudio() {
                   <Switch checked={!!c[row.key]} onChange={(v) => set(row.key, v)} label={row.title} />
                 </div>
               ))}
-              <div style={{ marginTop: 16 }}>
-                <label className="field"><span>Zoom mask base URL</span>
-                  <input value={c.zoom_mask_base || ''} placeholder="https://ess.example/redirect" onChange={(e) => set('zoom_mask_base', e.target.value)} />
-                </label>
-              </div>
+              {/* Zoom config only appears once Zoom is enabled — consistent with
+                  the toggle-driven model of the other integrations. */}
+              {!!c.zoom_enabled && (
+                <div style={{ marginTop: 16 }}>
+                  <label className="field"><span>Zoom mask base URL</span>
+                    <input value={c.zoom_mask_base || ''} placeholder="https://ess.example/redirect" onChange={(e) => set('zoom_mask_base', e.target.value)} />
+                  </label>
+                </div>
+              )}
             </section>
           )}
 

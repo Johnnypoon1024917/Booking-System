@@ -32,16 +32,27 @@ export class BookingValidatorService {
   // Throws BadRequestException on the first rule a booking violates;
   // returns silently when the (start,end) window satisfies every rule for
   // the given resource. `now` is injectable for deterministic tests.
+  //
+  // `overrides` are the booked resource's per-resource rule overrides
+  // (resource.ruleOverrides). When a key is present it wins over the tenant
+  // customization default; when absent the tenant value (then the built-in
+  // fallback) applies — so passing `undefined` reproduces the pure
+  // tenant-wide behaviour exactly.
   async validate(
     tenantId: string, start: Date, end: Date, now: Date = new Date(),
+    overrides?: {
+      minDurationMinutes?: number;
+      maxDurationMinutes?: number;
+      bookingHorizonDays?: number;
+    } | null,
   ): Promise<void> {
     if (!(end > start)) throw new BadRequestException('end must be after start');
 
     const c = (await this.customization.get(tenantId)) as Record<string, any>;
     const tz: string = c.timezone || 'Asia/Hong_Kong';
-    const minMinutes = num(c.min_duration_minutes ?? c.minDurationMinutes, 15);
-    const maxMinutes = num(c.max_duration_minutes ?? c.maxDurationMinutes, 480);
-    const horizonDays = num(c.booking_horizon_days ?? c.bookingHorizonDays, 180);
+    const minMinutes = num(overrides?.minDurationMinutes ?? c.min_duration_minutes ?? c.minDurationMinutes, 15);
+    const maxMinutes = num(overrides?.maxDurationMinutes ?? c.max_duration_minutes ?? c.maxDurationMinutes, 480);
+    const horizonDays = num(overrides?.bookingHorizonDays ?? c.booking_horizon_days ?? c.bookingHorizonDays, 180);
     const blackout: string[] = c.blackout_dates ?? c.blackoutDates ?? [];
 
     // Past / future-horizon. Both bound the *start* instant.

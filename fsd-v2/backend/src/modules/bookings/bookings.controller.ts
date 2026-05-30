@@ -27,6 +27,8 @@ class CreateBookingDto {
   // resource-defined, so a loose object — the service validates required
   // fields and strips unknown keys.
   @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
+  // Chargeback code; validated against the tenant's cost_centers in the service.
+  @IsOptional() @IsString() costCenterCode?: string;
 }
 class UpdateBookingDto {
   @IsOptional() @IsDateString() startTime?: string;
@@ -50,6 +52,7 @@ class CreateRecurringDtoIn {
   @IsOptional() @IsBoolean() isPrivate?: boolean;
   @IsOptional() @IsString() rrule?: string;
   @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
+  @IsOptional() @IsString() costCenterCode?: string;
 }
 
 // validateRange clamps at 366 days, fails closed on malformed input —

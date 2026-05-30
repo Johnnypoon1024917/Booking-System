@@ -8,7 +8,7 @@ import { databaseConfig } from './config/database.config';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
-import { RlsInterceptor } from './common/interceptors/rls.interceptor';
+import { TenantTxInterceptor } from './common/interceptors/tenant-tx.interceptor';
 import { RlsService } from './common/rls.service';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -117,12 +117,14 @@ import { DemoSeederService } from './common/demo-seeder.service';
     // Fine-grained permission-matrix enforcement. Runs after the JWT guard
     // (needs req.user) and only acts on routes carrying @RequirePermission.
     { provide: APP_GUARD, useClass: PermissionsGuard },
-    // RLS interceptor pins a per-request connection carrying the tenant GUC
-    // so all queries inside the request are filtered by the Postgres RLS
-    // policies RlsService installs (a backstop behind where:{tenantId}).
-    { provide: APP_INTERCEPTOR, useClass: RlsInterceptor },
-    // Patches createQueryRunner for per-request tenant routing and installs
-    // the fail-open RLS policies at boot.
+    // Per-request tenant transaction: opens one explicit transaction per
+    // authenticated request, sets the tenant GUC (SET LOCAL), routes all
+    // queries onto it, and commits/rolls back deterministically. Feeds the
+    // Postgres RLS policies and makes multi-write requests atomic. SSE opts out
+    // via @SkipTenantTx(). Runs after the guards (needs req.user).
+    { provide: APP_INTERCEPTOR, useClass: TenantTxInterceptor },
+    // Patches createQueryRunner for per-request tenant routing and installs the
+    // fail-open RLS policies at boot.
     RlsService,
     SeederService,
     DemoSeederService,

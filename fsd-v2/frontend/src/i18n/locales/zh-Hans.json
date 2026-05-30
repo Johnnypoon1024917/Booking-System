@@ -366,6 +366,18 @@
     "targetUrl": "目标 URL",
     "events": "事件",
     "eventsHelp": "选择要触发 POST 的事件。失败时最多重试 5 次（30 秒 → 2 小时指数退避）。",
+    "eventLabels": {
+      "booking": {
+        "created": "预约已创建",
+        "updated": "预约已更新",
+        "cancelled": "预约已取消",
+        "approved": "预约已批准",
+        "rejected": "预约已拒绝"
+      },
+      "weather": {
+        "signal": "天气信号"
+      }
+    },
     "empty": "尚无 Webhook",
     "emptyDesc": "订阅外部系统以接收预约生命周期事件。",
     "noDeliveries": "尚无派送记录。",

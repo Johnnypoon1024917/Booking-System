@@ -33,6 +33,13 @@ export class Booking {
   @Column({ name: 'custom_field_values', type: 'jsonb', nullable: true })
   customFieldValues?: Record<string, unknown> | null;
 
+  // Chargeback / cost-center code this booking is billed against. Resolved
+  // at create time from the booker's choice (else the resource default) and
+  // validated against the tenant's configured cost_centers list. null when
+  // the tenant runs no chargeback codes.
+  @Column({ name: 'cost_center_code', type: 'varchar', length: 64, nullable: true })
+  costCenterCode?: string | null;
+
   @Column({ name: 'is_private', default: false }) isPrivate!: boolean;
   @Column({ name: 'is_recurring', default: false }) isRecurring!: boolean;
   @Column({ name: 'recurrence_id', type: 'uuid', nullable: true }) recurrenceId?: string;

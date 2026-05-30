@@ -102,7 +102,7 @@ export function AdminWebhooks() {
                 checked={draft.events.includes(ev)}
                 onChange={() => toggleEvent(ev)}
               />
-              {ev}
+              {t(`webhooks.eventLabels.${ev}`, { defaultValue: ev })}
             </label>
           ))}
         </div>

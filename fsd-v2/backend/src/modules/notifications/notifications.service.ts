@@ -139,7 +139,8 @@ export class NotificationsService {
   }
 
   private buildIcs(event: string, vars: Record<string, any>, attendee: string) {
-    const cancel = event === 'BOOKING_CANCELLED' || event === 'BOOKING_REJECTED';
+    const cancel = event === 'BOOKING_CANCELLED' || event === 'BOOKING_REJECTED'
+      || event === 'BOOKING_AUTO_RELEASED';
     return {
       filename: `booking-${vars.BookingID}.ics`,
       method: (cancel ? 'CANCEL' : 'REQUEST') as 'CANCEL' | 'REQUEST',
@@ -177,6 +178,7 @@ function templateTypeFor(event: string): NotificationTemplateType {
   switch (event) {
     case 'BOOKING_CANCELLED':
     case 'BOOKING_REJECTED':
+    case 'BOOKING_AUTO_RELEASED':
       return 'cancellation';
     default:
       return 'confirmation';

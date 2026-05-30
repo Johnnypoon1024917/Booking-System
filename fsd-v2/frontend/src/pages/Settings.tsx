@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useT } from '../hooks/useT';
@@ -15,6 +16,8 @@ import { confirmDialog } from '../stores/confirm';
 // Errors render inline via the status line so screen readers see them.
 export function Settings() {
   const user = useAuth((s) => s.user);
+  const logout = useAuth((s) => s.logout);
+  const nav = useNavigate();
   const { t } = useT();
   const push = usePushSubscription();
 
@@ -49,9 +52,12 @@ export function Settings() {
       const r = await api.mfaEnroll();
       setQrDataUrl(r.qrDataUrl || '');
       setOtpauthUrl(r.otpauthUrl || '');
-      // Authenticator apps group the secret in fours — extract it from
-      // the otpauth URL so users typing it by hand can verify as they go.
-      const secret = new URLSearchParams((r.otpauthUrl || '').split('?')[1] || '').get('secret') || '';
+      // Use the secret the API returns directly; only fall back to scraping the
+      // otpauth URL if an older backend omits it. Authenticator apps group the
+      // secret in fours for easier manual entry.
+      const secret = r.secret
+        || new URLSearchParams((r.otpauthUrl || '').split('?')[1] || '').get('secret')
+        || '';
       setSecretPretty(secret.match(/.{1,4}/g)?.join(' ') || secret);
       setEnrolling(true);
     } catch (e: any) { setMfaError(e.displayMessage || e.message); }
@@ -126,7 +132,13 @@ export function Settings() {
     setBusy(true);
     try {
       const resp = await api.dsarExportMe();
-      const url = URL.createObjectURL(resp.data);
+      // The client requests responseType:'blob', but guard anyway: if a proxy
+      // or error path hands back parsed JSON, createObjectURL would throw — wrap
+      // non-Blob payloads so the download never crashes.
+      const data: Blob = resp.data instanceof Blob
+        ? resp.data
+        : new Blob([JSON.stringify(resp.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(data);
       const a = Object.assign(document.createElement('a'), { href: url, download: 'my-data.json' });
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
@@ -135,10 +147,24 @@ export function Settings() {
   }
 
   async function eraseAccount() {
-    if (!(await confirmDialog({ title: 'Disable account', message: 'This permanently disables your account and redacts your personal data. Continue?', tone: 'danger', confirmText: 'Disable account', cancelText: 'Cancel' }))) return;
-    // Self-service erasure has no v2 backend endpoint yet — surface a
-    // clear message rather than firing a dead request.
-    setStatus('Account erasure must currently be requested through your administrator.');
+    // Real self-service erasure (V1 parity): the backend anonymises the account
+    // + the caller's bookings and deactivates the login, so the dialog states
+    // the true, irreversible effect. On success we drop the session and bounce
+    // to /login — the account can no longer authenticate.
+    if (!(await confirmDialog({
+      title: 'Erase my account',
+      message: 'This permanently erases your personal data, cancels your upcoming bookings, and disables your login. This cannot be undone. Continue?',
+      tone: 'danger', confirmText: 'Erase my account', cancelText: 'Cancel',
+    }))) return;
+    setBusy(true);
+    try {
+      await api.eraseMyAccount();
+      logout();
+      nav('/login');
+    } catch (e: any) {
+      setStatus(e.displayMessage || e.message || 'Could not erase account — please try again.');
+      setBusy(false);
+    }
   }
 
   return (
@@ -190,7 +216,7 @@ export function Settings() {
               </li>
               <li>
                 <label>{t('settings.mfaStepCode')}
-                  <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric"
+                  <input value={code} onChange={(e) => { setCode(e.target.value); if (mfaError) setMfaError(''); }} inputMode="numeric"
                          autoComplete="one-time-code" maxLength={6} pattern="[0-9]*" autoFocus/>
                 </label>
               </li>

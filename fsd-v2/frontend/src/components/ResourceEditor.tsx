@@ -4,6 +4,7 @@ import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
+import { useTenant } from '../stores/tenant';
 import { confirmDialog } from '../stores/confirm';
 
 interface Resource {
@@ -24,6 +25,19 @@ interface Resource {
   subResources?: SubResource[];
   customFields?: CustomField[];
   operatingHours?: OperatingHours | null;
+  ruleOverrides?: RuleOverrides | null;
+  costCenterCode?: string | null;
+}
+
+// Per-resource overrides of the tenant workflow defaults. An absent key
+// inherits the tenant value; requiresApproval is tri-state (absent = inherit,
+// true = force, false = waive).
+interface RuleOverrides {
+  minDurationMinutes?: number;
+  maxDurationMinutes?: number;
+  bookingHorizonDays?: number;
+  graceMinutes?: number;
+  requiresApproval?: boolean;
 }
 
 // Per-weekday operating hours. days keyed "0"=Sun … "6"=Sat; a window = open
@@ -146,6 +160,31 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
 
   function patch(p: Partial<Resource>) { setForm((f) => ({ ...f, ...p })); }
 
+  // Tenant-wide defaults, shown as placeholders so an admin sees what a blank
+  // override field inherits. cost_centers drives the per-resource default code.
+  const customization = useTenant((s) => s.customization) || {};
+  const costCenters: string[] = Array.isArray(customization.cost_centers) ? customization.cost_centers : [];
+  const tenantDefaults = {
+    min: customization.min_duration_minutes ?? 15,
+    max: customization.max_duration_minutes ?? 480,
+    horizon: customization.booking_horizon_days ?? 180,
+    grace: customization.auto_release?.grace_minutes ?? 15,
+  };
+  const ov: RuleOverrides = form.ruleOverrides || {};
+
+  // Write one override key. A blank/NaN value clears the key (inherit); when
+  // the last key is removed we store null so the whole object stays absent and
+  // the server treats the resource as fully inheriting the tenant rules.
+  function setOverrideNum(key: keyof RuleOverrides, raw: string) {
+    setForm((f) => {
+      const next: RuleOverrides = { ...(f.ruleOverrides || {}) };
+      const n = raw === '' ? NaN : Math.floor(Number(raw));
+      if (!Number.isFinite(n) || n < 1) delete next[key];
+      else (next as Record<string, number>)[key] = n;
+      return { ...f, ruleOverrides: Object.keys(next).length ? next : null };
+    });
+  }
+
   function addSub() {
     const next: SubResource = {
       name: `${form.name || 'Sub-resource'} ${((form.subResources?.length ?? 0) + 1)}`,
@@ -187,6 +226,11 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
       if (dayRows.every((r) => r.closed)) {
         toast.warning('Set hours for at least one day, or turn off operating-hour restriction'); return;
       }
+    }
+    // Override sanity: a min > max override would silently reject every
+    // booking of this room, so block the save the same way the server would.
+    if (ov.minDurationMinutes && ov.maxDurationMinutes && ov.minDurationMinutes > ov.maxDurationMinutes) {
+      toast.warning('Min duration override cannot exceed the max duration override'); return;
     }
     // Build the payload explicitly so we control exactly what is sent: blank
     // location falls back to region (keeps the server equality filter happy),
@@ -303,11 +347,11 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
                   </label>
                   <input type="time" value={r.open} disabled={r.closed}
                     onChange={(e) => setDay(wd, { open: e.target.value })}
-                    style={{ width: 110, opacity: r.closed ? 0.5 : 1 }} />
+                    style={{ width: 150, opacity: r.closed ? 0.5 : 1 }} />
                   <span className="muted">–</span>
                   <input type="time" value={r.close} disabled={r.closed}
                     onChange={(e) => setDay(wd, { close: e.target.value })}
-                    style={{ width: 110, opacity: r.closed ? 0.5 : 1 }} />
+                    style={{ width: 150, opacity: r.closed ? 0.5 : 1 }} />
                 </div>
               );
             })}
@@ -326,6 +370,46 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
           onChange={(e) => patch({ isRestricted: e.target.checked })} /> Restricted</label>
         <label className="row"><input type="checkbox" checked={!!form.isActive}
           onChange={(e) => patch({ isActive: e.target.checked })} /> Active</label>
+      </div>
+
+      <div className="bm-box mt">
+        <h4 style={{ margin: '0 0 4px' }}>Booking rule overrides</h4>
+        <p className="muted small">
+          Leave a field blank to inherit the tenant default (shown as the placeholder).
+          Set a value to override it for this resource only — e.g. cap the boardroom at 120 min.
+        </p>
+        <div className="grid-2">
+          <label>Min duration (min)
+            <input type="number" min={1} value={ov.minDurationMinutes ?? ''}
+              placeholder={`inherit · ${tenantDefaults.min}`}
+              onChange={(e) => setOverrideNum('minDurationMinutes', e.target.value)} />
+          </label>
+          <label>Max duration (min)
+            <input type="number" min={1} value={ov.maxDurationMinutes ?? ''}
+              placeholder={`inherit · ${tenantDefaults.max}`}
+              onChange={(e) => setOverrideNum('maxDurationMinutes', e.target.value)} />
+          </label>
+          <label>Booking horizon (days)
+            <input type="number" min={1} value={ov.bookingHorizonDays ?? ''}
+              placeholder={`inherit · ${tenantDefaults.horizon}`}
+              onChange={(e) => setOverrideNum('bookingHorizonDays', e.target.value)} />
+          </label>
+          <label>Auto-release grace (min)
+            <input type="number" min={1} value={ov.graceMinutes ?? ''}
+              placeholder={`inherit · ${tenantDefaults.grace}`}
+              onChange={(e) => setOverrideNum('graceMinutes', e.target.value)} />
+          </label>
+        </div>
+        {costCenters.length > 0 && (
+          <label className="mt">Default cost center
+            <select value={form.costCenterCode || ''}
+              onChange={(e) => patch({ costCenterCode: e.target.value || null })}>
+              <option value="">— none —</option>
+              {costCenters.map((cc) => <option key={cc} value={cc}>{cc}</option>)}
+            </select>
+            <small className="muted">Pre-fills the chargeback code when this resource is booked.</small>
+          </label>
+        )}
       </div>
 
       <div className="bm-box mt">

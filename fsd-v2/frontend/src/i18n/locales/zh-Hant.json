@@ -366,6 +366,18 @@
     "targetUrl": "目標 URL",
     "events": "事件",
     "eventsHelp": "選擇要觸發 POST 的事件。失敗時最多重試 5 次（30 秒 → 2 小時指數退避）。",
+    "eventLabels": {
+      "booking": {
+        "created": "預約已建立",
+        "updated": "預約已更新",
+        "cancelled": "預約已取消",
+        "approved": "預約已核准",
+        "rejected": "預約已拒絕"
+      },
+      "weather": {
+        "signal": "天氣信號"
+      }
+    },
     "empty": "尚無 Webhook",
     "emptyDesc": "訂閱外部系統以接收預約生命週期事件。",
     "noDeliveries": "尚無派送紀錄。",

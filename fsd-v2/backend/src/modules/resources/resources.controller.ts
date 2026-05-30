@@ -27,6 +27,20 @@ class CustomFieldDto {
   @IsOptional() @IsArray() @IsString({ each: true }) options?: string[];
 }
 
+// Per-resource overrides of the tenant workflow defaults. Every field is
+// optional — an absent key inherits the tenant value. requiresApproval is
+// deliberately a tri-state at the storage layer: absent = inherit, true =
+// force approval, false = explicitly waive it even if the tenant default
+// requires it. Whitelisting strips any unknown nested key so a client can't
+// smuggle arbitrary data into the jsonb column.
+class RuleOverridesDto {
+  @IsOptional() @IsInt() @Min(1) minDurationMinutes?: number;
+  @IsOptional() @IsInt() @Min(1) maxDurationMinutes?: number;
+  @IsOptional() @IsInt() @Min(1) bookingHorizonDays?: number;
+  @IsOptional() @IsInt() @Min(1) graceMinutes?: number;
+  @IsOptional() @IsBoolean() requiresApproval?: boolean;
+}
+
 class ResourceDto {
   @IsString() name!: string;
   @IsOptional() @IsString() location?: string;
@@ -55,6 +69,14 @@ class ResourceDto {
 
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CustomFieldDto)
   customFields?: CustomFieldDto[];
+
+  // Per-resource workflow rule overrides (duration/horizon/grace/approval).
+  // null = clear all overrides (inherit everything).
+  @IsOptional() @IsObject() @ValidateNested() @Type(() => RuleOverridesDto)
+  ruleOverrides?: RuleOverridesDto | null;
+
+  // Default cost-center code billed for this resource's bookings.
+  @IsOptional() @IsString() costCenterCode?: string | null;
 
   // Write-only: drives creation/soft-removal of child resources for a
   // splittable space. Not a column on the parent — handled in the service.

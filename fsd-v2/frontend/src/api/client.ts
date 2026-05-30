@@ -170,6 +170,14 @@ export const api = {
   // DSAR self-service export — JSON download of the caller's data.
   dsarExportMe: () =>
     http.get('/api/v1/dsar/me', { responseType: 'blob' }),
+  // Right-to-erasure: queues an audit-logged request for an administrator to
+  // action (kept for workflows that require manual review).
+  requestErasure: (reason?: string) =>
+    http.post('/api/v1/dsar/erasure-request', { reason }).then((r) => r.data),
+  // Immediate self-service erasure — anonymises + deactivates the account.
+  // The caller must clear its session afterwards (login no longer works).
+  eraseMyAccount: () =>
+    http.delete('/api/v1/dsar/me').then((r) => r.data),
 
   // Approvals
   listApprovals: () => http.get('/api/v1/approvals').then((r) => r.data),

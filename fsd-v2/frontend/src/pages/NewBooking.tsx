@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useT } from '../hooks/useT';
 import { useTimezone } from '../hooks/useTimezone';
 import { useToast } from '../stores/toast';
+import { useTenant } from '../stores/tenant';
 import { weekdayOfDate } from '../utils/datetime';
 
 // NewBooking is the multi-step booking wizard, separate from the
@@ -46,6 +47,7 @@ export function NewBooking() {
   // room may require them, so the wizard must render and enforce them or the
   // server rejects the submit with a 400 (QA #1).
   const [cfValues, setCfValues] = useState<Record<string, any>>({});
+  const [costCenter, setCostCenter] = useState('');
   const [recurring, setRecurring] = useState(false);
   const [pattern, setPattern] = useState<Pattern>('weekly');
   const [interval, setInterval] = useState(1);
@@ -93,11 +95,17 @@ export function NewBooking() {
   function pickRoom(r: any) {
     setPickedRoom(r);
     setCfValues({});   // a different room never inherits the previous one's answers
+    // Pre-fill the chargeback code from the room default when it's a valid code.
+    setCostCenter(r?.costCenterCode && costCenters.includes(r.costCenterCode) ? r.costCenterCode : '');
     setStep(3);
   }
 
   const customFields: any[] = pickedRoom?.customFields || [];
   function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); }
+
+  // Tenant chargeback codes — required on every booking when any are configured.
+  const customization = useTenant((s) => s.customization);
+  const costCenters: string[] = Array.isArray(customization?.cost_centers) ? customization!.cost_centers : [];
 
   function toggleByday(wd: number) {
     setByday((cur) => cur.includes(wd) ? cur.filter((d) => d !== wd) : [...cur, wd].sort());
@@ -112,6 +120,7 @@ export function NewBooking() {
     setRecurring(false);
     setDetail({ title: '', meetingUrl: '', isPrivate: false });
     setCfValues({});
+    setCostCenter('');
     setStep(1);
   }
 
@@ -126,6 +135,9 @@ export function NewBooking() {
       const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
       if (empty) { toast.warning(t('bookingModal.requiredField', { field: f.label || f.key })); return; }
     }
+    if (costCenters.length && !costCenter) {
+      toast.warning(t('bookingModal.requiredField', { field: 'Cost center' })); return;
+    }
     const customFieldValues = Object.keys(cfValues).length ? cfValues : undefined;
     setSubmitting(true);
     setResult(null);
@@ -139,6 +151,7 @@ export function NewBooking() {
           meetingUrl: detail.meetingUrl,
           isPrivate: detail.isPrivate,
           customFieldValues,
+          costCenterCode: costCenter || undefined,
         });
         setResult({ ok: t('booking.bookedId', { id: created.id }) });
       } else {
@@ -155,6 +168,7 @@ export function NewBooking() {
           meetingUrl: detail.meetingUrl,
           isPrivate: detail.isPrivate,
           customFieldValues,
+          costCenterCode: costCenter || undefined,
         });
         const created = res.bookingIds?.length || 0;
         const skipped = res.skipped?.length || 0;
@@ -269,6 +283,15 @@ export function NewBooking() {
               </label>
             );
           })}
+
+          {costCenters.length > 0 && (
+            <label>Cost center*
+              <select value={costCenter} onChange={(e) => setCostCenter(e.target.value)}>
+                <option value="">Choose a cost center…</option>
+                {costCenters.map((cc) => <option key={cc} value={cc}>{cc}</option>)}
+              </select>
+            </label>
+          )}
 
           <hr />
 

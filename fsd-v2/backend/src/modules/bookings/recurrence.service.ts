@@ -26,6 +26,7 @@ export interface CreateRecurringDto {
   isPrivate?: boolean;
   rrule?: string;           // RFC 5545 raw string; takes precedence
   customFieldValues?: Record<string, unknown>;
+  costCenterCode?: string;  // chargeback code applied to every occurrence
 }
 
 export interface ExpansionResult {
@@ -102,6 +103,7 @@ export class RecurrenceService {
           meetingUrl: dto.meetingUrl,
           isPrivate: dto.isPrivate,
           customFieldValues: dto.customFieldValues,
+          costCenterCode: dto.costCenterCode,
         }, { suppressNotification: true });
         // Tag the created booking with the recurrence id so cancelling
         // the series can flip them all in a single UPDATE.

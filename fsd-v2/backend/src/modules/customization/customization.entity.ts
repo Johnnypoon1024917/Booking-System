@@ -28,4 +28,13 @@ export const defaultCustomization = {
   recurrence_patterns: ['daily', 'weekly', 'monthly'],
   hko_weather_enabled: true,
   govhk_holidays_enabled: false,
+  // Chargeback / cost-center codes a booker must pick from. Empty = the
+  // tenant runs no chargeback codes and the field stays optional everywhere.
+  cost_centers: [] as string[],
+  // Ghost-booking auto-release. `enabled` is intentionally omitted from the
+  // default so an unconfigured tenant falls back to the AUTO_RELEASE_ENABLED
+  // env switch (backwards-compatible); once an admin toggles it in Tenant
+  // Studio the explicit value wins. grace_minutes is the tenant-wide default
+  // a per-resource ruleOverrides.graceMinutes can still tighten.
+  auto_release: { grace_minutes: 15 } as { enabled?: boolean; grace_minutes: number },
 };

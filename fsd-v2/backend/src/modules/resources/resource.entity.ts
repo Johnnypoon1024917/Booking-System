@@ -56,6 +56,27 @@ export class Resource {
     required?: boolean; options?: string[];
   }> | null;
 
+  // Per-resource overrides of the tenant-wide workflow rules. Any key left
+  // absent (or null) falls back to the tenant customization default, so an
+  // empty/missing object means "inherit everything". Persisted as jsonb so
+  // the override set can grow without a migration. See BookingValidatorService
+  // (duration/horizon) and BookingsService (approval) for the merge, and
+  // AutoReleaseService for graceMinutes.
+  @Column({ name: 'rule_overrides', type: 'jsonb', nullable: true })
+  ruleOverrides?: {
+    minDurationMinutes?: number;
+    maxDurationMinutes?: number;
+    bookingHorizonDays?: number;
+    graceMinutes?: number;
+    requiresApproval?: boolean;
+  } | null;
+
+  // Default chargeback / cost-center code billed for bookings of this
+  // resource. A booking may override it at create time; null = no default
+  // (the booker must pick one when the tenant has configured codes).
+  @Column({ name: 'cost_center_code', type: 'varchar', nullable: true })
+  costCenterCode?: string | null;
+
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }

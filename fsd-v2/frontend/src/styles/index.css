@@ -62,7 +62,7 @@
 
   /* Layout */
   --sidebar-w: 92px;
-  --topbar-h: 0px;
+  --topbar-h: 48px;   /* non-zero default so a bare .topbar can't collapse to 0px */
 
   /* Type */
   --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
@@ -141,10 +141,12 @@ a:hover { color: color-mix(in srgb, var(--brand-primary) 80%, black); }
 .input, input[type=text], input[type=number], input[type=date],
 input[type=time], input[type=email], input[type=password], input[type=datetime-local],
 input[type=search], input[type=url], input[type=tel], select, textarea {
-  width: 100%; padding: 10px 12px;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  width: 100%; box-sizing: border-box;
+  min-height: 44px;             /* modern control height */
+  padding: 11px 14px;           /* roomy padding */
+  border: 1px solid var(--border-strong); border-radius: 10px;
   background: var(--surface); color: var(--text);
-  font: inherit;
+  font: inherit; font-size: 14px;
   transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 .input:hover, input:hover, select:hover, textarea:hover { border-color: var(--border-strong); }
@@ -156,8 +158,8 @@ input[type=color] { width: 56px; height: 36px; padding: 2px; cursor: pointer; }
 input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand-primary); cursor: pointer; }
 label.field { display: block; }
 label.field > span {
-  display: block; font-size: 11px; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
+  display: block; font-size: 13px; font-weight: 500; color: var(--text);
+  text-transform: none; letter-spacing: 0; margin-bottom: 4px;
 }
 label.toggle {
   display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
@@ -341,6 +343,8 @@ label.toggle input { width: auto; }
   pointer-events: none; transition: opacity var(--dur), transform var(--dur);
 }
 .menu.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+/* A custom dropdown nested in a modal must clear the .overlay backdrop (z-index 80). */
+.overlay .menu, .modal .menu { z-index: 90; }
 .menu-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 9px 12px; border-radius: var(--radius-sm);
@@ -935,7 +939,7 @@ label.toggle input { width: auto; }
 }
 .btn-fsd:hover { background: color-mix(in srgb, var(--brand-primary) 88%, black); border-color: color-mix(in srgb, var(--brand-primary) 88%, black); }
 .btn-fsd.ghost { background: #fff; color: var(--text); border-color: var(--fsd-line); }
-.btn-fsd.ghost:hover { background: #f5f6f8; }
+.btn-fsd.ghost:hover { background: var(--surface-hover); }
 .btn-fsd.danger { background: var(--fsd-danger); border-color: var(--fsd-danger); }
 .btn-fsd:disabled { opacity: .55; cursor: not-allowed; }
 
@@ -957,8 +961,8 @@ table.dt th {
 }
 table.dt th.sortable { cursor: pointer; }
 table.dt th .caret { color: #c0c6ce; margin-left: 4px; font-size: 10px; }
-table.dt th.sorted-asc  .caret::after { content: '▲'; color: var(--fsd-primary); }
-table.dt th.sorted-desc .caret::after { content: '▼'; color: var(--fsd-primary); }
+table.dt th.sorted-asc  .caret::after { content: '▲'; color: var(--fsd-primary) !important; }
+table.dt th.sorted-desc .caret::after { content: '▼'; color: var(--fsd-primary) !important; }
 table.dt tbody tr:hover { background: #f9fbfc; }
 table.dt td .icon-btn {
   border: 0; background: transparent; cursor: pointer;
@@ -1666,37 +1670,9 @@ label.fld > span {
   text-transform: none;
   letter-spacing: 0;
 }
-.field input[type=text],
-.field input[type=email],
-.field input[type=date],
-.field input[type=time],
-.field input[type=number],
-.field input[type=password],
-.field select,
-.field textarea,
-.fld input[type=text],
-.fld input[type=email],
-.fld input[type=date],
-.fld input[type=time],
-.fld input[type=number],
-.fld input[type=password],
-.fld select,
-.fld textarea {
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid var(--fsd-line);
-  border-radius: 3px;
-  font-size: 13px;
-  background: #ffffff;
-  color: var(--text);
-}
-.field input:focus, .fld input:focus,
-.field select:focus, .fld select:focus,
-.field textarea:focus, .fld textarea:focus {
-  outline: none;
-  border-color: var(--fsd-primary);
-  box-shadow: 0 0 0 2px rgba(52,152,219,.18);
-}
+/* Inputs inside .field / .fld inherit the normalized base form-control styling
+   (44px / 10px radius / theme surface). The old V1 geometry + #fff override that
+   lived here was removed so class names no longer downgrade the control. */
 
 /* ---------- .stat tiles ---------- */
 .stat {
@@ -1741,7 +1717,7 @@ label.fld > span {
   color: var(--text);
   border-color: var(--fsd-line);
 }
-.mrbs-btn.ghost:hover { background: #f5f6f8; }
+.mrbs-btn.ghost:hover { background: var(--surface-hover); }
 
 /* ---------- KPI tiles (Dashboard analytics) ---------- */
 .kpi {
@@ -1856,8 +1832,8 @@ table.dt th .caret, .caret { color: #5f6875; }
 .modal section label input,
 .modal section label select,
 .modal section label textarea,
-.modal section > input[type=text],
-.modal section > input[type=email],
+.modal section input[type=text],
+.modal section input[type=email],
 .modal section input[type=url],
 .modal section input[type=tel],
 .modal section input[type=number],
@@ -1935,6 +1911,13 @@ table.dt th .caret, .caret { color: #5f6875; }
 .modal footer .btn-fsd.ghost,
 .modal footer .btn.ghost {
   background: #fff; color: var(--text-secondary); border: 1px solid var(--border-strong);
+}
+/* Geometry: match the modern input geometry so buttons don't fall back to the
+   legacy compat-layer (3px radius / 7px 14px / 13px) and clash with the inputs. */
+.modal footer .btn,
+.modal footer .btn-fsd {
+  border-radius: 10px; min-height: 44px;
+  padding: 0 18px; font-size: 14px; font-weight: 500;
 }
 
 /* ---- Booking summary header (BookingModal) ---- */

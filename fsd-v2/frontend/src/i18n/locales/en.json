@@ -366,6 +366,18 @@
     "targetUrl": "Target URL",
     "events": "Events",
     "eventsHelp": "Select which events should fire a POST. We re-send up to 5 times with exponential backoff (30s → 2h).",
+    "eventLabels": {
+      "booking": {
+        "created": "Booking created",
+        "updated": "Booking updated",
+        "cancelled": "Booking cancelled",
+        "approved": "Booking approved",
+        "rejected": "Booking rejected"
+      },
+      "weather": {
+        "signal": "Weather signal"
+      }
+    },
     "empty": "No webhooks yet",
     "emptyDesc": "Subscribe an external system to receive booking lifecycle events.",
     "noDeliveries": "No delivery attempts recorded yet.",

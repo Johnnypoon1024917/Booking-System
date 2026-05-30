@@ -17,6 +17,52 @@ export class DsarService {
     @InjectRepository(AuditEntry) private readonly audits: Repository<AuditEntry>,
   ) {}
 
+  // Right-to-erasure (GDPR Art. 17 / HK PDPO). Implemented as anonymisation,
+  // not a hard row delete: bookings and audit rows carry the user's FK and
+  // are needed for the room ledger / security trail, so we strip the personal
+  // data from the user row and from their bookings, deactivate the account,
+  // and cancel any still-upcoming reservations so the rooms are freed. The
+  // account can no longer authenticate (password/MFA/SSO/feed token all wiped).
+  async eraseSelf(tenantId: string, userId: string): Promise<{ bookingsRedacted: number; upcomingCancelled: number }> {
+    const anon = `erased-${userId.slice(0, 8)}`;
+
+    // Redact PII on the user row + sever every credential path.
+    await this.users.update({ id: userId, tenantId }, {
+      username: anon,
+      email: null as unknown as undefined,
+      dn: null as unknown as undefined,
+      grade: null as unknown as undefined,
+      ssoProvider: null as unknown as undefined,
+      ssoSubject: null as unknown as undefined,
+      mfaSecret: null as unknown as undefined,
+      mfaEnabled: false,
+      passwordHash: '!erased!',
+      icsFeedToken: null as unknown as undefined,
+      regionAccess: [],
+      isActive: false,
+    });
+
+    // Strip personal content (title / meeting link) from all of the user's
+    // bookings — these free-text fields routinely contain personal data.
+    const redact = await this.bookings.createQueryBuilder()
+      .update(Booking)
+      .set({ title: '', meetingUrl: '', redirectUrl: '' })
+      .where('tenant_id = :t AND user_id = :u', { t: tenantId, u: userId })
+      .execute();
+
+    // Cancel still-upcoming reservations so the rooms aren't held by a
+    // now-erased account.
+    const cancel = await this.bookings.createQueryBuilder()
+      .update(Booking)
+      .set({ status: 'Cancelled', exceptionNotes: 'account erased' })
+      .where('tenant_id = :t AND user_id = :u', { t: tenantId, u: userId })
+      .andWhere('end_time > NOW()')
+      .andWhere(`status NOT IN ('Cancelled','No Show')`)
+      .execute();
+
+    return { bookingsRedacted: redact.affected ?? 0, upcomingCancelled: cancel.affected ?? 0 };
+  }
+
   async bundle(tenantId: string, userId: string) {
     // Profile — single row by composite PK (tenant_id+id) to keep
     // tenant isolation even if a UUID is guessed.

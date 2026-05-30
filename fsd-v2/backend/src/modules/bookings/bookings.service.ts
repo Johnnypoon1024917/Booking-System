@@ -26,6 +26,9 @@ export interface CreateBookingDto {
   meetingUrl?: string;
   isPrivate?: boolean;
   customFieldValues?: Record<string, unknown>;
+  // Chargeback / cost-center code to bill this booking against. Validated
+  // against the tenant's configured list (customization.cost_centers).
+  costCenterCode?: string;
 }
 export interface UpdateBookingDto {
   startTime?: string | Date;
@@ -142,11 +145,14 @@ export class BookingsService {
     if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
 
     await this.assertCanBook(tenantId, userId, resource);
-    // Tenant-policy rules (past-date, horizon, duration, blackout, holiday).
+    // Tenant-policy rules (past-date, horizon, duration, blackout, holiday),
+    // with the resource's per-resource overrides layered on top (a room may
+    // cap duration tighter — or loosen the horizon — vs the tenant default).
     // Authoritative server-side mirror of the SPA's useBookingRules.
-    await this.validator.validate(tenantId, start, end);
+    await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined);
     await this.assertWithinOperatingHours(tenantId, resource, start, end);
     const customFieldValues = this.validateCustomFields(resource, dto.customFieldValues);
+    const costCenterCode = await this.resolveCostCenter(tenantId, dto.costCenterCode, resource);
 
     // Conflict check + insert run in one transaction holding a row-level lock
     // on the resource (and its composite relatives). Without this the SELECT
@@ -165,7 +171,12 @@ export class BookingsService {
         meetingUrl: dto.meetingUrl || '',
         isPrivate: !!dto.isPrivate,
         customFieldValues: Object.keys(customFieldValues).length ? customFieldValues : null,
-        status: resource.requiresApproval ? 'Pending Approval' : 'Confirmed',
+        costCenterCode,
+        // A per-resource override wins over the resource's own flag: `?? `
+        // falls through only when the override key is absent, so a room can
+        // explicitly waive (false) or force (true) approval regardless of the
+        // base requiresApproval value.
+        status: (resource.ruleOverrides?.requiresApproval ?? resource.requiresApproval) ? 'Pending Approval' : 'Confirmed',
       });
       return m.getRepository(Booking).save(b);
     });
@@ -212,14 +223,15 @@ export class BookingsService {
         // bookable. Previously `if (resource)` let a reschedule onto a
         // deleted/deactivated resource through with NO conflict check at all.
         if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
-        await this.validator.validate(tenantId, start, end);
+        await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined);
         await this.assertWithinOperatingHours(tenantId, resource, start, end);
         const ids = await this.relatedResourceIds(m, tenantId, resource);
         await this.lockResources(m, tenantId, ids);
         await this.assertNoConflict(m, tenantId, ids, start, end, id, resource);
-        // If the resource requires approval, a reschedule re-enters the
-        // approval queue rather than silently staying Confirmed.
-        if (resource.requiresApproval && b.status === 'Confirmed') {
+        // If the resource requires approval (per its override, else its own
+        // flag), a reschedule re-enters the approval queue rather than
+        // silently staying Confirmed.
+        if ((resource.ruleOverrides?.requiresApproval ?? resource.requiresApproval) && b.status === 'Confirmed') {
           b.status = 'Pending Approval';
         }
         b.startTime = start;
@@ -408,6 +420,26 @@ export class BookingsService {
       if (!isEmpty) cleaned[def.key] = raw;
     }
     return cleaned;
+  }
+
+  // Resolve + validate the chargeback cost-center code for a booking. The
+  // tenant's allowed codes live in customization.cost_centers. When that list
+  // is non-empty a code is REQUIRED and must be one of the configured values
+  // (the booking's explicit choice wins, else the resource's default). When
+  // the tenant has configured no codes the field is optional and passes
+  // through untouched — so existing tenants' booking flow is unaffected.
+  private async resolveCostCenter(
+    tenantId: string, requested: string | undefined, resource: Resource,
+  ): Promise<string | null> {
+    const code = (requested ?? resource.costCenterCode ?? '').trim();
+    const cust = (await this.customization.get(tenantId)) as Record<string, any>;
+    const allowed: string[] = Array.isArray(cust.cost_centers)
+      ? cust.cost_centers.filter((x: unknown): x is string => typeof x === 'string' && !!x.trim())
+      : [];
+    if (!allowed.length) return code || null;
+    if (!code) throw new BadRequestException('a cost center must be selected for this booking');
+    if (!allowed.includes(code)) throw new BadRequestException(`unknown cost center "${code}"`);
+    return code;
   }
 
   private async relatedResourceIds(m: EntityManager, tenantId: string, r: Resource): Promise<string[]> {

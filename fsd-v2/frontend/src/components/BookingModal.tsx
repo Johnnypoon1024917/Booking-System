@@ -4,6 +4,7 @@ import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
+import { useTenant } from '../stores/tenant';
 import { useBookingRules } from '../hooks/useBookingRules';
 import { useTimezone } from '../hooks/useTimezone';
 import { useT } from '../hooks/useT';
@@ -68,8 +69,14 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   const [until, setUntil] = useState('');   // optional end-date for the series (QA #7)
   const [services, setServices] = useState<string[]>([]);
   const [cfValues, setCfValues] = useState<Record<string, any>>({});
+  const [costCenter, setCostCenter] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any | null>(null);
+
+  // Tenant chargeback codes. When the tenant has configured any, a code is
+  // required for every booking (the server re-checks against the same list).
+  const customization = useTenant((s) => s.customization);
+  const costCenters: string[] = Array.isArray(customization?.cost_centers) ? customization!.cost_centers : [];
 
   const ruleError = useMemo(() => validate({ date, start, end }), [date, start, end, validate]);
 
@@ -89,7 +96,14 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   // whenever the selected resource changes so a different room never
   // inherits the previous one's answers.
   const customFields = selected?.customFields || [];
-  useEffect(() => { setCfValues({}); }, [selResId]);
+  useEffect(() => {
+    setCfValues({});
+    // Pre-fill the chargeback code from the resource's default (if any and
+    // still valid for the tenant), so the common case is one click.
+    const def = (selected as any)?.costCenterCode || '';
+    setCostCenter(def && costCenters.includes(def) ? def : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selResId]);
   function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); }
 
   // Pre-defined service add-ons — admins can override these via the
@@ -118,6 +132,9 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
       const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
       if (empty) { toast.warning(t('bookingModal.requiredField', { field: f.label || f.key })); return; }
     }
+    if (costCenters.length && !costCenter) {
+      toast.warning(t('bookingModal.requiredField', { field: 'Cost center' })); return;
+    }
     const customFieldValues = Object.keys(cfValues).length ? cfValues : undefined;
     setBusy(true);
     try {
@@ -144,6 +161,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
           customFieldValues,
+          costCenterCode: costCenter || undefined,
         });
       } else {
         r = await api.createBooking({
@@ -155,6 +173,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
           isPrivate,
           services: services.length ? services : undefined,
           customFieldValues,
+          costCenterCode: costCenter || undefined,
         });
       }
       setResult(r || { status: 'Confirmed' });
@@ -228,6 +247,15 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
         <input value={meetingUrl} onChange={(e) => setMeetingUrl(e.target.value)}
                placeholder="https://teams.microsoft.com/…" />
       </label>
+
+      {costCenters.length > 0 && (
+        <label>Cost center*
+          <select value={costCenter} onChange={(e) => setCostCenter(e.target.value)}>
+            <option value="">Choose a cost center…</option>
+            {costCenters.map((cc) => <option key={cc} value={cc}>{cc}</option>)}
+          </select>
+        </label>
+      )}
 
       <div className="field">
         <label>{t('bookingModal.services')}</label>

@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Observable } from 'rxjs';
 import { RealtimeGateway } from './realtime.gateway';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
+import { SkipTenantTx } from '../../common/decorators/skip-tenant-tx.decorator';
 
 // SSE-based live event stream. v1 used a raw WebSocket; SSE is simpler
 // here because Nest has a first-class @Sse decorator that auto-handles
@@ -15,6 +16,11 @@ import { CurrentUser, AuthUser } from '../../common/decorators/current-user.deco
 export class RealtimeController {
   constructor(private readonly gateway: RealtimeGateway) {}
 
+  // A never-completing SSE stream must NOT run inside the per-request tenant
+  // transaction — that would pin a pooled connection (and hold a transaction
+  // open) for the entire lifetime of the connection. Tenant scoping here is
+  // enforced in the gateway from the JWT tenantId.
+  @SkipTenantTx()
   @Sse()
   @ApiOperation({
     summary: 'Server-sent events stream for tenant-scoped lifecycle events',

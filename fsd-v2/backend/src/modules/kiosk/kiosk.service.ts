@@ -81,6 +81,9 @@ export class KioskService {
       tenantId: r.tenantId, resourceId, userId,
       startTime: start, endTime: end,
       status: 'Confirmed', title,
+      // Walk-ins can't pick a chargeback code at the tablet, so inherit the
+      // resource's default (if any) to keep cost-center reporting consistent.
+      costCenterCode: r.costCenterCode ?? null,
     }));
   }
 }
