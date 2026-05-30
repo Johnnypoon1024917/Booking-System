@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -362,7 +363,14 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		// logged with full detail but the client only sees a generic msg.
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "rejected: a scheduling conflict"),
+		case errors.Is(err, usecase.ErrInternal):
+			// DB/downstream failure after (or during) persistence. Return a
+			// 5xx so middleware.WithTenantTx rolls the transaction back
+			// instead of committing a half-written booking (audit #3, #4).
+			slog.Error("booking internal error", "err", msg, "user", userID, "resource", req.ResourceID)
+			http.Error(w, "Booking could not be completed — please try again", http.StatusInternalServerError)
+		case errors.Is(err, booking.ErrConcurrencyConflict),
+			strings.Contains(msg, "rejected: a scheduling conflict"),
 			strings.Contains(msg, "already at capacity"),
 			strings.Contains(msg, "optimistic locking"):
 			http.Error(w, msg, http.StatusConflict)

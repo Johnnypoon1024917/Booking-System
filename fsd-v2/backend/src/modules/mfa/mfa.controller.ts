@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsString, MinLength } from 'class-validator';
 import { MfaService } from './mfa.service';
 import { Public } from '../../common/decorators/public.decorator';
+import { RateLimit } from '../../common/guards/rate-limit.guard';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 
 class CodeDto {
@@ -45,7 +46,10 @@ export class MfaController {
     return this.mfa.disable(u.id, u.tenantId, body.code);
   }
 
+  // Tighter than login: a 6-digit TOTP has only 1M values, so cap brute-force
+  // attempts hard — 5 tries / 5 min per IP.
   @Public()
+  @RateLimit({ limit: 5, windowMs: 5 * 60_000 })
   @Post('login-verify')
   @HttpCode(200)
   loginVerify(@Body() body: LoginVerifyDto) {

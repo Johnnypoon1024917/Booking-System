@@ -21,7 +21,18 @@ http.interceptors.response.use(
     if (err.response?.status === 401) {
       localStorage.removeItem('fsd_jwt');
       localStorage.removeItem('fsd_user');
-      if (location.pathname !== '/login') location.href = '/login';
+      // Session expired mid-use. Don't bounce silently: remember where the
+      // user was so we can return them there after re-login, and leave a
+      // reason flag the Login screen surfaces as "your session expired".
+      // Guard on pathname so a failed login POST (already on /login) doesn't
+      // loop or get mislabelled as an expiry.
+      if (location.pathname !== '/login') {
+        try {
+          sessionStorage.setItem('fsd_session_expired', '1');
+          sessionStorage.setItem('fsd_return_to', location.pathname + location.search);
+        } catch { /* storage may be unavailable (private mode) — still redirect */ }
+        location.href = '/login';
+      }
     }
     const msg = err.response?.data?.message;
     if (msg) (err as any).displayMessage = Array.isArray(msg) ? msg.join('; ') : String(msg);
@@ -53,6 +64,8 @@ export const api = {
   updateResource: (id: string, b: any) =>
     http.put(`/api/v1/admin/resources/${id}`, b).then((r) => r.data),
   deleteResource: (id: string) => http.delete(`/api/v1/admin/resources/${id}`),
+  resourceChildren: (id: string) =>
+    http.get(`/api/v1/resources/${id}/children`).then((r) => r.data),
 
   // Bookings
   myBookings: () => http.get('/api/v1/bookings/mine').then((r) => r.data),

@@ -106,8 +106,17 @@ export class GraphService {
       try {
         await client.api(`/users/${mailboxUPN}/events/${existingGraphId}`).patch(event);
         return { id: existingGraphId };
-      } catch (e) {
-        this.log.warn(`graph patch failed for ${existingGraphId}, recreating: ${(e as Error).message}`);
+      } catch (e: any) {
+        // Only recreate when the event is genuinely gone (deleted in
+        // Outlook). On a transient failure (429/503/timeout/auth) we MUST
+        // rethrow rather than POST a new event: recreating would leave the
+        // original event orphaned on the room calendar and repoint our sync
+        // record at a duplicate. Let the caller's retry path handle transients.
+        const status = e?.statusCode ?? e?.status;
+        if (status !== 404 && status !== 410) {
+          throw e;
+        }
+        this.log.warn(`graph event ${existingGraphId} gone (${status}), recreating`);
       }
     }
     const created = await client.api(`/users/${mailboxUPN}/events`).post(event);

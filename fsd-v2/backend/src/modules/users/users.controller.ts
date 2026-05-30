@@ -6,7 +6,9 @@ import { IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID } from 'class
 import { UsersService } from './users.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Perm } from '../permissions/permission-catalog';
 import { AuditService } from '../audit/audit.service';
 
 class UpsertUserBody {
@@ -36,7 +38,8 @@ export class UsersController {
     return this.svc.findById(u.tenantId, id);
   }
 
-  @Post() async create(@CurrentUser() u: AuthUser, @Body() body: UpsertUserBody) {
+  @Post() @RequirePermission(Perm.UserCreate)
+  async create(@CurrentUser() u: AuthUser, @Body() body: UpsertUserBody) {
     const created = await this.svc.create(u.tenantId, body);
     await this.audit.record(u, {
       action: 'USER_CREATED', severity: 'warning',
@@ -46,7 +49,8 @@ export class UsersController {
     return created;
   }
 
-  @Put(':id') async update(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() body: UpsertUserBody) {
+  @Put(':id') @RequirePermission(Perm.UserUpdate)
+  async update(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() body: UpsertUserBody) {
     const before = await this.svc.findById(u.tenantId, id);
     const updated = await this.svc.update(u.tenantId, id, body);
     await this.audit.record(u, {
@@ -65,7 +69,8 @@ export class UsersController {
     return updated;
   }
 
-  @Delete(':id') @HttpCode(204) async deactivate(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+  @Delete(':id') @HttpCode(204) @RequirePermission(Perm.UserDeactivate)
+  async deactivate(@CurrentUser() u: AuthUser, @Param('id') id: string) {
     await this.svc.deactivate(u.tenantId, id);
     await this.audit.record(u, {
       action: 'USER_DEACTIVATED', severity: 'warning',

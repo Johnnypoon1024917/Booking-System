@@ -12,6 +12,13 @@ export interface SearchCriteria {
   end: Date;
 }
 
+// Write shape accepted by create/update: the entity columns plus the
+// write-only `subResources` list (which is expanded into child rows, not
+// stored on the parent).
+export type ResourceWriteDto = Partial<Resource> & {
+  subResources?: Array<{ id?: string; name: string; capacity?: number }>;
+};
+
 @Injectable()
 export class ResourcesService {
   constructor(@InjectRepository(Resource) private readonly repo: Repository<Resource>) {}
@@ -26,14 +33,78 @@ export class ResourcesService {
     return r;
   }
 
-  create(tenantId: string, dto: Partial<Resource>) {
-    return this.repo.save(this.repo.create({ ...dto, tenantId }));
+  async create(tenantId: string, dto: ResourceWriteDto) {
+    const { subResources, ...fields } = dto;
+    // A space with sub-rooms is a composite parent; otherwise honour whatever
+    // compositeMode was supplied (default 'standalone' on the entity).
+    if (subResources && subResources.length) fields.compositeMode = 'parent';
+    const parent = await this.repo.save(this.repo.create({ ...fields, tenantId }));
+    if (subResources && subResources.length) {
+      await this.syncSubResources(tenantId, parent, subResources);
+    }
+    return parent;
   }
 
-  async update(tenantId: string, id: string, dto: Partial<Resource>) {
+  async update(tenantId: string, id: string, dto: ResourceWriteDto) {
+    const { subResources, ...fields } = dto;
     const r = await this.get(tenantId, id);
-    Object.assign(r, dto, { id: r.id, tenantId: r.tenantId });
-    return this.repo.save(r);
+    if (subResources && subResources.length) fields.compositeMode = 'parent';
+    Object.assign(r, fields, { id: r.id, tenantId: r.tenantId });
+    const saved = await this.repo.save(r);
+    if (subResources) await this.syncSubResources(tenantId, saved, subResources);
+    return saved;
+  }
+
+  // Reconcile a parent's child resources against the editor's list. Upserts by
+  // name (case-insensitive): existing child → update capacity; new name →
+  // create a child row the booking cross-locking already understands. Children
+  // dropped from the list are SOFT-deactivated (isActive=false), never hard
+  // deleted, so a child that still holds bookings is never silently destroyed.
+  private async syncSubResources(
+    tenantId: string, parent: Resource, subs: Array<{ id?: string; name: string; capacity?: number }>,
+  ) {
+    const existing = await this.repo.find({ where: { tenantId, parentResourceId: parent.id } });
+    const byName = new Map(existing.map((c) => [c.name.trim().toLowerCase(), c]));
+    const keepIds = new Set<string>();
+
+    for (const sub of subs) {
+      const name = (sub.name || '').trim();
+      if (!name) continue;
+      const match = byName.get(name.toLowerCase());
+      if (match) {
+        match.capacity = sub.capacity ?? match.capacity;
+        match.isActive = true;
+        await this.repo.save(match);
+        keepIds.add(match.id);
+      } else {
+        const child = await this.repo.save(this.repo.create({
+          tenantId, name,
+          capacity: sub.capacity ?? parent.capacity ?? 1,
+          region: parent.region, location: parent.location,
+          assetType: parent.assetType,
+          requiresApproval: parent.requiresApproval,
+          departmentId: parent.departmentId,
+          parentResourceId: parent.id, compositeMode: 'child',
+          isActive: true,
+        }));
+        keepIds.add(child.id);
+      }
+    }
+    // Soft-deactivate children the admin removed from the list.
+    for (const c of existing) {
+      if (!keepIds.has(c.id) && c.isActive) {
+        c.isActive = false;
+        await this.repo.save(c);
+      }
+    }
+  }
+
+  // Return a parent's active child sub-resources (for the editor to re-hydrate).
+  children(tenantId: string, parentResourceId: string) {
+    return this.repo.find({
+      where: { tenantId, parentResourceId, isActive: true },
+      order: { name: 'ASC' },
+    });
   }
 
   async remove(tenantId: string, id: string) {

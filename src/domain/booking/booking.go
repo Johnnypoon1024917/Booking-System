@@ -25,7 +25,17 @@ type Repository interface {
 	FindByID(ctx context.Context, id string) (Booking, error)
 	UpdateStatus(ctx context.Context, id, status, notes string) error
 	HasConflict(ctx context.Context, resourceID string, start, end time.Time) (bool, error)
-	CountConcurrent(ctx context.Context, resourceID string, start, end time.Time) (int, error)
+	// CountConcurrent counts active bookings overlapping [start, end) on the
+	// resource. excludeBookingID (when non-empty) omits that booking from the
+	// tally so an update doesn't count the row being rescheduled against
+	// itself. Pass "" on create.
+	CountConcurrent(ctx context.Context, resourceID string, start, end time.Time, excludeBookingID string) (int, error)
+	// LockResourceForUpdate takes a row-level FOR UPDATE lock on the
+	// resource so a shared-capacity check + insert is serialized against
+	// concurrent bookings for the same resource. Only meaningful inside a
+	// request transaction (see middleware.WithTenantTx); a no-op against the
+	// bare pool. Closes the TOCTOU window between CountConcurrent and Save.
+	LockResourceForUpdate(ctx context.Context, resourceID string) error
 	AddServiceToBooking(ctx context.Context, bookingID, serviceID string, quantity int, notes string) error
 	Cancel(ctx context.Context, id, reason string) error
 }

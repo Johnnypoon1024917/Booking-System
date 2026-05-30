@@ -3,7 +3,6 @@ import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { useT } from '../hooks/useT';
 import { confirmDialog, alertDialog } from '../stores/confirm';
-import { confirmDialog, alertDialog } from '../stores/confirm';
 
 // Mirrors v1's AdminUsers.vue including the multi-select Departments
 // section — the v2 backend persists membership through the same M2M

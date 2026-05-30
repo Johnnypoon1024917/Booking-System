@@ -4,6 +4,7 @@ import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
+import { confirmDialog } from '../stores/confirm';
 
 interface Resource {
   id?: string;
@@ -22,9 +23,10 @@ interface Resource {
   compositeMode?: 'parent' | 'child' | '';
   subResources?: SubResource[];
   customFields?: CustomField[];
+  operatingHours?: { open: string; close: string } | null;
 }
 
-interface SubResource { name: string; capacity: number; }
+interface SubResource { id?: string; name: string; capacity: number; }
 interface CustomField { key: string; label: string; type: 'text' | 'number' | 'select' | 'date' | 'checkbox'; required?: boolean; options?: string[]; }
 
 interface Props {
@@ -66,6 +68,22 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     : 'whole';
   const [mode, setMode] = useState<Mode>(initialMode);
 
+  // Operating-hours toggle: on when the resource already has a window.
+  const [hoursEnabled, setHoursEnabled] = useState<boolean>(!!resource.operatingHours);
+
+  // Re-hydrate child sub-resources when editing an existing splittable parent —
+  // they live as separate child rows on the server, not nested on the parent.
+  useEffect(() => {
+    if (resource.id && initialMode === 'splittable' && !(resource.subResources?.length)) {
+      api.resourceChildren(resource.id)
+        .then((kids: any[]) => patch({
+          subResources: (kids || []).map((k) => ({ id: k.id, name: k.name, capacity: k.capacity })),
+        }))
+        .catch(() => { /* non-fatal — admin can re-add */ });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (mode === 'pods') {
       patch({ bookingMode: 'shared', sharedCapacity: form.sharedCapacity || form.capacity || 2 });
@@ -105,14 +123,26 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
   const equipmentStr = useMemo(() => (form.equipment || []).join(', '), [form.equipment]);
 
   async function save() {
-    // Fall back to region for location when blank — mirrors v1 so the
-    // server-side equality filter never drops the row.
-    if (!form.location || !form.location.trim()) form.location = form.region || '';
     if (!form.name?.trim()) { toast.warning('Name is required'); return; }
+    // Operating hours are optional; when enabled, validate open < close so the
+    // server doesn't silently ignore a backwards window.
+    if (hoursEnabled && form.operatingHours) {
+      const { open, close } = form.operatingHours;
+      if (!open || !close) { toast.warning('Set both open and close times'); return; }
+      if (close <= open) { toast.warning('Close time must be after open time'); return; }
+    }
+    // Build the payload explicitly so we control exactly what is sent: blank
+    // location falls back to region (keeps the server equality filter happy),
+    // and operatingHours is null unless the toggle is on.
+    const payload: Resource = {
+      ...form,
+      location: form.location?.trim() || form.region || '',
+      operatingHours: hoursEnabled ? form.operatingHours : null,
+    };
     setBusy(true);
     try {
-      if (form.id) await api.updateResource(form.id, form);
-      else         await api.createResource(form);
+      if (form.id) await api.updateResource(form.id, payload);
+      else         await api.createResource(payload);
       toast.success('Resource saved');
       onSaved?.();
       onClose();
@@ -123,7 +153,7 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
 
   async function deactivate() {
     if (!form.id) return;
-    if (!confirm(`Deactivate ${form.name}?`)) return;
+    if (!(await confirmDialog({ title: `Deactivate ${form.name}?`, tone: 'danger', confirmText: 'Deactivate', cancelText: 'Cancel' }))) return;
     setBusy(true);
     try {
       await api.deleteResource(form.id);
@@ -159,7 +189,7 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
             {ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
           </select>
         </label>
-        <label>Region *
+        <label>Region
           <select value={form.region || ''} onChange={(e) => patch({ region: e.target.value })}>
             <option value="">—</option>
             {REGIONS.map((r) => <option key={r}>{r}</option>)}
@@ -187,6 +217,32 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
                onChange={(e) => patch({ equipment: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
                placeholder="Projector, whiteboard, video conf …" />
       </label>
+
+      <div className="bm-box mt">
+        <label className="row" style={{ alignItems: 'center' }}>
+          <input type="checkbox" checked={hoursEnabled}
+            onChange={(e) => {
+              setHoursEnabled(e.target.checked);
+              if (e.target.checked && !form.operatingHours) {
+                patch({ operatingHours: { open: '08:00', close: '20:00' } });
+              }
+            }} />
+          <span style={{ marginLeft: 6 }}>Restrict to operating hours</span>
+        </label>
+        {hoursEnabled && (
+          <div className="grid-2 mt">
+            <label>Opens
+              <input type="time" value={form.operatingHours?.open || '08:00'}
+                onChange={(e) => patch({ operatingHours: { open: e.target.value, close: form.operatingHours?.close || '20:00' } })} />
+            </label>
+            <label>Closes
+              <input type="time" value={form.operatingHours?.close || '20:00'}
+                onChange={(e) => patch({ operatingHours: { open: form.operatingHours?.open || '08:00', close: e.target.value } })} />
+            </label>
+          </div>
+        )}
+        <small className="muted">Bookings outside this window are rejected. Leave off for 24-hour availability.</small>
+      </div>
 
       <div className="row gap mt" style={{ flexWrap: 'wrap' }}>
         <label className="row"><input type="checkbox" checked={!!form.requiresApproval}

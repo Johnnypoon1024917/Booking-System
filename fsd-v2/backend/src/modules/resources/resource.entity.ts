@@ -29,6 +29,29 @@ export class Resource {
   @Column({ name: 'department_id', type: 'uuid', nullable: true })
   departmentId?: string;
 
+  // Booking model: 'exclusive' (one booking per slot — the default) or
+  // 'shared' (pods — up to sharedCapacity independent bookings may overlap).
+  @Column({ name: 'booking_mode', default: 'exclusive' })
+  bookingMode!: string;
+  @Column({ name: 'shared_capacity', type: 'int', default: 1 })
+  sharedCapacity!: number;
+
+  // Local operating-hours window, enforced at booking time. null = open 24h.
+  // Stored as { open: 'HH:mm', close: 'HH:mm' } in the tenant's timezone.
+  @Column({ name: 'operating_hours', type: 'jsonb', nullable: true })
+  operatingHours?: { open: string; close: string } | null;
+
+  // Free-form equipment tags (e.g. ['Projector','Whiteboard']) and the
+  // per-resource custom booking-form questions. Both surface in the booking
+  // flow; persisted as jsonb so the shape can evolve without a migration.
+  @Column({ name: 'equipment', type: 'jsonb', nullable: true })
+  equipment?: string[] | null;
+  @Column({ name: 'custom_fields', type: 'jsonb', nullable: true })
+  customFields?: Array<{
+    key: string; label?: string; type?: string;
+    required?: boolean; options?: string[];
+  }> | null;
+
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date;
 }

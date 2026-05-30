@@ -6,7 +6,9 @@ import { IsArray, IsString } from 'class-validator';
 import { PermissionsService } from './permissions.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Perm } from './permission-catalog';
 import { AuditService } from '../audit/audit.service';
 
 class SetPermissionsDto {
@@ -26,7 +28,11 @@ export class PermissionsController {
     return this.svc.get(u.tenantId);
   }
 
+  // Editing the matrix itself is the most sensitive action — gate it on
+  // permission.manage so a Room Admin / Secretary (admin-tier by role but
+  // without this permission) can't rewrite the authorization model.
   @Put(':role') @HttpCode(204)
+  @RequirePermission(Perm.PermissionManage)
   async set(
     @CurrentUser() u: AuthUser,
     @Param('role') role: string,

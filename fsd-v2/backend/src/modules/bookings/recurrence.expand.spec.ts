@@ -8,7 +8,9 @@ import { RecurrenceService } from './recurrence.service';
 // `expand` is a pure private method (no DB), so we instantiate the service
 // with stub repos and reach it via `as any`.
 function makeService(): any {
-  return new RecurrenceService({} as any, {} as any, {} as any, {} as any);
+  // 5 stub deps: bookings, resources, recurrences repos + BookingsService +
+  // NotificationsService. `expand` is pure, so none are exercised here.
+  return new RecurrenceService({} as any, {} as any, {} as any, {} as any, {} as any);
 }
 
 function call(dto: any) {

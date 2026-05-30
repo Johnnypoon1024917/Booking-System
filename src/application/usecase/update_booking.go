@@ -16,12 +16,23 @@ import (
 // Conflict detection is re-run because the new window may collide with
 // other bookings on the same (or composite) resource.
 type UpdateBookingUseCase struct {
-	bookings booking.Repository
-	broker   MessageBroker
+	bookings  booking.Repository
+	broker    MessageBroker
+	validator *BookingValidator
 }
 
 func NewUpdateBookingUseCase(b booking.Repository, m MessageBroker) *UpdateBookingUseCase {
 	return &UpdateBookingUseCase{bookings: b, broker: m}
+}
+
+// WithValidator attaches the shared booking validator. When set, a time
+// change is re-validated against the same holiday / shared-capacity /
+// privilege rules enforced at creation, closing the bypass where a reschedule
+// skipped every business check (audit #1). Left nil (older callers / tests)
+// the update behaves as before and relies on the DB EXCLUDE constraint alone.
+func (uc *UpdateBookingUseCase) WithValidator(v *BookingValidator) *UpdateBookingUseCase {
+	uc.validator = v
+	return uc
 }
 
 type UpdateRequest struct {
@@ -48,12 +59,32 @@ func (uc *UpdateBookingUseCase) Execute(ctx context.Context, req UpdateRequest) 
 		if !req.NewEnd.After(req.NewStart) {
 			return booking.Booking{}, errors.New("end must be after start")
 		}
-		// Re-run conflict detection scoped to the same resource. The repo
-		// query treats the booking-being-updated as a conflict against
-		// itself (same resource_id + active status), so we cancel it first
-		// to free the slot, then re-save with new times. Cleaner approach
-		// is a single SQL UPDATE that uses the EXCLUDE constraint to fail
-		// loudly, which is what we do here:
+		// Re-validate the new window against the same business rules a
+		// creation would face: holiday blocking, shared-capacity limits
+		// (race-safe via FOR UPDATE) and the org-hierarchy privilege matrix.
+		// Before this the update path skipped all of them (audit #1). The
+		// booking being moved is excluded from its own capacity tally; for
+		// exclusive resources the bookings_no_overlap EXCLUDE constraint at
+		// Save time remains the authoritative overlap check.
+		if uc.validator != nil {
+			vres, verr := uc.validator.Validate(ctx, ValidationInput{
+				TenantID:         b.TenantID,
+				UserID:           b.UserID,
+				ResourceID:       b.ResourceID,
+				Start:            req.NewStart,
+				End:              req.NewEnd,
+				ExcludeBookingID: b.ID,
+			})
+			if verr != nil {
+				return booking.Booking{}, verr
+			}
+			// If policy now requires approval for the new window, drop the
+			// booking back to Pending so a privileged slot can't be claimed
+			// as Confirmed via an update (audit #1 privilege bypass).
+			if vres.RequiresApproval && b.Status == booking.StatusConfirmed {
+				b.Status = booking.StatusPendingApproval
+			}
+		}
 		b.StartTime = req.NewStart
 		b.EndTime = req.NewEnd
 	}

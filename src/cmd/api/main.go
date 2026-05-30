@@ -117,7 +117,10 @@ func main() {
 	reportUC := usecase.NewGenerateReportUseCase(reportRepo)
 	checkinUC := usecase.NewCheckinUseCase(checkinRepo, bookingRepo)
 	approvalUC := usecase.NewApprovalUseCase(bookingRepo, resourceRepo, approvalRepo, pimm)
-	updateUC := usecase.NewUpdateBookingUseCase(bookingRepo, pimm)
+	// Share the create pipeline's validator so a reschedule enforces the same
+	// holiday / shared-capacity / privilege rules instead of bypassing them.
+	updateUC := usecase.NewUpdateBookingUseCase(bookingRepo, pimm).
+		WithValidator(bookingUC.Validator())
 	recurringUC := usecase.NewExpandRecurringBookingUseCase(bookingRepo, seriesRepo)
 
 	// --- Handlers

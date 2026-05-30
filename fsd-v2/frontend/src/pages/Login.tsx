@@ -18,6 +18,7 @@ export function Login() {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin');
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState('');
@@ -35,6 +36,23 @@ export function Login() {
     api.ssoProviders(tenantSlug).then(setProviders).catch(() => setProviders([]));
   }, [tenantSlug]);
 
+  // If the API client bounced us here on a 401, explain why rather than
+  // showing a bare login form (the user's session expired mid-action).
+  useEffect(() => {
+    if (sessionStorage.getItem('fsd_session_expired')) {
+      sessionStorage.removeItem('fsd_session_expired');
+      setNotice(t('login.sessionExpired'));
+    }
+  }, [t]);
+
+  // After any successful auth, return the user to where they were when the
+  // session expired (if known), else the dashboard.
+  function afterLogin() {
+    const to = sessionStorage.getItem('fsd_return_to');
+    sessionStorage.removeItem('fsd_return_to');
+    nav(to && to !== '/login' ? to : '/');
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setErr(null);
@@ -46,7 +64,7 @@ export function Login() {
         setMfaToken(r.mfaToken);
       } else {
         login(r.accessToken, r.user);
-        nav('/');
+        afterLogin();
       }
     } catch (e: any) {
       setErr(e.displayMessage || t('login.loginFailed'));
@@ -59,7 +77,7 @@ export function Login() {
     try {
       const r = await api.mfaLoginVerify(mfaToken!, mfaCode);
       login(r.accessToken, r.user);
-      nav('/');
+      afterLogin();
     } catch (e: any) {
       setErr(e.displayMessage || t('login.invalidCode'));
     } finally { setBusy(false); }
@@ -72,7 +90,7 @@ export function Login() {
     try {
       const r = await api.changePassword(changeToken!, newPassword);
       login(r.accessToken, r.user);
-      nav('/');
+      afterLogin();
     } catch (e: any) {
       setErr(e.displayMessage || t('login.changeFailed'));
     } finally { setBusy(false); }
@@ -97,7 +115,7 @@ export function Login() {
       const response = serializeAssertion(cred as PublicKeyCredential);
       const r = await api.passkeyLoginFinish(tenantSlug, username, response);
       login(r.accessToken, r.user);
-      nav('/');
+      afterLogin();
     } catch (e: any) {
       setErr(e.displayMessage || e.message || t('login.passkeyFailed'));
     } finally { setBusy(false); }
@@ -149,6 +167,7 @@ export function Login() {
     <div className="login-page">
       <form className="login-card" onSubmit={submit}>
         <h1>FSD MRBS</h1>
+        {notice && <div className="notice" role="status">{notice}</div>}
         <p className="muted">{t('login.signInTenant')}</p>
         <label>{t('login.tenant')}<input value={tenantSlug} onChange={(e) => setSlug(e.target.value)} /></label>
         <label>{t('login.username')}<input value={username} onChange={(e) => setUsername(e.target.value)} /></label>

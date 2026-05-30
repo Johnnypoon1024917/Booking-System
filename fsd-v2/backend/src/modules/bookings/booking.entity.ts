@@ -7,7 +7,7 @@ import {
 // so cross-stack payloads round-trip cleanly during the cut-over.
 export type BookingStatus =
   | 'Confirmed' | 'Pending Approval' | 'Cancelled'
-  | 'Checked In' | 'No Show' | 'Exception';
+  | 'Checked In' | 'No Show' | 'Attended' | 'Exception';
 
 @Entity('bookings')
 @Index(['tenantId', 'startTime'])
@@ -26,6 +26,12 @@ export class Booking {
   @Column({ name: 'redirect_url', default: '' }) redirectUrl!: string;
   @Column({ name: 'exception_notes', default: '' }) exceptionNotes!: string;
   @Column({ name: 'booking_mode', default: 'exclusive' }) bookingMode!: string;
+
+  // Answers to the resource's custom booking-form questions, keyed by the
+  // custom field `key`. jsonb so the shape follows whatever the resource
+  // defines without a migration. Empty/absent when the resource has none.
+  @Column({ name: 'custom_field_values', type: 'jsonb', nullable: true })
+  customFieldValues?: Record<string, unknown> | null;
 
   @Column({ name: 'is_private', default: false }) isPrivate!: boolean;
   @Column({ name: 'is_recurring', default: false }) isRecurring!: boolean;

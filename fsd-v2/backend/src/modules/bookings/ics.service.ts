@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThanOrEqual, Repository } from 'typeorm';
-import { createHash } from 'crypto';
+import { randomBytes } from 'crypto';
 import { Booking } from './booking.entity';
 import { Tenant } from '../tenants/tenant.entity';
 import { User } from '../users/user.entity';
@@ -49,31 +49,59 @@ export class IcsService {
       .map((b) => ({
         uid: `${b.id}@${tenant.slug}.fsd-mrbs`,
         sequence: b.version || 0,
-        summary: b.title || 'Booking',
+        // Private bookings expose only a neutral placeholder. The feed URL is
+        // a bearer token that ends up in third-party calendar-server logs, so
+        // a private subject must never be written into it.
+        summary: b.isPrivate ? 'Private booking' : (b.title || 'Booking'),
         location: resourceMap.get(b.resourceId) || '',
         start: b.startTime,
         end: b.endTime,
         status: b.status,
-        url: b.meetingUrl || '',
+        // Likewise withhold the join link for private events.
+        url: b.isPrivate ? '' : (b.meetingUrl || ''),
       })));
     return { filename: `${tenant.slug}.ics`, body };
   }
 
-  // Tokens are an opaque per-user secret. For now we derive them
-  // deterministically from (tenant, user, JWT secret) — same trick v1
-  // used so users can subscribe once and never need to rotate. When we
-  // ship rotation, swap this for a stored hash column on `users`.
+  // Resolve the feed token to its user via a direct indexed lookup on the
+  // stored ics_feed_token. O(1) — the previous derive-and-scan-every-user
+  // loop was an O(users) DoS amplifier on large tenants. The token column is
+  // select:false, so it has to be requested explicitly.
   private async resolveUserByToken(tenantId: string, token: string): Promise<User | null> {
-    const candidates = await this.users.find({ where: { tenantId, isActive: true } });
-    for (const u of candidates) {
-      if (constantTimeEq(icsTokenFor(u.id, tenantId), token)) return u;
-    }
-    return null;
+    if (!token) return null;
+    return this.users
+      .createQueryBuilder('u')
+      .addSelect('u.icsFeedToken')
+      .where('u.tenant_id = :t', { t: tenantId })
+      .andWhere('u.is_active = true')
+      .andWhere('u.ics_feed_token = :tok', { tok: token })
+      .getOne();
   }
 
-  // Helper exposed via controller so the SPA can show "Your iCal URL".
-  tokenFor(userId: string, tenantId: string): string {
-    return icsTokenFor(userId, tenantId);
+  // Return the caller's feed token, minting + persisting one on first use.
+  // Exposed via the controller so the SPA can render "Your iCal URL".
+  async tokenFor(userId: string, tenantId: string): Promise<string> {
+    const u = await this.users
+      .createQueryBuilder('u')
+      .addSelect('u.icsFeedToken')
+      .where('u.id = :id', { id: userId })
+      .andWhere('u.tenant_id = :t', { t: tenantId })
+      .getOne();
+    if (!u) throw new NotFoundException('user not found');
+    if (!u.icsFeedToken) {
+      u.icsFeedToken = newFeedToken();
+      await this.users.update({ id: userId }, { icsFeedToken: u.icsFeedToken });
+    }
+    return u.icsFeedToken;
+  }
+
+  // Rotate (revoke + reissue) the caller's feed token. Any previously
+  // shared/leaked iCal URL immediately stops resolving.
+  async rotateToken(userId: string, tenantId: string): Promise<string> {
+    const token = newFeedToken();
+    const r = await this.users.update({ id: userId, tenantId }, { icsFeedToken: token });
+    if (!r.affected) throw new NotFoundException('user not found');
+    return token;
   }
 
   private async resourceLookup(tenantId: string, ids: string[]): Promise<Map<string, string>> {
@@ -85,18 +113,11 @@ export class IcsService {
   }
 }
 
-// icsTokenFor produces a stable, opaque, per-user feed token. Long
-// enough to resist guessing but still URL-safe and human-pasteable.
-export function icsTokenFor(userId: string, tenantId: string): string {
-  const secret = process.env.ICS_FEED_SECRET || process.env.JWT_SECRET || 'fsd-ics-default';
-  return createHash('sha256').update(`${userId}|${tenantId}|${secret}`).digest('base64url').slice(0, 32);
-}
-
-function constantTimeEq(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+// newFeedToken mints a fresh opaque, URL-safe, per-user feed token. 256 bits
+// of CSPRNG entropy — unguessable, and unique per user so the lookup is a
+// direct index hit. Rotatable, so a leaked feed URL can be revoked.
+function newFeedToken(): string {
+  return randomBytes(32).toString('base64url');
 }
 
 // ---- ICS encoder (kept in this file to avoid sprawl) -------------

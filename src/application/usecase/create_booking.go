@@ -13,6 +13,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// ErrInternal marks an error as an internal/server failure (DB outage,
+// downstream service) rather than a user-input problem. Handlers map it to a
+// 5xx so the surrounding per-request transaction (middleware.WithTenantTx)
+// rolls back any partially-persisted state. Wrap underlying errors with %w.
+var ErrInternal = errors.New("internal booking error")
+
 // MessageBroker defines the interface for RabbitMQ PIMM/ICS syncing
 type MessageBroker interface {
 	Publish(queueName string, message []byte) error
@@ -49,30 +55,34 @@ type PrivilegePolicy interface {
 
 type CreateBookingUseCase struct {
 	bookingRepo  booking.Repository
-	adminRepo    admin.AdminRepository
-	resourceRepo ResourceLookup
+	validator    *BookingValidator
 	limitChecker BookingLimitChecker
 	chain        ChainMaterializer
 	broker       MessageBroker
 	zoomMaskBase string
-	privilege    PrivilegePolicy
 }
 
 // NewCreateBookingUseCase wires the booking pipeline. resourceRepo and
 // limitChecker may be nil for backwards compatibility (tests / older callers);
-// the use case degrades gracefully when they are absent.
+// the use case degrades gracefully when they are absent. Holiday, capacity and
+// privilege checks live in the shared BookingValidator so update_booking.go
+// enforces the same rules.
 func NewCreateBookingUseCase(bRepo booking.Repository, aRepo admin.AdminRepository, broker MessageBroker) *CreateBookingUseCase {
 	return &CreateBookingUseCase{
 		bookingRepo: bRepo,
-		adminRepo:   aRepo,
+		validator:   NewBookingValidator(bRepo, aRepo),
 		broker:      broker,
 	}
 }
 
+// Validator exposes the shared validator so it can be handed to the update
+// use case, keeping a single source of truth for booking rules.
+func (uc *CreateBookingUseCase) Validator() *BookingValidator { return uc.validator }
+
 // WithResourceLookup attaches a resource repository so approval-required and
 // special-room logic can be enforced at booking time.
 func (uc *CreateBookingUseCase) WithResourceLookup(r ResourceLookup) *CreateBookingUseCase {
-	uc.resourceRepo = r
+	uc.validator.WithResourceLookup(r)
 	return uc
 }
 
@@ -92,7 +102,7 @@ func (uc *CreateBookingUseCase) WithZoomMaskBase(base string) *CreateBookingUseC
 // WithPrivilegePolicy attaches the org-hierarchy privilege matrix. When
 // set, the booker's role scope/workflow is enforced before persistence.
 func (uc *CreateBookingUseCase) WithPrivilegePolicy(p PrivilegePolicy) *CreateBookingUseCase {
-	uc.privilege = p
+	uc.validator.WithPrivilegePolicy(p)
 	return uc
 }
 
@@ -167,89 +177,45 @@ func (uc *CreateBookingUseCase) ExecuteRequest(ctx context.Context, req Request)
 		return Result{}, errors.New("booking start must be in the future")
 	}
 
-	// 1. Holiday blocking
-	isHoliday, err := uc.adminRepo.IsDateHoliday(ctx, req.Start)
-	if err != nil {
-		return Result{}, errors.New("system error verifying calendar dates")
-	}
-	if isHoliday {
-		return Result{}, errors.New("booking rejected: the selected date is a designated public holiday")
+	// Reject malformed service lines up front (audit #5) so we never persist a
+	// booking whose services would then be rejected.
+	for _, s := range req.Services {
+		if s.Quantity <= 0 {
+			return Result{}, fmt.Errorf("booking rejected: service %s quantity must be positive", s.ServiceID)
+		}
 	}
 
-	// 2. Per-user booking limit (best-effort: skip if not wired)
+	// Per-user booking limit (create-only; best-effort: skip if not wired).
 	if uc.limitChecker != nil && req.TenantID != "" {
 		ok, limit, err := uc.limitChecker.WithinLimit(ctx, req.TenantID, req.UserID)
 		if err != nil {
-			return Result{}, errors.New("could not verify booking limit")
+			return Result{}, fmt.Errorf("could not verify booking limit: %s: %w", err, ErrInternal)
 		}
 		if !ok {
 			return Result{}, fmt.Errorf("booking rejected: user has reached the active-booking limit (%d)", limit)
 		}
 	}
 
-	// 3. Resource lookup (needed before conflict detection so we know the mode)
-	requiresApproval := false
-	var resource *booking.Resource
-	if uc.resourceRepo != nil {
-		resource, err = uc.resourceRepo.GetByID(ctx, req.ResourceID)
-		if err == nil && resource != nil {
-			if !resource.IsActive {
-				return Result{}, errors.New("booking rejected: resource is inactive")
-			}
-			requiresApproval = resource.RequiresApproval
-		}
+	// Holiday blocking + conflict/shared-capacity detection (race-safe via a
+	// FOR UPDATE lock on shared resources) + org-hierarchy privilege matrix.
+	// Shared with the update use case so a reschedule can't bypass them
+	// (audit #1, #2).
+	vres, err := uc.validator.Validate(ctx, ValidationInput{
+		TenantID:   req.TenantID,
+		UserID:     req.UserID,
+		ResourceID: req.ResourceID,
+		Start:      req.Start,
+		End:        req.End,
+	})
+	if err != nil {
+		return Result{}, err
 	}
-
-	// 4. Conflict / capacity detection
-	//   - exclusive resources: any overlap is a conflict
-	//   - shared resources: count concurrent overlaps; reject only if the
-	//     count would exceed shared_capacity (gym = 10, classroom = 20, …)
-	if resource != nil && resource.IsShared() {
-		cap := resource.SharedCapacity
-		if cap <= 0 {
-			cap = resource.Capacity
-		}
-		if cap <= 0 {
-			cap = 1
-		}
-		count, err := uc.bookingRepo.CountConcurrent(ctx, req.ResourceID, req.Start, req.End)
-		if err != nil {
-			return Result{}, fmt.Errorf("capacity check failed: %w", err)
-		}
-		if count >= cap {
-			return Result{}, fmt.Errorf("booking rejected: this slot is already at capacity (%d / %d)", count, cap)
-		}
-	} else {
-		hasConflict, err := uc.bookingRepo.HasConflict(ctx, req.ResourceID, req.Start, req.End)
-		if err != nil {
-			return Result{}, fmt.Errorf("conflict check failed: %w", err)
-		}
-		if hasConflict {
-			return Result{}, errors.New("booking rejected: a scheduling conflict was detected")
-		}
-	}
+	resource := vres.Resource
+	requiresApproval := vres.RequiresApproval
 
 	maskedURL := MaskMeetingURL(req.MeetingURL)
 	if uc.zoomMaskBase != "" && req.MeetingURL != "" {
 		maskedURL = fmt.Sprintf("%s?target=%s", uc.zoomMaskBase, req.MeetingURL)
-	}
-
-	// 4b. Org-hierarchy privilege matrix (Module D). Out-of-scope bookings
-	//     are rejected; restricted/supervisor workflows force approval.
-	if uc.privilege != nil && req.TenantID != "" {
-		loc := ""
-		if resource != nil {
-			loc = resource.Location
-		}
-		force, deny, reason, perr := uc.privilege.Evaluate(ctx, req.TenantID, req.UserID, loc)
-		if perr == nil {
-			if deny {
-				return Result{}, fmt.Errorf("booking rejected: %s", reason)
-			}
-			if force {
-				requiresApproval = true
-			}
-		}
 	}
 
 	status := booking.StatusConfirmed
@@ -282,32 +248,36 @@ func (uc *CreateBookingUseCase) ExecuteRequest(ctx context.Context, req Request)
 		if errors.Is(err, booking.ErrConcurrencyConflict) {
 			return Result{}, err
 		}
-		return Result{}, fmt.Errorf("failed to persist booking: %w", err)
+		return Result{}, fmt.Errorf("failed to persist booking: %s: %w", err, ErrInternal)
 	}
 
-	// Save associated services, if any.
-	if len(req.Services) > 0 {
-		for _, s := range req.Services {
-			err := uc.bookingRepo.AddServiceToBooking(ctx, newBooking.ID, s.ServiceID, s.Quantity, s.Notes)
-			if err != nil {
-				// Log the error but don't fail the whole booking. Service attachment is non-critical.
-				fmt.Printf("WARN: could not attach service %s to booking %s: %v\n", s.ServiceID, newBooking.ID, err)
-			}
+	// Attach services. We run inside the per-request transaction
+	// (middleware.WithTenantTx), so returning an error here rolls the whole
+	// booking back rather than leaving a row whose paid services silently
+	// vanished (audit #3). Quantities were validated above.
+	for _, s := range req.Services {
+		if err := uc.bookingRepo.AddServiceToBooking(ctx, newBooking.ID, s.ServiceID, s.Quantity, s.Notes); err != nil {
+			return Result{}, fmt.Errorf("could not attach service %s: %s: %w", s.ServiceID, err, ErrInternal)
 		}
 	}
 
-	// 6. Multi-level approval chain (best-effort). If a tenant rule
-	//    matches this booking we transition it to PendingApproval and
-	//    persist one approval_steps row per chain level. The booking
-	//    moves to Confirmed only when every step has been approved.
+	// 6. Multi-level approval chain. If a tenant rule matches this booking we
+	//    transition it to PendingApproval and persist one approval_steps row
+	//    per chain level. Fail closed (audit #4): a chain error rolls the
+	//    booking back instead of silently confirming it. Materialize returns
+	//    (0, nil) — not an error — when no chain applies, so the no-chain path
+	//    is unaffected.
 	if uc.chain != nil && resource != nil {
 		levels, err := uc.chain.Materialize(ctx, newBooking, resource)
-		if err == nil && levels > 0 {
-			if newBooking.Status != booking.StatusPendingApproval {
-				_ = uc.bookingRepo.UpdateStatus(ctx, newBooking.ID, booking.StatusPendingApproval, "")
-				newBooking.Status = booking.StatusPendingApproval
-				requiresApproval = true
+		if err != nil {
+			return Result{}, fmt.Errorf("could not process approval chain: %s: %w", err, ErrInternal)
+		}
+		if levels > 0 && newBooking.Status != booking.StatusPendingApproval {
+			if err := uc.bookingRepo.UpdateStatus(ctx, newBooking.ID, booking.StatusPendingApproval, ""); err != nil {
+				return Result{}, fmt.Errorf("could not set approval status: %s: %w", err, ErrInternal)
 			}
+			newBooking.Status = booking.StatusPendingApproval
+			requiresApproval = true
 		}
 	}
 

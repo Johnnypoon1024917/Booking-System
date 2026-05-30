@@ -8,7 +8,9 @@ import {
 import { WebhooksService } from './webhooks.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Perm } from '../permissions/permission-catalog';
 import { AuditService } from '../audit/audit.service';
 
 class CreateWebhookDto {
@@ -27,6 +29,7 @@ class UpdateWebhookDto {
 @Controller('admin/webhooks')
 @UseGuards(RolesGuard)
 @RequireRoles(...AdminRoles)
+@RequirePermission(Perm.WebhookManage)
 export class WebhooksController {
   constructor(
     private readonly svc: WebhooksService,

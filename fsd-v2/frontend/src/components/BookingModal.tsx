@@ -1,10 +1,20 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock } from 'lucide-react';
 import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useBookingRules } from '../hooks/useBookingRules';
+import { useTimezone } from '../hooks/useTimezone';
+import { useT } from '../hooks/useT';
+
+interface CustomField {
+  key: string;
+  label?: string;
+  type?: 'text' | 'number' | 'select' | 'date' | 'checkbox';
+  required?: boolean;
+  options?: string[];
+}
 
 interface Resource {
   id?: string;
@@ -17,6 +27,7 @@ interface Resource {
   Capacity?: number;
   requiresApproval?: boolean;
   RequiresApproval?: boolean;
+  customFields?: CustomField[];
 }
 
 interface Props {
@@ -42,6 +53,8 @@ function rName(r: Resource) { return r.name || r.Name || ''; }
 export function BookingModal({ resource, resources, date, start, end, onClose, onBooked }: Props) {
   const toast = useToast();
   const { validate, allowsPattern } = useBookingRules();
+  const tz = useTimezone();
+  const { t } = useT();
 
   const choices = resources ?? (resource ? [resource] : []);
   const [selResId, setSelResId] = useState(resource ? rId(resource) : '');
@@ -53,6 +66,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   const [pattern, setPattern] = useState<'daily' | 'weekly' | 'bi-weekly' | 'monthly'>('weekly');
   const [count, setCount] = useState(4);
   const [services, setServices] = useState<string[]>([]);
+  const [cfValues, setCfValues] = useState<Record<string, any>>({});
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any | null>(null);
 
@@ -70,6 +84,13 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   const needsApproval = !!(selected && (selected.requiresApproval ?? selected.RequiresApproval));
   const showPicker = choices.length > 1 || !resource;
 
+  // Custom booking-form fields are defined per resource; reset answers
+  // whenever the selected resource changes so a different room never
+  // inherits the previous one's answers.
+  const customFields = selected?.customFields || [];
+  useEffect(() => { setCfValues({}); }, [selResId]);
+  function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); }
+
   // Pre-defined service add-ons — admins can override these via the
   // tenant studio later; for now this matches v1's hard-coded list.
   const SERVICE_OPTIONS = ['Catering', 'IT setup', 'AV equipment', 'Whiteboard'];
@@ -86,9 +107,17 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
   }
 
   async function submit() {
-    if (ruleError) { toast.error('Cannot book', ruleError); return; }
-    if (!resId) { toast.warning('Pick a resource'); return; }
-    if (!title.trim()) { toast.warning('Title required'); return; }
+    if (ruleError) { toast.error(t('bookingModal.cannotBook'), ruleError); return; }
+    if (!resId) { toast.warning(t('bookingModal.pickResource')); return; }
+    if (!title.trim()) { toast.warning(t('bookingModal.titleRequired')); return; }
+    // Enforce required custom fields client-side (the server re-checks).
+    for (const f of customFields) {
+      if (!f.required) continue;
+      const v = cfValues[f.key];
+      const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+      if (empty) { toast.warning(t('bookingModal.requiredField', { field: f.label || f.key })); return; }
+    }
+    const customFieldValues = Object.keys(cfValues).length ? cfValues : undefined;
     setBusy(true);
     try {
       const startIso = new Date(`${date}T${start}:00`).toISOString();
@@ -107,6 +136,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
           title: title.trim(),
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
+          customFieldValues,
         });
       } else {
         r = await api.createBooking({
@@ -117,25 +147,26 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
           services: services.length ? services : undefined,
+          customFieldValues,
         });
       }
       setResult(r || { status: 'Confirmed' });
-      toast.success(recur ? 'Recurring booking submitted' : 'Booking submitted');
+      toast.success(recur ? t('bookingModal.recurringSubmitted') : t('bookingModal.submitted'));
       setTimeout(() => { onBooked?.(r); onClose(); }, 900);
     } catch (e: any) {
-      toast.error('Booking failed', e.displayMessage || e.message);
+      toast.error(t('bookingModal.bookingFailed'), e.displayMessage || e.message);
     } finally { setBusy(false); }
   }
 
   return (
     <Modal
-      title="Confirm booking"
+      title={t('bookingModal.confirmTitle')}
       onClose={onClose}
       footer={<>
         <span className="spacer" />
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
         <button className="btn primary" disabled={busy || !!result || !!ruleError || !resId} onClick={submit}>
-          {busy && <Loader2 size={14} className="spin" />} Confirm booking
+          {busy && <Loader2 size={14} className="spin" />} {t('bookingModal.confirm')}
         </button>
       </>}
     >
@@ -143,9 +174,9 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
         <div className="bm-thumb"><Building2 size={20} color="white" /></div>
         <div style={{ flex: 1 }}>
           {showPicker ? (
-            <label style={{ margin: 0 }}>Resource*
+            <label style={{ margin: 0 }}>{t('bookingModal.resource')}*
               <select value={selResId} onChange={(e) => setSelResId(e.target.value)}>
-                <option value="">Choose a resource…</option>
+                <option value="">{t('bookingModal.chooseResource')}</option>
                 {choices.map((r) => (
                   <option key={rId(r)} value={rId(r)}>
                     {rName(r)}{(r.location || r.Location) ? ` · ${r.location || r.Location}` : ''}
@@ -157,7 +188,7 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
             <h3 style={{ margin: 0 }}>{resName}</h3>
           )}
           {selected && (
-            <small className="muted">{resLoc}{resCap ? ` · ${resCap} pax` : ''}</small>
+            <small className="muted">{resLoc}{resCap ? ` · ${t('bookingModal.pax', { n: resCap })}` : ''}</small>
           )}
         </div>
       </div>
@@ -166,22 +197,27 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
         <span><Calendar size={14} /> {formatDate(date)}</span>
         <span><Clock size={14} /> {start} – {end}</span>
         <span className={`tag ${needsApproval ? 'warning' : 'ok'}`}>
-          {needsApproval ? 'Requires approval' : 'Auto-approved'}
+          {needsApproval ? t('bookingModal.requiresApproval') : t('bookingModal.autoApproved')}
         </span>
       </div>
+      {/* Always state the zone the slot is in — these times are the tenant's
+          local wall-clock, which may differ from the viewer's browser zone. */}
+      <small className="muted" style={{ display: 'block', marginTop: -4 }}>
+        {t('bookingModal.timesShownIn', { zone: tz.label })}
+      </small>
 
-      <label>Title*
+      <label>{t('bookingModal.fieldTitle')}*
         <input value={title} onChange={(e) => setTitle(e.target.value)}
-               placeholder="e.g. Weekly team sync" />
+               placeholder={t('bookingModal.titlePlaceholder')} />
       </label>
 
-      <label>Meeting URL
+      <label>{t('bookingModal.meetingUrl')}
         <input value={meetingUrl} onChange={(e) => setMeetingUrl(e.target.value)}
                placeholder="https://teams.microsoft.com/…" />
       </label>
 
       <div className="field">
-        <label>Services / add-ons</label>
+        <label>{t('bookingModal.services')}</label>
         <div className="chip-grid">
           {SERVICE_OPTIONS.map((opt) => (
             <label key={opt} className="dep-chip">
@@ -192,22 +228,56 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
         </div>
       </div>
 
+      {/* Resource-defined custom fields. Rendered by type; required ones are
+          enforced on submit (and again server-side). */}
+      {customFields.map((f) => {
+        const label = `${f.label || f.key}${f.required ? '*' : ''}`;
+        if (f.type === 'checkbox') {
+          return (
+            <label key={f.key} className="row" style={{ alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={!!cfValues[f.key]}
+                     onChange={(e) => setCf(f.key, e.target.checked)} />
+              <span>{label}</span>
+            </label>
+          );
+        }
+        if (f.type === 'select') {
+          return (
+            <label key={f.key}>{label}
+              <select value={cfValues[f.key] ?? ''} onChange={(e) => setCf(f.key, e.target.value)}>
+                <option value="">{t('bookingModal.choose')}</option>
+                {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+          );
+        }
+        return (
+          <label key={f.key}>{label}
+            <input
+              type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+              value={cfValues[f.key] ?? ''}
+              onChange={(e) => setCf(f.key, f.type === 'number' ? (e.target.value === '' ? '' : +e.target.value) : e.target.value)}
+            />
+          </label>
+        );
+      })}
+
       <div className="field bm-box">
         <div className="row gap" style={{ alignItems: 'center' }}>
-          <Switch checked={recur} onChange={setRecur} label="Recurring" />
-          <span><Repeat size={13} /> Make this recurring</span>
+          <Switch checked={recur} onChange={setRecur} label={t('bookingModal.recurring')} />
+          <span><Repeat size={13} /> {t('bookingModal.makeRecurring')}</span>
         </div>
         {recur && (
           <div className="grid-2 mt">
-            <label>Pattern
+            <label>{t('bookingModal.pattern')}
               <select value={pattern} onChange={(e) => setPattern(e.target.value as any)}>
-                {allowsPattern('daily')   && <option value="daily">Daily</option>}
-                {allowsPattern('weekly')  && <option value="weekly">Weekly</option>}
-                {allowsPattern('weekly')  && <option value="bi-weekly">Bi-weekly</option>}
-                {allowsPattern('monthly') && <option value="monthly">Monthly</option>}
+                {allowsPattern('daily')   && <option value="daily">{t('bookingModal.daily')}</option>}
+                {allowsPattern('weekly')  && <option value="weekly">{t('bookingModal.weekly')}</option>}
+                {allowsPattern('weekly')  && <option value="bi-weekly">{t('bookingModal.biweekly')}</option>}
+                {allowsPattern('monthly') && <option value="monthly">{t('bookingModal.monthly')}</option>}
               </select>
             </label>
-            <label>Occurrences
+            <label>{t('bookingModal.occurrences')}
               <input type="number" min={1} max={100} value={count}
                      onChange={(e) => setCount(+e.target.value || 1)} />
             </label>
@@ -216,19 +286,19 @@ export function BookingModal({ resource, resources, date, start, end, onClose, o
       </div>
 
       <div className="row gap mt" style={{ alignItems: 'center' }}>
-        <Switch checked={isPrivate} onChange={setPrivate} label="Private appointment" />
-        <span><Lock size={13} /> Mark as private (hide subject from other viewers)</span>
+        <Switch checked={isPrivate} onChange={setPrivate} label={t('bookingModal.private')} />
+        <span><Lock size={13} /> {t('bookingModal.privateHint')}</span>
       </div>
 
       {result && (
         <div className="bm-result mt">
           <Check size={16} />
           <div>
-            <b>{result.requires_approval ? 'Pending approval' : 'Booking confirmed'}</b>
+            <b>{result.requires_approval ? t('bookingModal.pendingApproval') : t('bookingModal.confirmed')}</b>
             <p className="muted small">
               {result.requires_approval
-                ? 'A room admin will review this shortly.'
-                : 'You\'ll get an email confirmation in a moment.'}
+                ? t('bookingModal.pendingHint')
+                : t('bookingModal.confirmedHint')}
             </p>
           </div>
         </div>

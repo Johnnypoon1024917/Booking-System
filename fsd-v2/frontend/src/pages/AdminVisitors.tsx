@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { useT } from '../hooks/useT';
+import { confirmDialog, alertDialog } from '../stores/confirm';
 
 // Visitor management: pre-register guests, then check them in/out at
 // reception. Mirrors v1 AdminVisitors.vue. Lifecycle:
@@ -32,7 +33,7 @@ export function AdminVisitors() {
       if (editing.id) await api.updateVisitor(editing.id, body);
       else            await api.createVisitor(body);
       setEditing(null); load();
-    } catch (e: any) { alert(e.displayMessage || t('common.error')); }
+    } catch (e: any) { await alertDialog({ title: t('common.error'), message: e.displayMessage, tone: 'danger' }); }
   }
   async function lifecycle(v: any, action: 'check-in' | 'check-out' | 'cancel') {
     try {
@@ -40,10 +41,10 @@ export function AdminVisitors() {
       else if (action === 'check-out') await api.checkOutVisitor(v.id);
       else await api.cancelVisitor(v.id);
       load();
-    } catch (e: any) { alert(e.displayMessage || t('adminVisitors.actionFailed')); }
+    } catch (e: any) { await alertDialog({ title: t('adminVisitors.actionFailed'), message: e.displayMessage, tone: 'danger' }); }
   }
   async function remove(v: any) {
-    if (!confirm(t('adminVisitors.confirmDelete', { name: v.visitorName }))) return;
+    if (!(await confirmDialog({ title: t('adminVisitors.confirmDelete', { name: v.visitorName }), tone: 'danger', confirmText: t('common.delete'), cancelText: t('common.cancel') }))) return;
     await api.deleteVisitor(v.id); load();
   }
 
@@ -107,4 +108,4 @@ export function AdminVisitors() {
       )}
     </div>
   );
-}��
+}

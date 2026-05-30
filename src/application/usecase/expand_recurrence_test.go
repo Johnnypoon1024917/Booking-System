@@ -26,9 +26,10 @@ func (f *fakeBookingRepo) UpdateStatus(context.Context, string, string, string) 
 func (f *fakeBookingRepo) HasConflict(_ context.Context, _ string, start, _ time.Time) (bool, error) {
 	return f.conflicts[start.Format(time.RFC3339)], nil
 }
-func (f *fakeBookingRepo) CountConcurrent(context.Context, string, time.Time, time.Time) (int, error) {
+func (f *fakeBookingRepo) CountConcurrent(context.Context, string, time.Time, time.Time, string) (int, error) {
 	return 0, nil
 }
+func (f *fakeBookingRepo) LockResourceForUpdate(context.Context, string) error { return nil }
 func (f *fakeBookingRepo) AddServiceToBooking(context.Context, string, string, int, string) error {
 	return nil
 }

@@ -11,6 +11,7 @@ export type RealtimeEventType =
   | 'booking.cancelled'
   | 'booking.rescheduled'
   | 'booking.checked_in'
+  | 'booking.attended'
   | 'booking.no_show'
   | 'broadcast.published'
   | 'weather.signal';

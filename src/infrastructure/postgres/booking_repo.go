@@ -278,16 +278,32 @@ ORDER BY b.start_time ASC`
 
 // CountConcurrent reports how many active bookings overlap [start, end) on
 // the given resource. Used by the use case to enforce shared_capacity for
-// resources whose booking_mode == "shared".
-func (r *BookingRepo) CountConcurrent(ctx context.Context, resourceID string, start, end time.Time) (int, error) {
+// resources whose booking_mode == "shared". When excludeBookingID is
+// non-empty that row is omitted, so an update doesn't count the booking
+// being rescheduled against itself.
+func (r *BookingRepo) CountConcurrent(ctx context.Context, resourceID string, start, end time.Time, excludeBookingID string) (int, error) {
 	var n int
 	err := r.exec(ctx).QueryRow(ctx, `
 SELECT COUNT(1) FROM bookings
  WHERE resource_id = $1
    AND status IN ('Confirmed', 'Pending Approval', 'Checked In')
-   AND start_time < $3 AND end_time > $2`,
-		resourceID, start, end).Scan(&n)
+   AND start_time < $3 AND end_time > $2
+   AND ($4 = '' OR id::text <> $4)`,
+		resourceID, start, end, excludeBookingID).Scan(&n)
 	return n, err
+}
+
+// LockResourceForUpdate takes a row-level FOR UPDATE lock on the resource
+// row. Inside the per-request transaction (middleware.WithTenantTx) the lock
+// is held until commit, serializing the capacity-check + insert for shared
+// resources against concurrent bookings — closing the TOCTOU window where two
+// requests both read count = cap-1 and both succeed. Against the bare pool
+// (background jobs) the implicit transaction commits immediately, so the lock
+// is effectively a no-op; those callers don't race on shared capacity.
+func (r *BookingRepo) LockResourceForUpdate(ctx context.Context, resourceID string) error {
+	_, err := r.exec(ctx).Exec(ctx,
+		`SELECT 1 FROM resources WHERE id = $1::uuid FOR UPDATE`, resourceID)
+	return err
 }
 
 // AddServiceToBooking links a service from the catalog to a booking.

@@ -172,6 +172,15 @@ export function AdminBookings() {
     } catch (e: any) { toast.error(t('adminBookings.bulkNoShowFailed'), e.displayMessage || e.message); }
   }
 
+  async function bulkAttended() {
+    if (!selected.size) return;
+    try {
+      for (const id of selected) await api.markBookingAttended(id);
+      toast.success(t('adminBookings.markedAttended', { n: selected.size }));
+      load();
+    } catch (e: any) { toast.error(t('adminBookings.bulkAttendedFailed'), e.displayMessage || e.message); }
+  }
+
   const STATUS_KEY: Record<string, string> = {
     'Confirmed': 'statusConfirmed',
     'Pending Approval': 'statusPending',
@@ -227,6 +236,7 @@ export function AdminBookings() {
             <button className="btn ghost" onClick={() => setSelected(new Set())}>
               <X size={13} /> {t('adminBookings.clear')}
             </button>
+            <button className="btn" onClick={bulkAttended}>{t('adminBookings.markAttended')}</button>
             <button className="btn" onClick={bulkNoShow}>{t('adminBookings.markNoShow')}</button>
             <button className="btn danger" onClick={bulkCancel}>{t('adminBookings.cancelSelected')}</button>
           </div>

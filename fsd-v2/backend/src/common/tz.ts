@@ -45,3 +45,46 @@ export function zonedTimeToUtc(date: string, time: string, timeZone?: string): D
     return asUtc;
   }
 }
+
+/**
+ * Project a UTC instant back to the wall clock shown in `timeZone`. Returns the
+ * local weekday (0=Sun..6=Sat) and minutes-since-midnight, so booking-time code
+ * can compare an instant against a resource's local operating-hours window
+ * without re-deriving DST math. Falls back to Asia/Hong_Kong, then to a plain
+ * UTC reading if the zone is unknown to the runtime.
+ */
+export function utcToZonedWallClock(
+  instant: Date, timeZone?: string,
+): { weekday: number; minutes: number; hhmm: string; dateStr: string } {
+  const tz = timeZone || DEFAULT_TZ;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hour12: false, weekday: 'short',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+    const p = Object.fromEntries(dtf.formatToParts(instant).map((x) => [x.type, x.value]));
+    const hour = p.hour === '24' ? 0 : Number(p.hour);
+    const minute = Number(p.minute);
+    const WD: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const weekday = WD[p.weekday as string] ?? instant.getUTCDay();
+    const dateStr = `${p.year}-${p.month}-${p.day}`;
+    return { weekday, minutes: hour * 60 + minute, hhmm: `${pad(hour)}:${pad(minute)}`, dateStr };
+  } catch {
+    const hour = instant.getUTCHours();
+    const minute = instant.getUTCMinutes();
+    const dateStr = `${instant.getUTCFullYear()}-${pad(instant.getUTCMonth() + 1)}-${pad(instant.getUTCDate())}`;
+    return { weekday: instant.getUTCDay(), minutes: hour * 60 + minute, hhmm: `${pad(hour)}:${pad(minute)}`, dateStr };
+  }
+}
+
+/** Parse "HH:mm" into minutes-since-midnight, or null if malformed. */
+export function hhmmToMinutes(v?: string | null): number | null {
+  if (!v) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const h = Number(m[1]); const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}

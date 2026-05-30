@@ -12,6 +12,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 import { ApprovalTimeline } from '../components/ApprovalTimeline';
 import { promptDialog } from '../stores/confirm';
+import { useTimezone } from '../hooks/useTimezone';
 
 // Direct port of v1's MyBookings.vue: header actions, stat strip, filter
 // tabs (Upcoming / Pending / Past) with counts, status-strip cards with
@@ -35,6 +36,7 @@ export function MyBookings() {
   const nav = useNavigate();
   const toast = useToast();
   const { t, i18n } = useT();
+  const tz = useTimezone();
 
   const [items, setItems] = useState<any[]>([]);
   const [resources, setResources] = useState<any[]>([]);
@@ -142,8 +144,11 @@ export function MyBookings() {
       weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
     });
   }
+  // Render booking times in the tenant's zone with an explicit offset suffix,
+  // not the browser's zone — a viewer in a different region must see the
+  // room's local time, clearly labelled.
   function formatTime(d: string) {
-    return new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return tz.formatTime(d);
   }
 
   return (

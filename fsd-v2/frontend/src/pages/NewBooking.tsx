@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useT } from '../hooks/useT';
+import { useTimezone } from '../hooks/useTimezone';
 
 // NewBooking is the multi-step booking wizard, separate from the
 // drag-create flow on the calendar page. Three steps:
@@ -19,6 +20,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function NewBooking() {
   const { t } = useT();
   const nav = useNavigate();
+  const tz = useTimezone();
   const today = new Date().toISOString().slice(0, 10);
 
   // Step 1 inputs
@@ -132,7 +134,7 @@ export function NewBooking() {
       {/* ---- Step 1: when & where ---- */}
       {step === 1 && (
         <div className="card searchbar">
-          <label>{t('search.date')} <input type="date" value={when.date}
+          <label>{t('search.date')} <input type="date" value={when.date} min={today}
             onChange={(e) => setWhen({ ...when, date: e.target.value })} /></label>
           <label>{t('booking.from')} <input type="time" value={when.startTime}
             onChange={(e) => setWhen({ ...when, startTime: e.target.value })} /></label>
@@ -145,6 +147,9 @@ export function NewBooking() {
           <button className="btn primary" disabled={searching} onClick={search}>
             {searching ? t('booking.searching') : t('booking.findRooms')}
           </button>
+          <small className="muted" style={{ flexBasis: '100%' }}>
+            Times shown in {tz.label}
+          </small>
         </div>
       )}
 

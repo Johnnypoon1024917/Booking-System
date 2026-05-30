@@ -7,7 +7,9 @@ import { CredentialService } from './credential.service';
 import { GraphService } from '../graph/graph.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Perm } from '../permissions/permission-catalog';
 import { AuditService } from '../audit/audit.service';
 
 class SaveCredentialDto {
@@ -44,6 +46,7 @@ const VALID_PROVIDERS = new Set(['microsoft', 'google', 'zoom', 'teams-bot']);
 @Controller('admin/integrations')
 @UseGuards(RolesGuard)
 @RequireRoles(...AdminRoles)
+@RequirePermission(Perm.IntegrationManage)
 export class IntegrationsController {
   constructor(
     private readonly creds: CredentialService,

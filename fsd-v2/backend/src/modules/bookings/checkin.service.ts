@@ -68,15 +68,36 @@ export class CheckinService {
 
   // Admin: explicit no-show flip. Same effect as auto-release but
   // available on demand for known-skipped meetings.
-  async markNoShow(tenantId: string, bookingId: string) {
+  async markNoShow(tenantId: string, bookingId: string, reason?: string) {
     const b = await this.bookings.findOne({ where: { id: bookingId, tenantId } });
     if (!b) throw new NotFoundException('booking not found');
     if (b.status === 'Cancelled' || b.status === 'No Show') return b;
     b.status = 'No Show';
-    b.exceptionNotes = b.exceptionNotes || 'admin marked no-show';
+    b.exceptionNotes = reason?.trim() || b.exceptionNotes || 'admin marked no-show';
     const saved = await this.bookings.save(b);
     this.realtime.emit({
       type: 'booking.no_show',
+      tenantId: saved.tenantId, bookingId: saved.id,
+      resourceId: saved.resourceId, userId: saved.userId,
+    });
+    return saved;
+  }
+
+  // Admin: mark a booking as Attended — post-hoc confirmation that the
+  // meeting actually took place. Reachable from any non-terminal state
+  // (Confirmed / Checked In / Pending Approval); a Cancelled or No Show
+  // booking can't retroactively become Attended. Idempotent.
+  async markAttended(tenantId: string, bookingId: string) {
+    const b = await this.bookings.findOne({ where: { id: bookingId, tenantId } });
+    if (!b) throw new NotFoundException('booking not found');
+    if (b.status === 'Attended') return b;
+    if (b.status === 'Cancelled' || b.status === 'No Show') {
+      throw new BadRequestException(`cannot mark attended: booking is ${b.status}`);
+    }
+    b.status = 'Attended';
+    const saved = await this.bookings.save(b);
+    this.realtime.emit({
+      type: 'booking.attended',
       tenantId: saved.tenantId, bookingId: saved.id,
       resourceId: saved.resourceId, userId: saved.userId,
     });

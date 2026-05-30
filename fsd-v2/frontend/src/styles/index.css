@@ -1804,3 +1804,132 @@ table.dt th .caret, .caret { color: #5f6875; }
 .fsd-seg.orange { background: #b56a16 !important; }                    /* white on #e67e22 3.92:1 → ~4.7:1 */
 .fsd-seg.red    { background: #c0392b !important; }                    /* white on #e74c3c 3.5:1 → ~5.1:1 */
 .caret, table.dt th .caret { color: #5f6875 !important; }             /* sort glyphs #94a3b8 2.5:1 → ~4.6:1 */
+
+/* ============================================================================
+   CUSTOM DIALOGS + MODAL FORM SYSTEM  (appended last — wins the cascade).
+
+   Two concerns, one block so it can never be half-applied:
+   1. confirm/prompt/alert dialogs (ConfirmHost) styling.
+   2. Normalize EVERY modal form: top-aligned labels, one uniform input
+      height/radius across text/select/textarea/datetime-local, full-width
+      fields, generous spacing, clear primary/secondary action hierarchy.
+   Rules are scoped to `.modal section` so they only touch dialog bodies, and
+   they sit after the legacy `.field`/`.fld` compat layer so they win by both
+   cascade order and specificity (0,2,1 selectors beat the 0,2,0 originals).
+   ============================================================================ */
+
+/* ---- ConfirmHost (confirm / prompt / alert) ---- */
+.confirm-body { display: flex; gap: 14px; align-items: flex-start; }
+.confirm-icon {
+  flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+.confirm-icon.danger { background: rgba(220, 38, 38, 0.12); color: var(--danger, #dc2626); }
+.confirm-message { margin: 0; line-height: 1.5; color: var(--text, #1e293b); }
+.confirm-body label > span { display: block; font-size: 0.85rem; margin-bottom: 4px; color: var(--text-secondary, #64748b); }
+.confirm-body input, .confirm-body textarea { width: 100%; }
+
+/* ---- Outer card: softer corner, roomier padding ---- */
+.modal { border-radius: 14px !important; width: min(560px, calc(100vw - 32px)); }
+.modal header { padding: 20px 24px; }
+.modal header h3 { font-size: 18px; font-weight: 700; color: var(--text); }
+.modal section { padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; }
+.modal footer { padding: 16px 24px; gap: 10px; }
+
+/* ---- Every label: full-width vertical block, small muted caption on top ---- */
+.modal section > label,
+.modal section .field,
+.modal section .grid-2 > label {
+  display: flex; flex-direction: column; gap: 6px; margin: 0;
+  font-size: 12.5px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.01em;
+}
+
+/* ---- Uniform control styling (beats .field/.fld compat override) ---- */
+.modal section label input,
+.modal section label select,
+.modal section label textarea,
+.modal section > input[type=text],
+.modal section > input[type=email],
+.modal section input[type=url],
+.modal section input[type=tel],
+.modal section input[type=number],
+.modal section input[type=password],
+.modal section input[type=search],
+.modal section input[type=date],
+.modal section input[type=time],
+.modal section input[type=datetime-local],
+.modal section select,
+.modal section textarea {
+  display: block; width: 100%; box-sizing: border-box;
+  min-height: 44px; margin: 0; padding: 11px 14px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  font-size: 14px; font-weight: 400; letter-spacing: 0;
+  background: var(--surface); color: var(--text);
+  transition: border-color var(--dur-fast, .15s), box-shadow var(--dur-fast, .15s);
+}
+.modal section textarea { min-height: 84px; padding-top: 10px; resize: vertical; line-height: 1.5; }
+
+.modal section input::placeholder,
+.modal section textarea::placeholder { color: var(--text-muted); opacity: 0.85; }
+
+.modal section input:hover,
+.modal section select:hover,
+.modal section textarea:hover { border-color: var(--brand-primary); }
+
+.modal section input:focus,
+.modal section select:focus,
+.modal section textarea:focus {
+  outline: none; border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 16%, transparent);
+}
+
+/* ---- Two-up rows (Start / End) keep equal columns ---- */
+.modal section .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* ---- Checkboxes / radios / toggles must NOT stretch full-width ---- */
+.modal section input[type=checkbox],
+.modal section input[type=radio] {
+  width: 16px; height: 16px; min-height: 0; flex: none;
+  display: inline-block; margin: 0; padding: 0; border-radius: 4px;
+}
+.modal section .switch input,
+.modal section label.toggle input { width: auto; min-height: 0; }
+
+/* ---- Inline chip / checkbox / toggle labels stay horizontal ---- */
+.modal section label.dep-chip,
+.modal section label.chip,
+.modal section label.toggle,
+.modal section .row.gap label,
+.modal section .row.gap-sm label,
+.modal section label:has(> input[type=checkbox]),
+.modal section label:has(> input[type=radio]) {
+  flex-direction: row; align-items: center; gap: 8px;
+  font-weight: 500; color: var(--text);
+}
+.modal section label.dep-chip input,
+.modal section label.chip input,
+.modal section label:has(> input[type=checkbox]) input,
+.modal section label:has(> input[type=radio]) input { width: 16px; min-height: 0; flex: none; }
+
+/* ---- Services chip group: keep caption stacked, chips inline ---- */
+.modal section .field > label { font-weight: 600; color: var(--text-secondary); }
+.modal section .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.modal section .chip-grid label { font-weight: 500; color: var(--text); }
+
+/* ---- Side-by-side toggle rows shouldn't inherit column layout ---- */
+.modal section .row { gap: 10px; }
+
+/* ---- Action hierarchy: primary solid brand, secondary quiet ghost ---- */
+.modal footer .btn-fsd:not(.ghost):not(.danger),
+.modal footer .btn.primary {
+  background: var(--fsd-primary); border-color: var(--fsd-primary); color: #fff;
+}
+.modal footer .btn-fsd.ghost,
+.modal footer .btn.ghost {
+  background: #fff; color: var(--text-secondary); border: 1px solid var(--border-strong);
+}
+
+/* ---- Booking summary header (BookingModal) ---- */
+.modal section .bm-summary { padding: 14px; border-radius: 12px; gap: 14px; }
+.modal section .bm-summary label { width: 100%; }
+.modal section .bm-timerow { border-radius: 10px; }

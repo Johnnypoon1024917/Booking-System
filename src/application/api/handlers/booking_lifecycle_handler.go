@@ -352,12 +352,26 @@ func (h *BookingLifecycleHandler) update(w http.ResponseWriter, r *http.Request,
 	}
 	updated, err := h.updateUC.Execute(r.Context(), req)
 	if err != nil {
-		code := http.StatusConflict
-		if errors.Is(err, booking.ErrConcurrencyConflict) {
-			code = http.StatusConflict
-		}
 		auditlog.Failure(r, audit.ActionBookingModified, audit.TargetEntityBooking, id, err.Error())
-		http.Error(w, err.Error(), code)
+		msg := err.Error()
+		switch {
+		case errors.Is(err, usecase.ErrInternal):
+			// DB/downstream failure — 5xx so middleware.WithTenantTx rolls
+			// the reschedule back rather than committing partial state.
+			http.Error(w, "Update could not be completed — please try again", http.StatusInternalServerError)
+		case errors.Is(err, booking.ErrConcurrencyConflict),
+			strings.Contains(msg, "scheduling conflict"),
+			strings.Contains(msg, "already at capacity"):
+			http.Error(w, msg, http.StatusConflict)
+		case strings.Contains(msg, "rejected:"),
+			strings.Contains(msg, "must be"),
+			strings.Contains(msg, "is inactive"),
+			strings.Contains(msg, "designated public holiday"):
+			// Business-rule rejection now also fires on update (audit #1).
+			http.Error(w, msg, http.StatusUnprocessableEntity)
+		default:
+			http.Error(w, msg, http.StatusConflict)
+		}
 		return
 	}
 	auditlog.Record(r, auditlog.Event{

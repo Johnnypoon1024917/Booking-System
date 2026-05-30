@@ -6,6 +6,8 @@ import { ScheduleModule } from '@nestjs/schedule';
 
 import { databaseConfig } from './config/database.config';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
+import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RlsInterceptor } from './common/interceptors/rls.interceptor';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -104,9 +106,16 @@ import { DemoSeederService } from './common/demo-seeder.service';
   ],
   controllers: [HealthController],
   providers: [
+    // Rate-limit guard runs first so flooded auth endpoints are rejected
+    // before the (expensive, bcrypt-heavy) auth handlers. Only acts on
+    // routes annotated with @RateLimit; all others pass through.
+    { provide: APP_GUARD, useClass: RateLimitGuard },
     // Global JWT guard — every route is protected by default.
     // Controllers opt out with @Public() (see common/decorators).
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Fine-grained permission-matrix enforcement. Runs after the JWT guard
+    // (needs req.user) and only acts on routes carrying @RequirePermission.
+    { provide: APP_GUARD, useClass: PermissionsGuard },
     // RLS interceptor wraps every handler in a transaction with
     // SET LOCAL app.current_tenant_id, so all queries inside the
     // request see only their tenant's rows.

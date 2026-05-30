@@ -6,6 +6,21 @@ import { randomBytes } from 'crypto';
 import { ScimToken } from './scim-token.entity';
 import { User } from '../users/user.entity';
 import { Department } from '../departments/department.entity';
+import { AdminRoles, Role, Roles } from '../../common/decorators/roles.decorator';
+
+// SCIM provisioning maps the IdP `title` attribute onto our role, but a
+// provisioning token is NOT an interactive admin session and `title` is a
+// free-form, IdP-controlled string. Allowing it to set any role lets a SCIM
+// token (or an over-broad IdP attribute mapping) mint a System Admin and take
+// over the tenant. So we clamp: SCIM may only assign non-admin roles; any
+// admin-tier or unknown title falls back to General User. Privilege elevation
+// to an admin role must go through the audited admin UI, never SCIM.
+const KNOWN_ROLES: ReadonlyArray<string> = Object.values(Roles);
+function resolveScimRole(title: unknown): Role {
+  const t = typeof title === 'string' ? title.trim() : '';
+  if (KNOWN_ROLES.includes(t) && !AdminRoles.includes(t as Role)) return t as Role;
+  return Roles.GeneralUser;
+}
 
 // Implements the slice of SCIM 2.0 (RFC 7644) that Azure AD, Okta, and
 // JumpCloud actually use for user provisioning. Auth is a bearer
@@ -95,7 +110,7 @@ export class ScimService {
       tenantId,
       username: body.userName,
       passwordHash: '!scim!',
-      role: body.title || 'General User',
+      role: resolveScimRole(body.title),
       isActive: body.active ?? true,
       regionAccess: [],
       dn: body.displayName || body.name?.formatted || body.userName,
@@ -111,7 +126,7 @@ export class ScimService {
     if (!u) throw new NotFoundException('user not found');
     u.username = body.userName ?? u.username;
     if (body.active !== undefined) u.isActive = body.active;
-    if (body.title) u.role = body.title;
+    if (body.title) u.role = resolveScimRole(body.title);
     if (body.displayName) u.dn = body.displayName;
     return this.toScimUser(await this.users.save(u));
   }
@@ -127,7 +142,7 @@ export class ScimService {
       if (opName === 'replace' || opName === 'add') {
         if (path === 'active') u.isActive = Boolean(val);
         else if (path === 'displayname') u.dn = String(val);
-        else if (path === 'title') u.role = String(val);
+        else if (path === 'title') u.role = resolveScimRole(val);
         else if (path === 'username') u.username = String(val);
       } else if (opName === 'remove' && path === 'active') {
         u.isActive = false;

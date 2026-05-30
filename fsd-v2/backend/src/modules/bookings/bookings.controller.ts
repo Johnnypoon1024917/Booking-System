@@ -1,9 +1,9 @@
 import {
   Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query,
-  BadRequestException, Res,
+  BadRequestException, Res, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import type { Response } from 'express';
 import { BookingsService } from './bookings.service';
 import { RecurrenceService } from './recurrence.service';
@@ -13,7 +13,8 @@ import { IcsService } from './ics.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AuditService } from '../audit/audit.service';
 import { Public } from '../../common/decorators/public.decorator';
-import { AdminRoles } from '../../common/decorators/roles.decorator';
+import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 
 class CreateBookingDto {
   @IsUUID() resourceId!: string;
@@ -22,6 +23,10 @@ class CreateBookingDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() meetingUrl?: string;
   @IsOptional() @IsBoolean() isPrivate?: boolean;
+  // Answers to the resource's custom fields, keyed by field key. Shape is
+  // resource-defined, so a loose object — the service validates required
+  // fields and strips unknown keys.
+  @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
 }
 class UpdateBookingDto {
   @IsOptional() @IsDateString() startTime?: string;
@@ -44,6 +49,7 @@ class CreateRecurringDtoIn {
   @IsOptional() @IsString() meetingUrl?: string;
   @IsOptional() @IsBoolean() isPrivate?: boolean;
   @IsOptional() @IsString() rrule?: string;
+  @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
 }
 
 // validateRange clamps at 366 days, fails closed on malformed input —
@@ -94,8 +100,15 @@ export class BookingsController {
   // /api/v1/bookings/ics-token — returns the caller's opaque feed
   // token so the SPA can render a copyable "Subscribe in Outlook" URL.
   @Get('ics-token')
-  icsToken(@CurrentUser() u: AuthUser) {
-    return { token: this.ics.tokenFor(u.id, u.tenantId) };
+  async icsToken(@CurrentUser() u: AuthUser) {
+    return { token: await this.ics.tokenFor(u.id, u.tenantId) };
+  }
+
+  // POST /api/v1/bookings/ics-token/rotate — revoke the current feed URL and
+  // issue a new one. Use after a leaked iCal link; old URL stops resolving.
+  @Post('ics-token/rotate')
+  async rotateIcsToken(@CurrentUser() u: AuthUser) {
+    return { token: await this.ics.rotateToken(u.id, u.tenantId) };
   }
 
   // Admin / shared timeline. Range guard mirrors v1's
@@ -177,13 +190,15 @@ export class BookingsController {
   }
 
   // POST /api/v1/bookings/:id/no-show — admin marks no-show explicitly.
+  // Kept for backwards compatibility; the SPA now calls the role-guarded
+  // /api/v1/admin/bookings/:id/no-show on AdminBookingsController.
   @Post(':id/no-show')
-  async doNoShow(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+  async doNoShow(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body('reason') reason?: string) {
     if (!AdminRoles.includes(u.role)) throw new BadRequestException('admin only');
-    const b = await this.checkin.markNoShow(u.tenantId, id);
+    const b = await this.checkin.markNoShow(u.tenantId, id, reason);
     await this.audit.record(u, {
       action: 'BOOKING_MARKED_NO_SHOW', severity: 'warning',
-      targetEntity: 'booking', targetId: id,
+      targetEntity: 'booking', targetId: id, next: { reason },
     });
     return b;
   }
@@ -192,6 +207,48 @@ export class BookingsController {
   @Post(':id/checkin-token')
   issueCheckinToken(@CurrentUser() u: AuthUser, @Param('id') id: string) {
     return this.checkin.issueToken(u.tenantId, id);
+  }
+}
+
+class NoShowDto { @IsOptional() @IsString() reason?: string; }
+
+// Admin-scoped booking actions. Mounted at /api/v1/admin/bookings and gated
+// by RolesGuard + RequireRoles(...AdminRoles) so the role check is declarative
+// (and consistent with the other admin controllers) rather than an inline
+// `if (!AdminRoles.includes(...))` per handler. The SPA's AdminBookings page
+// targets these paths.
+@ApiTags('admin / bookings')
+@ApiBearerAuth()
+@Controller('admin/bookings')
+@UseGuards(RolesGuard)
+@RequireRoles(...AdminRoles)
+export class AdminBookingsController {
+  constructor(
+    private readonly checkin: CheckinService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // POST /api/v1/admin/bookings/:id/no-show — flip to No Show with a reason.
+  @Post(':id/no-show')
+  async noShow(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: NoShowDto) {
+    const b = await this.checkin.markNoShow(u.tenantId, id, dto.reason);
+    await this.audit.record(u, {
+      action: 'BOOKING_MARKED_NO_SHOW', severity: 'warning',
+      targetEntity: 'booking', targetId: id, next: { reason: dto.reason },
+    });
+    return b;
+  }
+
+  // POST /api/v1/admin/bookings/:id/attended — post-hoc confirm the meeting
+  // happened. Confirmed / Checked In / Pending → Attended.
+  @Post(':id/attended')
+  async attended(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    const b = await this.checkin.markAttended(u.tenantId, id);
+    await this.audit.record(u, {
+      action: 'BOOKING_MARKED_ATTENDED', severity: 'info',
+      targetEntity: 'booking', targetId: id,
+    });
+    return b;
   }
 }
 

@@ -5,6 +5,7 @@ import { Booking } from './booking.entity';
 import { Resource } from '../resources/resource.entity';
 import { Recurrence, RecurrencePattern } from './recurrence.entity';
 import { BookingsService } from './bookings.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 // Caller-facing DTO for creating a recurring booking series. Matches
 // v1's ExpandRecurringBookingRequest field-for-field so older clients
@@ -24,6 +25,7 @@ export interface CreateRecurringDto {
   meetingUrl?: string;
   isPrivate?: boolean;
   rrule?: string;           // RFC 5545 raw string; takes precedence
+  customFieldValues?: Record<string, unknown>;
 }
 
 export interface ExpansionResult {
@@ -43,6 +45,7 @@ export class RecurrenceService {
     @InjectRepository(Resource) private readonly resources: Repository<Resource>,
     @InjectRepository(Recurrence) private readonly recurrences: Repository<Recurrence>,
     private readonly bookingsSvc: BookingsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // Expand the request, save the parent Recurrence row, then insert
@@ -84,8 +87,13 @@ export class RecurrenceService {
 
     const result: ExpansionResult = { recurrenceId: rec.id, bookingIds: [], skipped: [] };
 
+    let firstBooking: Booking | null = null;
     for (const occ of occurrences) {
       try {
+        // suppressNotification: a series must not enqueue one email per
+        // occurrence (a 100-occurrence weekly series = 100 emails). We send
+        // a single summary email below instead. Per-occurrence calendar sync
+        // and realtime still fire inside create().
         const created = await this.bookingsSvc.create(tenantId, userId, {
           resourceId: resource.id,
           startTime: occ.start,
@@ -93,15 +101,24 @@ export class RecurrenceService {
           title: dto.title,
           meetingUrl: dto.meetingUrl,
           isPrivate: dto.isPrivate,
-        });
+          customFieldValues: dto.customFieldValues,
+        }, { suppressNotification: true });
         // Tag the created booking with the recurrence id so cancelling
         // the series can flip them all in a single UPDATE.
         await this.bookings.update(created.id, { recurrenceId: rec.id, isRecurring: true });
         result.bookingIds.push(created.id);
+        if (!firstBooking) firstBooking = created;
       } catch {
         // Conflict (or any creation failure) — record and continue.
         result.skipped.push(occ.start.toISOString());
       }
+    }
+
+    // One summary email for the whole series, anchored on the first
+    // occurrence. Fire-and-forget like the single-booking path; a mail
+    // failure must never roll back the created series.
+    if (firstBooking) {
+      void this.notifications.enqueue(tenantId, 'BOOKING_CREATED', firstBooking);
     }
     return result;
   }

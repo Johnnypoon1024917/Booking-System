@@ -40,6 +40,15 @@ export class User {
   @Column({ name: 'sso_provider', nullable: true }) ssoProvider?: string;
   @Column({ name: 'sso_subject', nullable: true }) ssoSubject?: string;
 
+  // Per-user iCal feed token. A stored random secret (not derived from the
+  // JWT signing key) so it can be ROTATED — the public ICS feed URL ends up
+  // in third-party calendar-server logs, so a leaked URL must be revocable.
+  // select:false so it never rides along on user list/detail responses.
+  // Indexed so the feed lookup is O(1) instead of scanning every tenant user.
+  @Index()
+  @Column({ name: 'ics_feed_token', nullable: true, select: false })
+  icsFeedToken?: string;
+
   // user_departments join — many-to-many to mirror the v1 migration 032
   // semantics (one user → many departments).
   @ManyToMany(() => Department, { cascade: false })

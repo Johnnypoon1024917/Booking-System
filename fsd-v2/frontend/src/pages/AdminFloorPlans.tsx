@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { useT } from '../hooks/useT';
+import { confirmDialog } from '../stores/confirm';
 
 // Floor plan editor: pick a plan, upload/swap its background image, then
 // drag pins (resource → x/y) onto the canvas. Pin coordinates are

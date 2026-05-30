@@ -1,6 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Matches,
+  Min, ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ResourcesService } from './resources.service';
 import { CustomizationService } from '../customization/customization.service';
@@ -8,6 +11,27 @@ import { zonedTimeToUtc } from '../../common/tz';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+class OperatingHoursDto {
+  @Matches(HHMM, { message: 'open must be HH:mm' }) open!: string;
+  @Matches(HHMM, { message: 'close must be HH:mm' }) close!: string;
+}
+
+class SubResourceDto {
+  @IsOptional() @IsString() id?: string;
+  @IsString() name!: string;
+  @IsOptional() @IsInt() @Min(1) capacity?: number;
+}
+
+class CustomFieldDto {
+  @IsString() key!: string;
+  @IsOptional() @IsString() label?: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsBoolean() required?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) options?: string[];
+}
 
 class ResourceDto {
   @IsString() name!: string;
@@ -21,6 +45,25 @@ class ResourceDto {
   @IsOptional() @IsString() parentResourceId?: string;
   @IsOptional() @IsString() compositeMode?: string;
   @IsOptional() @IsString() departmentId?: string;
+
+  // Booking model + pods.
+  @IsOptional() @IsString() bookingMode?: string;
+  @IsOptional() @IsInt() @Min(1) sharedCapacity?: number;
+
+  // Operating hours — null/omitted means open 24h. Validated nested so a
+  // malformed time is rejected up front rather than silently stored.
+  @IsOptional() @ValidateNested() @Type(() => OperatingHoursDto)
+  operatingHours?: OperatingHoursDto | null;
+
+  @IsOptional() @IsArray() @IsString({ each: true }) equipment?: string[];
+
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CustomFieldDto)
+  customFields?: CustomFieldDto[];
+
+  // Write-only: drives creation/soft-removal of child resources for a
+  // splittable space. Not a column on the parent — handled in the service.
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SubResourceDto)
+  subResources?: SubResourceDto[];
 }
 
 class SearchQuery {
@@ -71,6 +114,13 @@ export class ResourcesAdminController {
   constructor(private readonly svc: ResourcesService) {}
 
   @Get() list(@CurrentUser() u: AuthUser) { return this.svc.list(u.tenantId); }
+
+  // Active child sub-resources of a splittable parent, so the editor can
+  // re-hydrate the sub-resource list when reopening a composite parent.
+  @Get(':id/children')
+  children(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return this.svc.children(u.tenantId, id);
+  }
 
   @Post() create(@CurrentUser() u: AuthUser, @Body() dto: ResourceDto) {
     return this.svc.create(u.tenantId, dto);

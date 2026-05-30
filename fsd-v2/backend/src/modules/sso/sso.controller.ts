@@ -6,6 +6,7 @@ import { IsBoolean, IsObject, IsOptional, IsString } from 'class-validator';
 import { Request, Response } from 'express';
 import { SsoService } from './sso.service';
 import { Public } from '../../common/decorators/public.decorator';
+import { RateLimit } from '../../common/guards/rate-limit.guard';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { RequireRoles, AdminRoles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -91,6 +92,7 @@ export class SsoController {
 
   // ----- LDAP (direct credential POST from SPA login form) -----
   @Public()
+  @RateLimit({ limit: 10, windowMs: 5 * 60_000 })
   @Post('ldap/login')
   @HttpCode(200)
   ldapLogin(@Body() body: LdapLoginDto) {
