@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch, Search } from 'lucide-react';
+import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch, Search, CalendarClock, AlertTriangle } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { ApprovalTimeline } from '../components/ApprovalTimeline';
@@ -72,6 +72,143 @@ function ApproverSearch({ onSelect, placeholder }: { onSelect: (id: string) => v
   );
 }
 
+function ymd(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function hm(d: Date) { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+// "View Schedule Context" slide-out — a read-only mini day-timeline for the
+// room a pending booking targets, so an approver can decide in context instead
+// of opening the calendar in another tab. Shows the requested slot against the
+// day's other bookings, flags overlaps, and reports the buffer before/after.
+function ScheduleContext({ booking, resourceName, onClose }: { booking: any; resourceName: string; onClose: () => void }) {
+  const { t } = useT();
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const reqStart = useMemo(() => new Date(booking.startTime), [booking.startTime]);
+  const reqEnd = useMemo(() => new Date(booking.endTime), [booking.endTime]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    const day = new Date(reqStart); day.setHours(0, 0, 0, 0);
+    const next = new Date(day); next.setDate(day.getDate() + 1);
+    api.bookingsRange(ymd(day), ymd(next))
+      .then((list: any[]) => {
+        if (!active) return;
+        // Same room, same day, still live, and not the request we're judging.
+        setRows((list || []).filter((b) =>
+          b.resourceId === booking.resourceId && b.status !== 'Cancelled' && b.id !== booking.id));
+      })
+      .catch(() => { if (active) setRows([]); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [booking.id, booking.resourceId, reqStart]);
+
+  // Close on Escape — drawer convention.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const blocks = useMemo(() => rows.map((b) => {
+    const start = new Date(b.startTime);
+    const end = new Date(b.endTime);
+    return {
+      id: b.id, start, end,
+      title: b.subjectHidden ? '🔒 Private' : (b.title || resourceName),
+      conflict: start < reqEnd && end > reqStart, // overlaps the requested slot
+    };
+  }).sort((a, b) => a.start.getTime() - b.start.getTime()), [rows, reqStart, reqEnd, resourceName]);
+
+  const conflicts = blocks.filter((b) => b.conflict);
+  // Tightest gap to an adjacent (non-overlapping) booking, in minutes.
+  const bufferBefore = blocks.filter((b) => b.end <= reqStart)
+    .reduce((m, b) => Math.min(m, (reqStart.getTime() - b.end.getTime()) / 60000), Infinity);
+  const bufferAfter = blocks.filter((b) => b.start >= reqEnd)
+    .reduce((m, b) => Math.min(m, (b.start.getTime() - reqEnd.getTime()) / 60000), Infinity);
+
+  // Proportional timeline window: 08:00–18:00 by default, widened to fit any
+  // booking (and the request) that falls outside it.
+  const PX_PER_HOUR = 46;
+  const all = [...blocks.flatMap((b) => [b.start, b.end]), reqStart, reqEnd];
+  const startH = Math.max(0, Math.min(8, ...all.map((d) => d.getHours())));
+  const endH = Math.min(24, Math.max(18, ...all.map((d) => d.getHours() + (d.getMinutes() > 0 || d.getSeconds() > 0 ? 1 : 0))));
+  const windowStart = new Date(reqStart); windowStart.setHours(startH, 0, 0, 0);
+  const trackH = (endH - startH) * PX_PER_HOUR;
+  const topFor = (d: Date) => ((d.getTime() - windowStart.getTime()) / 3600000) * PX_PER_HOUR;
+  const heightFor = (s: Date, e: Date) => Math.max(16, ((e.getTime() - s.getTime()) / 3600000) * PX_PER_HOUR);
+  const hours = Array.from({ length: endH - startH + 1 }, (_, i) => startH + i);
+
+  const fmtGap = (m: number) => (m === Infinity ? t('approvals.ctxNoAdjacent')
+    : m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${Math.round(m % 60)}m` : ''}` : `${Math.round(m)}m`);
+
+  return (
+    <div className="sched-drawer-wrap" role="dialog" aria-modal="true" aria-label={t('approvals.ctxTitle')}>
+      <div className="sched-drawer-backdrop" onClick={onClose} aria-hidden="true" />
+      <aside className="sched-drawer open">
+        <header className="sched-drawer-head">
+          <div style={{ minWidth: 0 }}>
+            <h3 className="truncate">{resourceName}</h3>
+            <span className="muted text-sm">{reqStart.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</span>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label={t('common.close')}><X size={18} /></button>
+        </header>
+
+        {/* Verdict summary so the decision is one glance, not a chart-reading
+            exercise. */}
+        {conflicts.length > 0 ? (
+          <div className="sched-verdict danger">
+            <AlertTriangle size={15} />
+            <span>{t('approvals.ctxConflicts', { count: conflicts.length })}</span>
+          </div>
+        ) : (
+          <div className="sched-verdict ok">
+            <Check size={15} />
+            <span>{t('approvals.ctxClear')}</span>
+          </div>
+        )}
+        <div className="sched-buffers muted text-sm">
+          <span>{t('approvals.ctxBufferBefore')}: <b>{fmtGap(bufferBefore)}</b></span>
+          <span>{t('approvals.ctxBufferAfter')}: <b>{fmtGap(bufferAfter)}</b></span>
+        </div>
+
+        <div className="sched-body">
+          {loading ? (
+            <p className="muted text-sm">{t('common.loading')}</p>
+          ) : (
+            <div className="sched-timeline" style={{ height: trackH }}>
+              {hours.map((h) => (
+                <div key={h} className="sched-hour" style={{ top: (h - startH) * PX_PER_HOUR }}>
+                  <span className="sched-hour-label">{String(h).padStart(2, '0')}:00</span>
+                </div>
+              ))}
+              {/* Existing bookings */}
+              {blocks.map((b) => (
+                <div key={b.id} className={`sched-evt${b.conflict ? ' conflict' : ''}`}
+                     style={{ top: topFor(b.start), height: heightFor(b.start, b.end) }}
+                     title={`${hm(b.start)}–${hm(b.end)} · ${b.title}`}>
+                  <b className="truncate">{b.title}</b>
+                  <small>{hm(b.start)}–{hm(b.end)}</small>
+                </div>
+              ))}
+              {/* The slot under review — drawn on top so it's unmistakable. */}
+              <div className="sched-evt requested"
+                   style={{ top: topFor(reqStart), height: heightFor(reqStart, reqEnd) }}
+                   title={`${hm(reqStart)}–${hm(reqEnd)} · ${t('approvals.ctxRequested')}`}>
+                <b className="truncate">{t('approvals.ctxRequested')}</b>
+                <small>{hm(reqStart)}–{hm(reqEnd)}</small>
+              </div>
+            </div>
+          )}
+          {!loading && blocks.length === 0 && (
+            <p className="muted text-sm" style={{ marginTop: 10 }}>{t('approvals.ctxEmpty')}</p>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 export function Approvals() {
   const { t } = useT();
   const toast = useToast();
@@ -86,6 +223,8 @@ export function Approvals() {
   const [delegating, setDelegating] = useState<any | null>(null);
   const [delegateTo, setDelegateTo] = useState('');
   const [delegateReason, setDelegateReason] = useState('');
+  // The booking whose room schedule is shown in the slide-out context panel.
+  const [contextFor, setContextFor] = useState<any | null>(null);
 
   useEffect(() => { load(); }, []);
 
@@ -222,6 +361,10 @@ export function Approvals() {
             </div>
             <div className="row gap-sm approval-actions">
               <button className="btn-fsd ghost" disabled={busyId === b.id}
+                      onClick={() => setContextFor(b)}>
+                <CalendarClock size={13}/> {t('approvals.viewContext')}
+              </button>
+              <button className="btn-fsd ghost" disabled={busyId === b.id}
                       onClick={() => { setDelegating(b); setDelegateTo(''); setDelegateReason(''); }}>
                 <UserCog size={13}/> {t('approvals.delegate')}
               </button>
@@ -269,6 +412,14 @@ export function Approvals() {
                       placeholder="e.g. On leave — please cover"/>
           </label>
         </Modal>
+      )}
+
+      {contextFor && (
+        <ScheduleContext
+          booking={contextFor}
+          resourceName={resourceMap[contextFor.resourceId]?.name || contextFor.resourceId}
+          onClose={() => setContextFor(null)}
+        />
       )}
     </div>
   );

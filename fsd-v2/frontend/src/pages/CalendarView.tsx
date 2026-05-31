@@ -35,9 +35,36 @@ export function CalendarView() {
   const [rooms, setRooms] = useState<any[]>([]);
   const [roomFilter, setRoomFilter] = useState('');   // '' = all rooms
   const [modal, setModal] = useState<{ existingBooking?: any; resource?: any; date: string; start: string; end: string } | null>(null);
+  // Squeezing a 7-day × 24-hour week grid onto a phone is unreadable, so below
+  // the 768px breakpoint we drop to a single-day view. Tracked in state (not a
+  // one-shot read) so rotating the device or resizing re-flows live.
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   const { lastEvent } = useRealtime();
 
   useEffect(() => { api.resources().then(setRooms).catch(() => setRooms([])); reload(); }, []);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Switch the live calendar between day/week when the breakpoint is crossed.
+  // initialView only applies at mount, so drive subsequent changes via the API.
+  useEffect(() => {
+    fcRef.current?.getApi()?.changeView(isMobile ? 'timeGridDay' : 'timeGridWeek');
+  }, [isMobile]);
+
+  // Rooms grouped by location for a scannable <optgroup> filter — a flat list
+  // of 150 rooms in a native <select> is unusable. Locationless rooms fall
+  // under "Other"; groups and rooms are alphabetised.
+  const groupedRooms = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    for (const r of rooms) { const k = r.location || 'Other'; (groups[k] ||= []).push(r); }
+    return Object.entries(groups)
+      .map(([loc, list]) => [loc, list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))] as const)
+      .sort(([a], [b]) => a.localeCompare(b));
+  }, [rooms]);
 
   // FullCalendar renders its prev/next/today toolbar icons as
   // `<span class="fc-icon" role="img">` with no accessible text, which trips
@@ -174,9 +201,13 @@ export function CalendarView() {
         <div className="ph cal-head">
           <span className="cal-title">Calendar — drag across open slots to reserve</span>
           <div className="row gap-sm cal-ctrls">
-            <select className="d-in" aria-label="Filter by room" style={{ width: 200 }} value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
+            <select className="d-in" aria-label="Filter by room" style={{ width: 200, maxWidth: '60vw' }} value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
               <option value="">All rooms</option>
-              {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}{r.location ? ` · ${r.location}` : ''}</option>)}
+              {groupedRooms.map(([loc, list]) => (
+                <optgroup key={loc} label={loc}>
+                  {list.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </optgroup>
+              ))}
             </select>
           </div>
         </div>
@@ -185,13 +216,15 @@ export function CalendarView() {
           <FullCalendar
             ref={fcRef}
             plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-            initialView="timeGridWeek"
+            initialView={isMobile ? 'timeGridDay' : 'timeGridWeek'}
             height={620}
             selectable
             editable
             eventDurationEditable
             nowIndicator
-            headerToolbar={{ left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' }}
+            headerToolbar={isMobile
+              ? { left: 'prev,next', center: 'title', right: 'timeGridDay,dayGridMonth' }
+              : { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' }}
             events={events}
             select={onSelect}
             eventDrop={onDrop}

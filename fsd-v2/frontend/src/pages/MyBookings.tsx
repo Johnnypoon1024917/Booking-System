@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   RefreshCcw, Plus, Calendar, CalendarDays, Clock, Link as LinkIcon,
-  Pencil, Trash2, Save, Repeat,
+  Pencil, Trash2, Save, Repeat, Search, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
@@ -62,6 +62,12 @@ export function MyBookings() {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Bucket>('upcoming');
   const [editing, setEditing] = useState<EditState | null>(null);
+  // Local search + pagination keep the Past tab usable: the backend caps the
+  // list at 200, but rendering 200 heavy cards at once lags the DOM and buries
+  // the booking the user actually wants. Filter by title/room, then page in 10s.
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => { load(); }, []);
 
@@ -113,6 +119,26 @@ export function MyBookings() {
   const filtered = useMemo(
     () => items.filter((b) => bucket(b) === filter),
     [items, filter],
+  );
+
+  // Case-insensitive match on title or resource name. resourceName() is hoisted
+  // (function declaration) so it's safe to call here.
+  const searched = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return filtered;
+    return filtered.filter((b) =>
+      (b.title || '').toLowerCase().includes(q) || resourceName(b).toLowerCase().includes(q));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, query, resourceMap]);
+
+  const pageCount = Math.max(1, Math.ceil(searched.length / PAGE_SIZE));
+  // Reset to the first page on filter/search change, and clamp if the list
+  // shrank under us (e.g. a cancellation removed the last item on this page).
+  useEffect(() => { setPage(1); }, [filter, query]);
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const pageItems = useMemo(
+    () => searched.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [searched, page],
   );
 
   async function save() {
@@ -240,13 +266,18 @@ export function MyBookings() {
         </div>
       )}
 
-      <div className="row gap-sm" style={{ margin: '14px 0' }}>
+      <div className="row gap-sm mybk-toolbar" style={{ margin: '14px 0', flexWrap: 'wrap', alignItems: 'center' }}>
         {tabs.map((tb) => (
           <button key={tb.key} className={`btn-fsd ${filter === tb.key ? '' : 'ghost'}`}
                   onClick={() => setFilter(tb.key)}>
             {tb.label} <span className="muted" style={{ marginLeft: 6 }}>{tb.count}</span>
           </button>
         ))}
+        <div className="mybk-search">
+          <Search size={14} className="muted" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)}
+                 placeholder={t('myBookings.searchPlaceholder')} aria-label={t('myBookings.searchPlaceholder')} />
+        </div>
       </div>
 
       {loading && (
@@ -263,7 +294,12 @@ export function MyBookings() {
         />
       )}
 
-      {!loading && filtered.map((b) => {
+      {/* Bookings exist in this bucket but the search filtered them all out. */}
+      {!loading && filtered.length > 0 && searched.length === 0 && (
+        <p className="muted" style={{ marginTop: 16 }}>{t('myBookings.noMatches')}</p>
+      )}
+
+      {!loading && pageItems.map((b) => {
         const canMutate = b.status !== 'Cancelled' && b.status !== 'No Show' && new Date(b.endTime) > new Date();
         const steps = chains[b.id] || [];
         const chainFailed = !!chainErrors[b.id];
@@ -311,6 +347,16 @@ export function MyBookings() {
           </article>
         );
       })}
+
+      {!loading && pageCount > 1 && (
+        <div className="row gap-sm mybk-pager" style={{ justifyContent: 'center', alignItems: 'center', marginTop: 16 }}>
+          <button className="btn-fsd ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label={t('common.prev')}><ChevronLeft size={14} /></button>
+          <span className="muted text-sm">{t('myBookings.pageOf', { page, total: pageCount })}</span>
+          <button className="btn-fsd ghost" disabled={page >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                  aria-label={t('common.next')}><ChevronRight size={14} /></button>
+        </div>
+      )}
 
       {editing && (
         <Modal title={t('myBookings.edit')} onClose={() => setEditing(null)} footer={<>

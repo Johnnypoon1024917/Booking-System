@@ -10,13 +10,16 @@ import { SyncOutboxService } from '../sync-outbox/sync-outbox.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CustomizationService } from '../customization/customization.service';
 import { BookingValidatorService } from './booking-validator.service';
-import { utcToZonedWallClock, hhmmToMinutes } from '../../common/tz';
+import { utcToZonedWallClock, zonedTimeToUtc, hhmmToMinutes } from '../../common/tz';
 import { windowForWeekday, weekdayName } from '../../common/operating-hours';
 
 // Terminal booking states are settled — their time window can no longer be
 // rescheduled, and they can't be cancelled again. Guards reschedule/cancel
-// against a Cancelled / No Show / Checked In booking.
-const TERMINAL_STATUSES: ReadonlyArray<string> = ['Cancelled', 'No Show', 'Checked In'];
+// against a Cancelled / No Show / Checked In / Attended booking. 'Attended' is
+// a post-hoc admin confirmation that the meeting happened (checkin.service):
+// once verified, the historical booking must be immutable like the others, or
+// a user could edit/reschedule/cancel a meeting an admin already signed off.
+const TERMINAL_STATUSES: ReadonlyArray<string> = ['Cancelled', 'No Show', 'Checked In', 'Attended'];
 
 export interface CreateBookingDto {
   resourceId: string;
@@ -31,6 +34,13 @@ export interface CreateBookingDto {
   // Chargeback / cost-center code to bill this booking against. Validated
   // against the tenant's configured list (customization.cost_centers).
   costCenterCode?: string;
+  // Recurrence linkage, set by RecurrenceService when expanding a series so the
+  // occurrence is BORN linked — the booking.created event and calendar-sync
+  // outbox entry then carry the recurrenceId from the first emit, instead of a
+  // post-create UPDATE racing the websocket/Graph push and shipping standalone
+  // meetings that get re-linked a moment later.
+  recurrenceId?: string;
+  isRecurring?: boolean;
 }
 export interface UpdateBookingDto {
   startTime?: string | Date;
@@ -181,6 +191,9 @@ export class BookingsService {
         customFieldValues: Object.keys(customFieldValues).length ? customFieldValues : null,
         services: dto.services && dto.services.length ? dto.services : null,
         costCenterCode,
+        // Born linked when expanding a series (see CreateBookingDto.recurrenceId).
+        recurrenceId: dto.recurrenceId ?? undefined,
+        isRecurring: dto.recurrenceId ? true : !!dto.isRecurring,
         // A per-resource override wins over the resource's own flag: `?? `
         // falls through only when the override key is absent, so a room can
         // explicitly waive (false) or force (true) approval regardless of the
@@ -285,12 +298,12 @@ export class BookingsService {
 
   // updateSeries applies an edit to the whole recurring series an instance
   // belongs to ("edit series"). Each future, non-settled occurrence is shifted
-  // by the SAME delta the edited instance moved (a pure-UTC offset, so it's
-  // timezone-agnostic and needs no per-occurrence wall-clock math); title,
-  // meeting URL and room changes propagate to all. We reuse update() per
-  // occurrence so every occurrence gets the identical validation, locking and
-  // conflict re-check — and a clash on one occurrence is skipped and reported
-  // rather than aborting the batch (mirrors createSeries). Past and settled
+  // to the same LOCAL wall-clock the edited instance moved to (preserving the
+  // tenant-timezone time-of-day, plus any whole-day move); title, meeting URL
+  // and room changes propagate to all. We reuse update() per occurrence so
+  // every occurrence gets the identical validation, locking and conflict
+  // re-check — and a clash on one occurrence is skipped and reported rather
+  // than aborting the batch (mirrors createSeries). Past and settled
   // occurrences are left untouched, matching Outlook.
   async updateSeries(
     tenantId: string, userId: string, role: string, id: string, dto: UpdateBookingDto,
@@ -304,10 +317,19 @@ export class BookingsService {
       return { updated: 1, skipped: [] };
     }
 
-    // Delta measured against the anchor's CURRENT window, before any change.
-    const deltaStartMs = dto.startTime ? +new Date(dto.startTime) - +anchor.startTime : 0;
-    const deltaEndMs = dto.endTime ? +new Date(dto.endTime) - +anchor.endTime : 0;
-    const timeShift = deltaStartMs !== 0 || deltaEndMs !== 0;
+    // A series time-shift must be computed in WALL-CLOCK terms, not as a raw
+    // millisecond delta. A 9:00→10:00 move is "+1h of local clock time"; the
+    // pure-UTC `+new Date()` math the old code used adds a fixed offset that
+    // drifts to 9:00 or 11:00 for occurrences on the far side of a DST boundary
+    // (the local offset changed but the millisecond delta didn't). We instead
+    // capture the anchor's new local time-of-day + whole-day move, then re-encode
+    // each occurrence through the tenant zone so every instance lands on the same
+    // wall clock regardless of DST.
+    const cust = await this.customization.get(tenantId);
+    const tz = (cust as { timezone?: string }).timezone;
+    const startShift = dto.startTime ? wallShift(anchor.startTime, new Date(dto.startTime), tz) : null;
+    const endShift = dto.endTime ? wallShift(anchor.endTime, new Date(dto.endTime), tz) : null;
+    const timeShift = !!(startShift || endShift);
     const now = new Date();
 
     const siblings = await this.bookings.find({
@@ -329,8 +351,8 @@ export class BookingsService {
       if (dto.services !== undefined) patch.services = dto.services;
       if (dto.customFieldValues !== undefined) patch.customFieldValues = dto.customFieldValues;
       if (timeShift) {
-        patch.startTime = new Date(+s.startTime + deltaStartMs).toISOString();
-        patch.endTime = new Date(+s.endTime + deltaEndMs).toISOString();
+        if (startShift) patch.startTime = applyWallShift(s.startTime, startShift, tz);
+        if (endShift) patch.endTime = applyWallShift(s.endTime, endShift, tz);
       }
       try {
         await this.update(tenantId, userId, role, s.id, patch);
@@ -350,7 +372,7 @@ export class BookingsService {
     // than re-emitting events / notifications. A checked-in or no-show
     // booking is settled and can't be cancelled.
     if (b.status === 'Cancelled') return b;
-    if (b.status === 'No Show' || b.status === 'Checked In') {
+    if (b.status === 'No Show' || b.status === 'Checked In' || b.status === 'Attended') {
       throw new ConflictException(`cannot cancel a ${b.status} booking`);
     }
     b.status = 'Cancelled';
@@ -542,4 +564,38 @@ export class BookingsService {
     }
     return [...ids];
   }
+}
+
+// --- Wall-clock series shifting (DST-safe) -------------------------------
+// A series edit is expressed as a local-clock move: a new time-of-day plus a
+// whole-day offset, both derived from how the anchor occurrence moved. Applying
+// it re-encodes each occurrence through the tenant timezone, so the local clock
+// stays put across DST transitions instead of drifting by the changed offset.
+interface WallShift { dayOffset: number; hhmm: string }
+
+// Parse a YYYY-MM-DD calendar date to a UTC midnight epoch — used only for
+// DST-independent whole-day arithmetic on the date component.
+function dateStrToUtcMs(s: string): number {
+  const [y, m, d] = s.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+function addDaysToDateStr(s: string, n: number): string {
+  const d = new Date(dateStrToUtcMs(s) + n * 86_400_000);
+  const pad = (x: number) => String(x).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+// Derive the wall-clock shift from the anchor's old → new instant in `tz`.
+function wallShift(oldUtc: Date, newUtc: Date, tz?: string): WallShift {
+  const o = utcToZonedWallClock(oldUtc, tz);
+  const n = utcToZonedWallClock(newUtc, tz);
+  return { dayOffset: Math.round((dateStrToUtcMs(n.dateStr) - dateStrToUtcMs(o.dateStr)) / 86_400_000), hhmm: n.hhmm };
+}
+
+// Apply a wall-clock shift to one occurrence: keep its own local date (plus the
+// whole-day offset), set the new local time-of-day, re-encode to a UTC instant.
+function applyWallShift(occUtc: Date, shift: WallShift, tz?: string): string {
+  const w = utcToZonedWallClock(occUtc, tz);
+  const newDate = addDaysToDateStr(w.dateStr, shift.dayOffset);
+  return zonedTimeToUtc(newDate, shift.hhmm, tz).toISOString();
 }

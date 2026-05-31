@@ -7,6 +7,7 @@ import {
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { confirmDialog } from '../stores/confirm';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { Switch } from '../components/Switch';
 
 // Tenant Studio — full port of v1's Admin.vue: 7 tabs (branding, locale,
@@ -94,8 +95,14 @@ export function TenantStudio() {
     } catch { /* leave empty — picker shows the "no regions" hint */ }
   }
 
+  // Arm the unsaved-changes guard BEFORE the early return so the hook order
+  // stays stable. An admin can spend many minutes building branding, custom
+  // fields, or an auto-release config; a stray sidebar click must not discard
+  // it without a prompt.
+  const dirty = c !== null && baseline !== JSON.stringify(c);
+  useUnsavedGuard(dirty, 'You have unsaved tenant settings. Leave without saving?');
+
   if (!c) return <p className="muted">Loading…</p>;
-  const dirty = baseline !== JSON.stringify(c);
   const set = (k: string, v: any) => setC({ ...c, [k]: v });
   const arr = (k: string): any[] => c[k] || [];
   const toggleIn = (k: string, v: any) =>

@@ -76,6 +76,9 @@ export const api = {
   deleteResource: (id: string) => http.delete(`/api/v1/admin/resources/${id}`),
   resourceChildren: (id: string) =>
     http.get(`/api/v1/resources/${id}/children`).then((r) => r.data),
+  // Count of a sub-room's live future bookings — gates its removal in the editor.
+  resourceFutureBookings: (id: string): Promise<{ count: number }> =>
+    http.get(`/api/v1/admin/resources/${id}/future-bookings`).then((r) => r.data),
 
   // Bookings
   myBookings: () => http.get('/api/v1/bookings/mine').then((r) => r.data),

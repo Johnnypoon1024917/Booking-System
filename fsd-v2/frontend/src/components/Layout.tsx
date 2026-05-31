@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Flame, Gauge, Calendar, Plus, Menu as MenuIcon,
   BarChart3, Settings,
   Bell, Globe, Check, ChevronDown,
-  User, LogOut, BookOpen, Clock, CheckCircle,
+  User, LogOut, BookOpen, Clock, CheckCircle, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useT } from '../hooks/useT';
@@ -14,8 +14,47 @@ import { BroadcastBanner } from './BroadcastBanner';
 import { AdminSubnav } from './AdminSubnav';
 import { Avatar } from './Avatar';
 import { useTenant } from '../stores/tenant';
+import { useNavGuard } from '../stores/navGuard';
+import { confirmDialog } from '../stores/confirm';
 
 interface Notif { id: string; kind: string; title: string; at: number; bookingId?: string; }
+
+// Shared leave-confirmation used by every shell navigation entry point. Routed
+// through the app's confirmDialog (not window.confirm) so it matches the rest
+// of the UI. Returns true when the user chooses to discard their changes.
+async function confirmLeave(t: (k: string) => string, message: string): Promise<boolean> {
+  return confirmDialog({
+    title: t('common.unsavedTitle'),
+    message: message || t('common.unsavedMessage'),
+    confirmText: t('common.leaveAnyway'),
+    cancelText: t('common.stay'),
+    tone: 'danger',
+  });
+}
+
+// NavLink that respects the unsaved-changes guard. When a page has armed the
+// guard, an in-app click is intercepted and confirmed first; otherwise it
+// behaves exactly like a plain NavLink.
+function GuardedNavLink({ to, end, className, children }: {
+  to: string; end?: boolean;
+  className?: (p: { isActive: boolean }) => string;
+  children: ReactNode;
+}) {
+  const nav = useNavigate();
+  const { t } = useT();
+  const blocked = useNavGuard((s) => s.blocked);
+  const message = useNavGuard((s) => s.message);
+  const setBlocker = useNavGuard((s) => s.setBlocker);
+  return (
+    <NavLink to={to} end={end} className={className} onClick={async (e) => {
+      if (!blocked) return; // not dirty — let the router navigate normally
+      e.preventDefault();
+      if (await confirmLeave(t, message)) { setBlocker(false); nav(to); }
+    }}>
+      {children}
+    </NavLink>
+  );
+}
 
 // Persistent shell — ported verbatim from v1's App.vue + Sidebar.vue +
 // TopBar.vue. The narrow 92-px icon-stack sidebar (light variant) +
@@ -57,7 +96,19 @@ export function Layout() {
   const readIds = useRef<Set<string>>(new Set());
   const [notifications, setNotifications] = useState<Notif[]>([]);
   const [notifLoading, setNotifLoading] = useState(false);
-  const { lastEvent } = useRealtime();
+  const { lastEvent, isConnected } = useRealtime();
+
+  // In-app navigation that respects the unsaved-changes guard, for the menu
+  // items that navigate imperatively (Profile, Admin, notifications, logout)
+  // rather than through a NavLink.
+  const navBlocked = useNavGuard((s) => s.blocked);
+  const navMessage = useNavGuard((s) => s.message);
+  const clearBlocker = useNavGuard((s) => s.setBlocker);
+  async function guardedNav(to: string) {
+    if (navBlocked && !(await confirmLeave(t, navMessage))) return;
+    if (navBlocked) clearBlocker(false);
+    nav(to);
+  }
 
   function persistReadIds() {
     try { localStorage.setItem(readKey, JSON.stringify(Array.from(readIds.current).slice(-500))); } catch { /* ignore */ }
@@ -109,7 +160,7 @@ export function Layout() {
   }
   function openNotification(n: Notif) {
     setNotifOpen(false);
-    if (n.bookingId) nav('/my');
+    if (n.bookingId) guardedNav('/my');
   }
   function relTime(ts: number) {
     if (!ts) return '';
@@ -161,8 +212,11 @@ export function Layout() {
   const userRole = user.role;
   const brandLogo: string | undefined = brand.brand_logo_url;
 
-  function doLogout() {
+  async function doLogout() {
     setUserOpen(false);
+    // Logging out unmounts everything — guard unsaved work the same way.
+    if (navBlocked && !(await confirmLeave(t, navMessage))) return;
+    if (navBlocked) clearBlocker(false);
     logout();
     nav('/login');
   }
@@ -184,42 +238,42 @@ export function Layout() {
 
         <nav className="fsd-nav">
           {show('dashboard') && (
-            <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
               <Gauge size={22} /><span>{t('nav.dashboard')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
           {show('calendar') && (
-            <NavLink to="/calendar" className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/calendar" className={({ isActive }) => isActive ? 'active' : ''}>
               <Calendar size={22} /><span>{t('nav.schedule')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
           {show('search') && (
-            <NavLink to="/search" className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/search" className={({ isActive }) => isActive ? 'active' : ''}>
               <Plus size={22} /><span>{t('nav.newBooking')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
           {show('my-bookings') && (
-            <NavLink to="/my" className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/my" className={({ isActive }) => isActive ? 'active' : ''}>
               <MenuIcon size={22} /><span>{t('nav.myBookings')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
           {canApprove && (
-            <NavLink to="/approvals" className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/approvals" className={({ isActive }) => isActive ? 'active' : ''}>
               <CheckCircle size={22} /><span>{t('nav.approvals')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
           {show('reports') && canAdmin && (
-            <NavLink to="/admin/reports" className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/admin/reports" className={({ isActive }) => isActive ? 'active' : ''}>
               <BarChart3 size={22} /><span>{t('nav.reports')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
           {/* Broadcasts moved off the top-level sidebar — still reachable
               via Settings → Workspace → Broadcasts so the top nav keeps
               the 7 client items focused. */}
           {show('admin') && canAdmin && (
-            <NavLink to="/admin/studio" className={({ isActive }) => isActive ? 'active' : ''}>
+            <GuardedNavLink to="/admin/studio" className={({ isActive }) => isActive ? 'active' : ''}>
               <Settings size={22} /><span>{t('nav.settings')}</span>
-            </NavLink>
+            </GuardedNavLink>
           )}
         </nav>
       </aside>
@@ -290,11 +344,11 @@ export function Layout() {
                   <small>{userRole}</small>
                 </div>
                 <div className="menu-divider" />
-                <button className="menu-item" onClick={() => { setUserOpen(false); nav('/profile'); }}>
+                <button className="menu-item" onClick={() => { setUserOpen(false); guardedNav('/profile'); }}>
                   <User size={14} /> Profile
                 </button>
                 {canAdmin && (
-                  <button className="menu-item" onClick={() => { setUserOpen(false); nav('/admin/studio'); }}>
+                  <button className="menu-item" onClick={() => { setUserOpen(false); guardedNav('/admin/studio'); }}>
                     <Settings size={14} /> Admin
                   </button>
                 )}
@@ -309,6 +363,17 @@ export function Layout() {
             </div>
           </div>
         </header>
+
+        {/* Real-time connection lost: the SSE stream backs the live dashboard,
+            calendar, and approvals. If it drops silently (laptop sleep, VPN
+            blip, elevator) the user could act on a stale view, so warn them
+            until the auto-reconnect succeeds. */}
+        {!isConnected && (
+          <div className="offline-banner" role="status" aria-live="polite">
+            <WifiOff size={15} />
+            <span>{t('common.offlineBanner')}</span>
+          </div>
+        )}
 
         <BroadcastBanner />
 

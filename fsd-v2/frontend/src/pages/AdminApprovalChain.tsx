@@ -6,6 +6,7 @@ import { TokenSelect, TokenOption } from '../components/TokenSelect';
 import { useT } from '../hooks/useT';
 import { useToast } from '../stores/toast';
 import { confirmDialog } from '../stores/confirm';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 
 // Kept aligned with backend modules/approvals/grade.ts so admins can't
 // pick a min_grade that silently fails server-side.
@@ -95,9 +96,17 @@ export function AdminApprovalChain() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [editing, setEditing] = useState<Rule | null>(null);
+  // Snapshot of the rule as it was opened — used to tell whether the open
+  // editor has unsaved edits so we only guard against losing real changes.
+  const [editBaseline, setEditBaseline] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { load(); }, []);
+
+  // A half-built multi-level chain lives only in the editor modal; a stray
+  // sidebar click would unmount the whole page and discard it. Guard it.
+  const dirty = !!editing && JSON.stringify(editing) !== editBaseline;
+  useUnsavedGuard(dirty, t('approvalChain.leaveWarn'));
 
   async function load() {
     const [r, res, rt, dept, usr] = await Promise.all([
@@ -136,10 +145,12 @@ export function AdminApprovalChain() {
   }, [resources, resourceTypes, editing?.scopeType, editing?.scopeValue]);
 
   function openNew() {
-    setEditing({
+    const fresh: Rule = {
       name: '', scopeType: 'asset_type', scopeValue: 'Meeting Room',
       priority: 100, isActive: true, levels: [emptyLevel(t('approvalChain.defaultLevelName'))],
-    });
+    };
+    setEditing(fresh);
+    setEditBaseline(JSON.stringify(fresh));
   }
   function openExisting(r: any) {
     // Deep clone + normalise so missing arrays on legacy rules don't
@@ -152,6 +163,7 @@ export function AdminApprovalChain() {
       })),
     }));
     setEditing(clone);
+    setEditBaseline(JSON.stringify(clone));
   }
 
   function setEd<K extends keyof Rule>(k: K, v: Rule[K]) {

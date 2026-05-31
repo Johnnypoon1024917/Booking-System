@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search as SearchIcon, SearchX, MapPinned, Check, X } from 'lucide-react';
+import { Search as SearchIcon, SearchX, MapPinned, Check, X, Combine } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useTenant } from '../stores/tenant';
@@ -54,8 +54,14 @@ export function Search() {
   const [unavailable, setUnavailable] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [picked, setPicked] = useState<any | null>(null);
+  // Multi-select (was a single `picked`): the user may now tick several
+  // sub-rooms so we can offer the "book the whole space instead" nudge when the
+  // selection covers 2+ children of the same parent.
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
   const [modalRoom, setModalRoom] = useState<any | null>(null);
+  function togglePick(r: any) {
+    setPickedIds((ids) => ids.includes(r.id) ? ids.filter((x) => x !== r.id) : [...ids, r.id]);
+  }
 
   // Admin-configured working-hours window + "is the chosen date today" so we
   // can grey out slots earlier than now.
@@ -165,6 +171,33 @@ export function Search() {
     return out;
   }, [available, unavailable, childrenOf, resById]);
 
+  // Currently-ticked, bookable rooms.
+  const pickedRooms = useMemo(
+    () => rows.filter((x) => x.st.kind === 'ok' && pickedIds.includes(x.id)).map((x) => x.r),
+    [rows, pickedIds],
+  );
+  const soloPick = pickedRooms.length === 1 ? pickedRooms[0] : null;
+
+  // Whole-room nudge (spec): if the user ticks 2+ sub-rooms of the SAME parent,
+  // suggest reserving the whole parent space in one booking instead of cobbling
+  // the halves together. Only surfaced when the parent itself is bookable.
+  const nudge = useMemo(() => {
+    const byParent: Record<string, any[]> = {};
+    for (const r of pickedRooms) {
+      if (isChild(r) && r.parentResourceId) {
+        (byParent[r.parentResourceId] = byParent[r.parentResourceId] || []).push(r);
+      }
+    }
+    for (const pid of Object.keys(byParent)) {
+      if (byParent[pid].length < 2) continue;
+      const parentRow = rows.find((x) => x.id === pid);
+      if (parentRow && parentRow.st.kind === 'ok') {
+        return { parent: parentRow.r, children: byParent[pid] };
+      }
+    }
+    return null;
+  }, [pickedRooms, rows]);
+
   // A repeating reservation must have a termination date (FSD §3.2).
   const recurError = useMemo(() => {
     if (!form.recur) return '';
@@ -191,7 +224,7 @@ export function Search() {
   }, [user]);
 
   async function search() {
-    setBusy(true); setHasSearched(true); setPicked(null);
+    setBusy(true); setHasSearched(true); setPickedIds([]);
     const query = {
       location: form.region, date: form.date,
       startTime: form.allDay ? '00:00' : form.start,
@@ -221,7 +254,7 @@ export function Search() {
       return { ...f, start: v, end: minToHHMM(e) };
     });
   }
-  function onBooked() { setModalRoom(null); setPicked(null); toast.success('Reservation submitted'); search(); }
+  function onBooked() { setModalRoom(null); setPickedIds([]); toast.success('Reservation submitted'); search(); }
 
   const anyOk = rows.some((x) => x.st.kind === 'ok');
 
@@ -318,12 +351,12 @@ export function Search() {
                          className={`avail-row ${row.st.kind === 'ok' ? 'ok' : 'bad'}`}
                          style={{ paddingLeft: 12 + row.depth * 22 }}
                          title={row.st.kind === 'blocked' ? `Blocked by a booking on ${row.st.via} (shared/split space)` : ''}
-                         onClick={() => row.st.kind === 'ok' && setPicked(row.r)}>
+                         onClick={() => row.st.kind === 'ok' && togglePick(row.r)}>
                       {/* Tree connector so a sub-room reads as physically inside
                           its parent (└─), not just an indented sibling. */}
                       {row.depth > 0 && <span className="tree-branch" aria-hidden="true">└─</span>}
                       {row.st.kind === 'ok'
-                        ? <input type="checkbox" checked={picked?.id === row.id} onChange={() => setPicked(row.r)} onClick={(e) => e.stopPropagation()}/>
+                        ? <input type="checkbox" checked={pickedIds.includes(row.id)} onChange={() => togglePick(row.r)} onClick={(e) => e.stopPropagation()}/>
                         : null}
                       {row.st.kind === 'ok' ? <Check size={14} className="chk"/> : <X size={14}/>}
                       <span className="space" style={row.st.kind !== 'ok' ? { textDecoration: 'line-through' } : undefined}>
@@ -343,13 +376,33 @@ export function Search() {
                   )}
                 </div>
 
-                {picked && (
-                  <div className="row mt" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                    {recurError ? <span className="check-msg bad">{recurError}</span> : <span/>}
-                    <button className="mrbs-btn" disabled={!!recurError} onClick={() => setModalRoom(picked)}>
-                      Confirm &amp; Execute Reservation — {picked.name}
+                {/* Whole-room nudge: the user ticked 2+ halves of one space, so
+                    suggest booking the parent in a single reservation. */}
+                {nudge && (
+                  <div className="avail-note mt" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                    <span>
+                      <Combine size={14}/> You picked {nudge.children.map((c: any) => c.name).join(' + ')}.
+                      {' '}Book the whole <b>{nudge.parent.name}</b> ({nudge.parent.capacity} pax) in one reservation instead?
+                    </span>
+                    <button className="mrbs-btn" disabled={!!recurError} onClick={() => setModalRoom(nudge.parent)}>
+                      Book whole {nudge.parent.name}
                     </button>
                   </div>
+                )}
+
+                {soloPick && !nudge && (
+                  <div className="row mt" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                    {recurError ? <span className="check-msg bad">{recurError}</span> : <span/>}
+                    <button className="mrbs-btn" disabled={!!recurError} onClick={() => setModalRoom(soloPick)}>
+                      Confirm &amp; Execute Reservation — {soloPick.name}
+                    </button>
+                  </div>
+                )}
+
+                {pickedRooms.length > 1 && !nudge && (
+                  <p className="muted text-sm mt">
+                    Select a single room to book it, or tick sub-rooms of the same space to book it whole.
+                  </p>
                 )}
               </>
             )}

@@ -62,26 +62,35 @@ export class CheckinService {
   async redeemToken(token: string) {
     if (!token) throw new BadRequestException('missing token');
     const now = new Date();
-    const claim = await this.bookings.createQueryBuilder()
-      .update(Booking)
-      .set({ checkinToken: null as unknown as undefined, checkinTokenExpiresAt: null as unknown as undefined })
-      .where('checkin_token = :token', { token })
-      .andWhere('(checkin_token_expires_at IS NULL OR checkin_token_expires_at > :now)', { now })
-      .andWhere(`status NOT IN ('Cancelled','No Show')`)
-      .returning(['id'])
-      .execute();
+    // The token-burn and the check-in run in ONE transaction. Previously the
+    // burning UPDATE committed on its own; if applyCheckin then threw — e.g. the
+    // auto-release cron flipped the row to No Show in the gap, or the process
+    // crashed — the token was already gone, leaving the user with a permanently
+    // dead QR and no check-in. Wrapping both makes the burn conditional on a
+    // successful check-in: any failure rolls the token back so it can be retried.
+    return this.bookings.manager.transaction(async (m) => {
+      const repo = m.getRepository(Booking);
+      const claim = await repo.createQueryBuilder()
+        .update(Booking)
+        .set({ checkinToken: null as unknown as undefined, checkinTokenExpiresAt: null as unknown as undefined })
+        .where('checkin_token = :token', { token })
+        .andWhere('(checkin_token_expires_at IS NULL OR checkin_token_expires_at > :now)', { now })
+        .andWhere(`status NOT IN ('Cancelled','No Show')`)
+        .returning(['id'])
+        .execute();
 
-    // affected === 0 ⇒ token never existed, already consumed by a concurrent
-    // scan, expired, or the booking is in a terminal state. All look identical
-    // to the caller by design (no oracle for guessing tokens).
-    if (!claim.affected) {
-      throw new BadRequestException('token invalid, already used, or expired');
-    }
-    const id = (claim.raw as Array<{ id: string }>)[0]?.id;
-    const b = await this.bookings.findOne({ where: { id } });
-    if (!b) throw new NotFoundException('booking not found');
-    const saved = await this.applyCheckin(b);
-    return { bookingId: saved.id, checkedInAt: saved.checkedInAt };
+      // affected === 0 ⇒ token never existed, already consumed by a concurrent
+      // scan, expired, or the booking is in a terminal state. All look identical
+      // to the caller by design (no oracle for guessing tokens).
+      if (!claim.affected) {
+        throw new BadRequestException('token invalid, already used, or expired');
+      }
+      const id = (claim.raw as Array<{ id: string }>)[0]?.id;
+      const b = await repo.findOne({ where: { id } });
+      if (!b) throw new NotFoundException('booking not found');
+      const saved = await this.applyCheckin(b, repo);
+      return { bookingId: saved.id, checkedInAt: saved.checkedInAt };
+    });
   }
 
   // Admin: explicit no-show flip. Same effect as auto-release but
@@ -122,14 +131,17 @@ export class CheckinService {
     return saved;
   }
 
-  private async applyCheckin(b: Booking) {
+  // `repo` lets the caller run the flip inside an open transaction (the kiosk
+  // redeem path), so the status write and the token-burn commit or roll back
+  // together. Defaults to the shared repo for the directly-authed path.
+  private async applyCheckin(b: Booking, repo: Repository<Booking> = this.bookings) {
     if (b.status === 'Cancelled' || b.status === 'No Show') {
       throw new BadRequestException(`cannot check in: booking is ${b.status}`);
     }
     if (b.status === 'Checked In') return b;
     b.status = 'Checked In';
     b.checkedInAt = new Date();
-    const saved = await this.bookings.save(b);
+    const saved = await repo.save(b);
     this.emitCheckedIn(saved);
     return saved;
   }

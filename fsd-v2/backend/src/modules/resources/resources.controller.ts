@@ -17,6 +17,9 @@ class SubResourceDto {
   @IsOptional() @IsString() id?: string;
   @IsString() name!: string;
   @IsOptional() @IsInt() @Min(1) capacity?: number;
+  // Per-child overrides; absent = inherit from the parent.
+  @IsOptional() @IsArray() @IsString({ each: true }) equipment?: string[];
+  @IsOptional() @IsBoolean() requiresApproval?: boolean;
 }
 
 class CustomFieldDto {
@@ -138,6 +141,14 @@ export class ResourcesAdminController {
   @Get(':id/children')
   children(@CurrentUser() u: AuthUser, @Param('id') id: string) {
     return this.svc.children(u.tenantId, id);
+  }
+
+  // Count of a resource's live future bookings — the editor calls this before
+  // removing a sub-room so it can block (and offer reassign/cancel) instead of
+  // silently orphaning those bookings on a deactivated child.
+  @Get(':id/future-bookings')
+  async futureBookings(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return { count: await this.svc.futureBookingCount(u.tenantId, id) };
   }
 
   @Post() create(@CurrentUser() u: AuthUser, @Body() dto: ResourceDto) {

@@ -96,6 +96,10 @@ export class RecurrenceService {
         // occurrence (a 100-occurrence weekly series = 100 emails). We send
         // a single summary email below instead. Per-occurrence calendar sync
         // and realtime still fire inside create().
+        // Pass the recurrence id INTO create() so the occurrence is persisted,
+        // emitted and synced as part of the series from its first write — a
+        // post-create UPDATE would fire booking.created and the Outlook/Graph
+        // outbox with recurrenceId still null, shipping N standalone meetings.
         const created = await this.bookingsSvc.create(tenantId, userId, {
           resourceId: resource.id,
           startTime: occ.start,
@@ -106,10 +110,9 @@ export class RecurrenceService {
           customFieldValues: dto.customFieldValues,
           services: dto.services,
           costCenterCode: dto.costCenterCode,
+          recurrenceId: rec.id,
+          isRecurring: true,
         }, { suppressNotification: true });
-        // Tag the created booking with the recurrence id so cancelling
-        // the series can flip them all in a single UPDATE.
-        await this.bookings.update(created.id, { recurrenceId: rec.id, isRecurring: true });
         result.bookingIds.push(created.id);
         if (!firstBooking) firstBooking = created;
       } catch {
@@ -136,7 +139,7 @@ export class RecurrenceService {
       .update(Booking)
       .set({ status: 'Cancelled', exceptionNotes: reason || 'series cancelled' })
       .where('tenant_id = :t AND recurrence_id = :r AND status NOT IN (:...skip)',
-        { t: tenantId, r: id, skip: ['Cancelled', 'Checked In', 'No Show'] })
+        { t: tenantId, r: id, skip: ['Cancelled', 'Checked In', 'No Show', 'Attended'] })
       .execute();
     return rec;
   }

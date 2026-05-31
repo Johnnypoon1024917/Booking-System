@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Resource } from './resource.entity';
+import { Booking } from '../bookings/booking.entity';
 import { normalizeOperatingHours } from '../../common/operating-hours';
 
 export interface SearchCriteria {
@@ -16,13 +17,25 @@ export interface SearchCriteria {
 // Write shape accepted by create/update: the entity columns plus the
 // write-only `subResources` list (which is expanded into child rows, not
 // stored on the parent).
+export type SubResourceWrite = {
+  id?: string;
+  name: string;
+  capacity?: number;
+  // Per-child overrides of the inherited parent attributes (spec: per-child
+  // capacity / equipment / approver). Absent = inherit from parent.
+  equipment?: string[];
+  requiresApproval?: boolean;
+};
 export type ResourceWriteDto = Partial<Resource> & {
-  subResources?: Array<{ id?: string; name: string; capacity?: number }>;
+  subResources?: SubResourceWrite[];
 };
 
 @Injectable()
 export class ResourcesService {
-  constructor(@InjectRepository(Resource) private readonly repo: Repository<Resource>) {}
+  constructor(
+    @InjectRepository(Resource) private readonly repo: Repository<Resource>,
+    @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
+  ) {}
 
   list(tenantId: string) {
     return this.repo.find({ where: { tenantId }, order: { name: 'ASC' } });
@@ -68,7 +81,7 @@ export class ResourcesService {
   // dropped from the list are SOFT-deactivated (isActive=false), never hard
   // deleted, so a child that still holds bookings is never silently destroyed.
   private async syncSubResources(
-    tenantId: string, parent: Resource, subs: Array<{ id?: string; name: string; capacity?: number }>,
+    tenantId: string, parent: Resource, subs: SubResourceWrite[],
   ) {
     const existing = await this.repo.find({ where: { tenantId, parentResourceId: parent.id } });
     const byName = new Map(existing.map((c) => [c.name.trim().toLowerCase(), c]));
@@ -77,9 +90,15 @@ export class ResourcesService {
     for (const sub of subs) {
       const name = (sub.name || '').trim();
       if (!name) continue;
+      // Per-child attributes inherit from the parent unless explicitly set on
+      // the sub-room (spec: capacity / equipment / approver override).
+      const equipment = sub.equipment ?? parent.equipment;
+      const requiresApproval = sub.requiresApproval ?? parent.requiresApproval;
       const match = byName.get(name.toLowerCase());
       if (match) {
         match.capacity = sub.capacity ?? match.capacity;
+        match.equipment = equipment;
+        match.requiresApproval = requiresApproval;
         match.isActive = true;
         await this.repo.save(match);
         keepIds.add(match.id);
@@ -89,7 +108,8 @@ export class ResourcesService {
           capacity: sub.capacity ?? parent.capacity ?? 1,
           region: parent.region, location: parent.location,
           assetType: parent.assetType,
-          requiresApproval: parent.requiresApproval,
+          equipment,
+          requiresApproval,
           departmentId: parent.departmentId,
           parentResourceId: parent.id, compositeMode: 'child',
           isActive: true,
@@ -97,13 +117,37 @@ export class ResourcesService {
         keepIds.add(child.id);
       }
     }
-    // Soft-deactivate children the admin removed from the list.
-    for (const c of existing) {
-      if (!keepIds.has(c.id) && c.isActive) {
-        c.isActive = false;
-        await this.repo.save(c);
+    // Soft-deactivate children the admin removed from the list — but never
+    // strand a child that still holds future bookings (spec: "cannot remove a
+    // child that has future bookings"). The editor pre-checks and offers a
+    // reassign/cancel path; this is the authoritative server-side backstop so a
+    // direct API caller can't orphan bookings on an invisible room either.
+    const removed = existing.filter((c) => !keepIds.has(c.id) && c.isActive);
+    for (const c of removed) {
+      const future = await this.futureBookingCount(tenantId, c.id);
+      if (future > 0) {
+        throw new BadRequestException(
+          `Cannot remove "${c.name}": it has ${future} future booking(s). ` +
+          'Reassign or cancel them first.',
+        );
       }
     }
+    for (const c of removed) {
+      c.isActive = false;
+      await this.repo.save(c);
+    }
+  }
+
+  // Count this resource's still-live bookings that start in the future, used to
+  // guard sub-room removal and to power the editor's pre-save check.
+  async futureBookingCount(tenantId: string, resourceId: string): Promise<number> {
+    return this.bookings
+      .createQueryBuilder('b')
+      .where('b.tenant_id = :tenantId', { tenantId })
+      .andWhere('b.resource_id = :resourceId', { resourceId })
+      .andWhere("b.status NOT IN ('Cancelled','No Show')")
+      .andWhere('b.start_time > now()')
+      .getCount();
   }
 
   // Return a parent's active child sub-resources (for the editor to re-hydrate).
@@ -123,13 +167,42 @@ export class ResourcesService {
   // optionally filters by location / asset type / capacity, then
   // subtracts the set of rooms with a conflicting booking in the
   // window via a NOT IN subquery against bookings.
+  //
+  // Split-room cross-lock (spec: "booking a child greys the parent; booking
+  // the parent greys all children"): the subquery is a UNION of three sets so
+  // the same physical-conflict logic bookings.service enforces at write time
+  // is mirrored here at search time. Without parts 2/3 a parent showed as free
+  // while a child of it was booked (and vice-versa), letting a user fill out
+  // the whole form only to hit a 409 on submit.
   async findAvailable(c: SearchCriteria) {
     const qb = this.repo.createQueryBuilder('r')
       .where('r.tenant_id = :t', { t: c.tenantId })
       .andWhere('r.is_active = TRUE')
       .andWhere(
         `r.id NOT IN (
+          -- 1. the exact room is booked
           SELECT b.resource_id FROM bookings b
+          WHERE b.tenant_id = :t
+            AND b.status NOT IN ('Cancelled','No Show')
+            AND tstzrange(b.start_time, b.end_time, '[)')
+                && tstzrange(:start, :end, '[)')
+
+          UNION
+
+          -- 2. the PARENT of a booked child (child booked → parent unbookable)
+          SELECT res.parent_resource_id FROM bookings b
+          JOIN resources res ON res.id = b.resource_id
+          WHERE res.parent_resource_id IS NOT NULL
+            AND b.tenant_id = :t
+            AND b.status NOT IN ('Cancelled','No Show')
+            AND tstzrange(b.start_time, b.end_time, '[)')
+                && tstzrange(:start, :end, '[)')
+
+          UNION
+
+          -- 3. every CHILD of a booked parent (parent booked → children unbookable)
+          SELECT res.id FROM bookings b
+          JOIN resources res ON res.parent_resource_id = b.resource_id
           WHERE b.tenant_id = :t
             AND b.status NOT IN ('Cancelled','No Show')
             AND tstzrange(b.start_time, b.end_time, '[)')

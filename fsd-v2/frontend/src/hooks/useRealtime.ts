@@ -28,6 +28,8 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
   const push = useRealtimeStore((s) => s.push);
   const events = useRealtimeStore((s) => s.events);
   const lastEvent = useRealtimeStore((s) => s.lastEvent);
+  const isConnected = useRealtimeStore((s) => s.connected);
+  const setConnected = useRealtimeStore((s) => s.setConnected);
   const token = useAuth((s) => s.token);
   const esRef = useRef<EventSource | null>(null);
 
@@ -46,6 +48,9 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
       const url = `${ENDPOINT}?token=${encodeURIComponent(jwt)}`;
       const es = new EventSource(url, { withCredentials: true });
       esRef.current = es;
+      // Stream is live — clear any offline banner. onopen fires once the
+      // server accepts the connection (after a successful reconnect too).
+      es.onopen = () => { if (!cancelled) setConnected(true); };
       es.onmessage = (msg) => {
         try {
           const parsed: RealtimeEvent = JSON.parse(msg.data);
@@ -58,6 +63,9 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
       es.onerror = () => {
         es.close();
         esRef.current = null;
+        // Surface the drop immediately so the UI can warn the user the data
+        // may be stale; onopen flips it back when the retry succeeds.
+        if (!cancelled) setConnected(false);
         if (!cancelled && autoReconnect) {
           reconnectTimer = setTimeout(open, RECONNECT_MS);
         }
@@ -76,7 +84,7 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, autoReconnect]);
 
-  return { events, lastEvent };
+  return { events, lastEvent, isConnected };
 }
 
 export default useRealtime;

@@ -96,16 +96,31 @@ export class AutoReleaseService {
       const releaseAt = b.startTime.getTime() + graceMinutes * 60_000;
       if (now < releaseAt) continue; // still within this booking's grace window
 
-      b.status = 'No Show';
-      b.exceptionNotes = b.exceptionNotes || 'auto-released: no check-in within grace period';
+      // Flip to No Show with an ATOMIC, conditional UPDATE — never save(b).
+      // The candidate row was read at the top of the tick; by the time we get
+      // here a kiosk scan may have already checked the user in. A blind save(b)
+      // would clobber that Checked-In write with our stale No-Show snapshot
+      // ("lost update"), permanently mis-flagging a user who DID show up. The
+      // WHERE re-asserts the preconditions (still Confirmed, still not checked
+      // in) so the DB only flips rows the scan hasn't claimed — and the loser
+      // of the race no-ops (affected === 0) instead of overwriting.
+      const notes = b.exceptionNotes || 'auto-released: no check-in within grace period';
       try {
-        await this.bookings.save(b);
-        released++;
-        // Warn the owner their reservation was released (fire-and-forget; a
-        // mail failure must never abort the sweep).
-        void this.notifications.enqueue(b.tenantId, 'BOOKING_AUTO_RELEASED', b);
+        const res = await this.bookings.update(
+          { id: b.id, status: 'Confirmed', checkedInAt: IsNull() },
+          { status: 'No Show', exceptionNotes: notes },
+        );
+        if (res.affected) {
+          released++;
+          // Warn the owner their reservation was released (fire-and-forget; a
+          // mail failure must never abort the sweep). Reflect the persisted
+          // state on the in-memory row the notification renders from.
+          b.status = 'No Show';
+          b.exceptionNotes = notes;
+          void this.notifications.enqueue(b.tenantId, 'BOOKING_AUTO_RELEASED', b);
+        }
       } catch (e) {
-        this.log.warn(`auto-release save failed for ${b.id}: ${(e as Error).message}`);
+        this.log.warn(`auto-release update failed for ${b.id}: ${(e as Error).message}`);
       }
     }
 

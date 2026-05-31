@@ -292,7 +292,10 @@
     "recurringCancelTitle": "Cancel recurring booking",
     "recurringCancelMessage": "This booking is part of a series. Cancel just this occurrence, or the entire series?",
     "cancelOccurrence": "This occurrence",
-    "cancelSeries": "Entire series"
+    "cancelSeries": "Entire series",
+    "searchPlaceholder": "Search my bookings…",
+    "noMatches": "No bookings match your search.",
+    "pageOf": "Page {page} of {total}"
   },
   "approvals": {
     "title": "Approvals",
@@ -324,13 +327,23 @@
     "reasonOptional": "Reason (optional)",
     "approvalFailed": "Approval failed",
     "rejectFailed": "Reject failed",
-    "delegateFailed": "Delegate failed"
+    "delegateFailed": "Delegate failed",
+    "viewContext": "View schedule context",
+    "ctxTitle": "Schedule context",
+    "ctxRequested": "Requested",
+    "ctxClear": "Slot is clear — no overlapping bookings.",
+    "ctxConflicts": "Overlaps {count} existing booking(s) in this room.",
+    "ctxBufferBefore": "Buffer before",
+    "ctxBufferAfter": "Buffer after",
+    "ctxNoAdjacent": "—",
+    "ctxEmpty": "No other bookings in this room that day."
   },
   "approvalChain": {
     "title": "Approval Chain",
     "subtitle": "Configure multi-level approval policies for sensitive bookings.",
     "newRule": "New rule",
     "editRule": "Edit rule",
+    "leaveWarn": "You have an unsaved approval rule. Leave without saving?",
     "name": "Rule name",
     "priority": "Priority (lower wins)",
     "scopeType": "Applies to",
@@ -1030,7 +1043,12 @@
     "available": "Available",
     "busy": "Busy",
     "status": "Status",
-    "copy": "Copy"
+    "copy": "Copy",
+    "unsavedTitle": "Unsaved changes",
+    "unsavedMessage": "You have unsaved changes. Leave this page without saving?",
+    "leaveAnyway": "Leave anyway",
+    "stay": "Stay on page",
+    "offlineBanner": "Offline — trying to reconnect. Information may be out of date."
   },
   "settings": {
     "title": "Settings",

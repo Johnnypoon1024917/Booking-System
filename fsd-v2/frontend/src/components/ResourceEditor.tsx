@@ -5,7 +5,7 @@ import { Switch } from './Switch';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useTenant } from '../stores/tenant';
-import { confirmDialog } from '../stores/confirm';
+import { confirmDialog, alertDialog } from '../stores/confirm';
 
 interface Resource {
   id?: string;
@@ -87,7 +87,14 @@ function fromDayRows(rows: DayRow[]): OperatingHours {
   return { days };
 }
 
-interface SubResource { id?: string; name: string; capacity: number; }
+interface SubResource {
+  id?: string;
+  name: string;
+  capacity: number;
+  // Per-child overrides; left undefined the child inherits the parent's value.
+  equipment?: string[];
+  requiresApproval?: boolean;
+}
 interface CustomField { key: string; label: string; type: 'text' | 'number' | 'select' | 'date' | 'checkbox'; required?: boolean; options?: string[]; }
 
 interface Props {
@@ -143,7 +150,10 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     if (resource.id && initialMode === 'splittable' && !(resource.subResources?.length)) {
       api.resourceChildren(resource.id)
         .then((kids: any[]) => patch({
-          subResources: (kids || []).map((k) => ({ id: k.id, name: k.name, capacity: k.capacity })),
+          subResources: (kids || []).map((k) => ({
+            id: k.id, name: k.name, capacity: k.capacity,
+            equipment: k.equipment, requiresApproval: k.requiresApproval,
+          })),
         }))
         .catch(() => { /* non-fatal — admin can re-add */ });
     }
@@ -197,7 +207,31 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     };
     patch({ subResources: [...(form.subResources || []), next] });
   }
-  function removeSub(i: number) {
+  async function removeSub(i: number) {
+    const sub = (form.subResources || [])[i];
+    // A sub-room that already exists on the server may hold future bookings.
+    // Removing it would soft-deactivate the child and strand those bookings on
+    // an invisible room (the backend now rejects this outright). Pre-check and
+    // block here with a reassign/cancel-first path so the admin isn't surprised
+    // by a failed save (spec: "cannot remove a child that has future bookings").
+    if (sub?.id) {
+      try {
+        const { count } = await api.resourceFutureBookings(sub.id);
+        if (count > 0) {
+          await alertDialog({
+            title: `Can't remove "${sub.name}"`,
+            tone: 'danger',
+            message: `This sub-room has ${count} future booking(s). Reassign or cancel `
+              + 'them first, then remove the sub-room.',
+            confirmText: 'Got it',
+          });
+          return;
+        }
+      } catch {
+        // If the check itself fails, fall through — the server guard is the
+        // authoritative backstop and will reject an unsafe removal on save.
+      }
+    }
     patch({ subResources: (form.subResources || []).filter((_, idx) => idx !== i) });
   }
   function updateSub(i: number, p: Partial<SubResource>) {
@@ -236,6 +270,26 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     // booking of this room, so block the save the same way the server would.
     if (ov.minDurationMinutes && ov.maxDurationMinutes && ov.minDurationMinutes > ov.maxDurationMinutes) {
       toast.warning('Min duration override cannot exceed the max duration override'); return;
+    }
+    // Capacity guardrail (spec: "cannot save if Σ child capacity is wildly >
+    // parent — warn, allow with confirm"). The sub-rooms partition the parent,
+    // so their combined seats exceeding the parent's is physically suspect.
+    // Warn and let the admin confirm rather than blocking outright.
+    if (mode === 'splittable') {
+      const subs = form.subResources || [];
+      const sumChildren = subs.reduce((n, s) => n + (Number(s.capacity) || 0), 0);
+      const parentCap = Number(form.capacity) || 0;
+      if (subs.length > 0 && parentCap > 0 && sumChildren > parentCap) {
+        const ok = await confirmDialog({
+          title: 'Sub-room capacity exceeds the parent',
+          tone: 'danger',
+          message: `The sub-rooms add up to ${sumChildren} seats but "${form.name}" holds `
+            + `${parentCap}. That's usually a mistake. Save anyway?`,
+          confirmText: 'Save anyway',
+          cancelText: 'Go back',
+        });
+        if (!ok) return;
+      }
     }
     // Build the payload explicitly so we control exactly what is sent: blank
     // location falls back to region (keeps the server equality filter happy),
@@ -471,6 +525,25 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
                            onChange={(e) => updateSub(i, { capacity: +e.target.value })} />
                   </label>
                 </div>
+                {/* Per-child overrides (spec: equipment / approver inherit from
+                    the parent then override). Blank equipment inherits the
+                    parent's kit; the approval toggle forces approval on this
+                    sub-room only. */}
+                <label>Equipment (comma separated)
+                  <input
+                    value={(sub.equipment || []).join(', ')}
+                    onChange={(e) => updateSub(i, {
+                      equipment: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+                    })}
+                    placeholder={(form.equipment || []).length
+                      ? `inherits · ${(form.equipment || []).join(', ')}`
+                      : 'Projector, whiteboard …'} />
+                </label>
+                <label className="row" style={{ alignItems: 'center', marginTop: 6 }}>
+                  <input type="checkbox" checked={!!sub.requiresApproval}
+                    onChange={(e) => updateSub(i, { requiresApproval: e.target.checked })} />
+                  <span style={{ marginLeft: 6 }}>Requires approval</span>
+                </label>
               </div>
             ))}
           </div>
