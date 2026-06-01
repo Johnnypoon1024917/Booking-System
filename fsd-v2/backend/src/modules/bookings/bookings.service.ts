@@ -162,12 +162,18 @@ export class BookingsService {
     tenantId: string, userId: string, dto: CreateBookingDto,
     opts: { suppressNotification?: boolean } = {},
   ) {
-    const start = new Date(dto.startTime);
-    const end = new Date(dto.endTime);
+    let start = new Date(dto.startTime);
+    let end = new Date(dto.endTime);
     if (!(end > start)) throw new ConflictException('end must be after start');
 
     const resource = await this.resources.findOne({ where: { id: dto.resourceId, tenantId } });
     if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
+
+    // An "All Day" request arrives as the whole local day (00:00 → 23:59). For a
+    // room with operating hours that always overruns the close time, so map it
+    // onto the day's actual open/close window instead of letting it be rejected
+    // (see mapAllDayToOperatingHours).
+    ({ start, end } = await this.mapAllDayToOperatingHours(tenantId, resource, start, end));
 
     await this.assertCanBook(tenantId, userId, resource);
     // Tenant-policy rules (past-date, horizon, duration, blackout, holiday),
@@ -258,73 +264,13 @@ export class BookingsService {
   }
 
   async update(tenantId: string, userId: string, role: string, id: string, dto: UpdateBookingDto) {
-    const timeChanged = !!(dto.startTime || dto.endTime);
-
-    // Authz, conflict re-check and save all run in one transaction. When the
-    // time changes we lock the resource so the re-check + save can't race a
-    // concurrent booking — the same TOCTOU fix as create().
-    const saved = await this.bookings.manager.transaction(async (m) => {
-      const b = await m.getRepository(Booking).findOne({ where: { id, tenantId } });
-      if (!b) throw new NotFoundException('booking not found');
-      // Owner OR admin can edit. Mirrors v1's update_booking.go check.
-      if (b.userId !== userId && !this.isAdmin(role)) throw new ForbiddenException();
-      // A settled booking (cancelled / no-show / checked-in) can't be edited.
-      // Without this guard a reschedule silently mutated a Cancelled row's
-      // window (and re-ran the conflict check) while leaving it Cancelled.
-      if (TERMINAL_STATUSES.includes(b.status)) {
-        throw new ConflictException(`cannot modify a ${b.status} booking`);
-      }
-
-      // A room move re-runs the same resource validation + conflict check the
-      // time path does (against the new room), even when the time is unchanged.
-      const targetResourceId = dto.resourceId || b.resourceId;
-      const resourceChanged = targetResourceId !== b.resourceId;
-
-      if (timeChanged || resourceChanged) {
-        const start = dto.startTime ? new Date(dto.startTime) : b.startTime;
-        const end = dto.endTime ? new Date(dto.endTime) : b.endTime;
-        if (!(end > start)) throw new ConflictException('end must be after start');
-        const resource = await m.getRepository(Resource).findOne({ where: { id: targetResourceId, tenantId } });
-        // Parity with create(): a missing or inactive resource is not
-        // bookable. Previously `if (resource)` let a reschedule onto a
-        // deleted/deactivated resource through with NO conflict check at all.
-        if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
-        await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null);
-        await this.assertWithinOperatingHours(tenantId, resource, start, end);
-        const ids = await this.relatedResourceIds(m, tenantId, resource);
-        await this.lockResources(m, tenantId, ids);
-        await this.assertNoConflict(m, tenantId, ids, start, end, id, resource);
-        // If the resource requires approval (per its override, else its own
-        // flag), a reschedule/move re-enters the approval queue rather than
-        // silently staying Confirmed.
-        if ((resource.ruleOverrides?.requiresApproval ?? resource.requiresApproval) && b.status === 'Confirmed') {
-          b.status = 'Pending Approval';
-        }
-        b.startTime = start;
-        b.endTime = end;
-        b.resourceId = resource.id;
-      }
-      if (dto.title !== undefined) b.title = dto.title;
-      if (dto.meetingUrl !== undefined) b.meetingUrl = dto.meetingUrl;
-      // Service add-ons are editable after creation (Outlook parity) — adding
-      // Catering later shouldn't force a cancel-and-rebook. An explicit empty
-      // array clears them; an absent field leaves the stored list alone.
-      if (dto.services !== undefined) {
-        b.services = dto.services.length ? dto.services : null;
-      }
-      // Custom-field answers: merge the incoming changes over what's stored,
-      // then re-validate against the resource so required fields stay enforced
-      // and unknown keys are dropped (mirrors create()). Validated against the
-      // booking's CURRENT resource (b.resourceId already reflects a room move).
-      if (dto.customFieldValues !== undefined) {
-        const resource = await m.getRepository(Resource).findOne({ where: { id: b.resourceId, tenantId } });
-        const merged = { ...(b.customFieldValues || {}), ...dto.customFieldValues };
-        const cleaned = resource ? this.validateCustomFields(resource, merged) : merged;
-        b.customFieldValues = Object.keys(cleaned).length ? cleaned : null;
-      }
-      b.version += 1;
-      return m.getRepository(Booking).save(b);
-    });
+    // Authz, conflict re-check and save all run in one transaction (the
+    // transactional core is applyUpdate). When the time changes we lock the
+    // resource so the re-check + save can't race a concurrent booking — the same
+    // TOCTOU fix as create().
+    const saved = await this.bookings.manager.transaction(
+      (m) => this.applyUpdate(m, tenantId, userId, role, id, dto),
+    );
 
     this.realtime.emit({
       type: 'booking.rescheduled',
@@ -335,15 +281,97 @@ export class BookingsService {
     return saved;
   }
 
+  // applyUpdate is the transactional core of one booking edit: re-fetch under
+  // the row lock, authz, conflict re-check, mutate, save. It runs on a
+  // caller-supplied EntityManager so the same logic serves two callers —
+  // update() wraps it in its own transaction, while updateSeries() runs it for
+  // every occurrence inside ONE shared transaction instead of opening a fresh
+  // transaction + lock + commit per occurrence (which, for a 2-year weekly
+  // series, meant ~100 sequential transactions and a likely gateway timeout /
+  // pool exhaustion). Emits no side-effects — the caller fires those after the
+  // surrounding transaction commits.
+  private async applyUpdate(
+    m: EntityManager, tenantId: string, userId: string, role: string,
+    id: string, dto: UpdateBookingDto,
+  ): Promise<Booking> {
+    const timeChanged = !!(dto.startTime || dto.endTime);
+    const b = await m.getRepository(Booking).findOne({ where: { id, tenantId } });
+    if (!b) throw new NotFoundException('booking not found');
+    // Owner OR admin can edit. Mirrors v1's update_booking.go check.
+    if (b.userId !== userId && !this.isAdmin(role)) throw new ForbiddenException();
+    // A settled booking (cancelled / no-show / checked-in) can't be edited.
+    // Without this guard a reschedule silently mutated a Cancelled row's
+    // window (and re-ran the conflict check) while leaving it Cancelled.
+    if (TERMINAL_STATUSES.includes(b.status)) {
+      throw new ConflictException(`cannot modify a ${b.status} booking`);
+    }
+
+    // A room move re-runs the same resource validation + conflict check the
+    // time path does (against the new room), even when the time is unchanged.
+    const targetResourceId = dto.resourceId || b.resourceId;
+    const resourceChanged = targetResourceId !== b.resourceId;
+
+    if (timeChanged || resourceChanged) {
+      let start = dto.startTime ? new Date(dto.startTime) : b.startTime;
+      let end = dto.endTime ? new Date(dto.endTime) : b.endTime;
+      if (!(end > start)) throw new ConflictException('end must be after start');
+      const resource = await m.getRepository(Resource).findOne({ where: { id: targetResourceId, tenantId } });
+      // Parity with create(): a missing or inactive resource is not
+      // bookable. Previously `if (resource)` let a reschedule onto a
+      // deleted/deactivated resource through with NO conflict check at all.
+      if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
+      // Same All-Day → operating-hours mapping create() applies, so editing a
+      // booking to span the whole day lands inside the room's window too.
+      ({ start, end } = await this.mapAllDayToOperatingHours(tenantId, resource, start, end));
+      await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null);
+      await this.assertWithinOperatingHours(tenantId, resource, start, end);
+      const ids = await this.relatedResourceIds(m, tenantId, resource);
+      await this.lockResources(m, tenantId, ids);
+      await this.assertNoConflict(m, tenantId, ids, start, end, id, resource);
+      // If the resource requires approval (per its override, else its own
+      // flag), a reschedule/move re-enters the approval queue rather than
+      // silently staying Confirmed.
+      if ((resource.ruleOverrides?.requiresApproval ?? resource.requiresApproval) && b.status === 'Confirmed') {
+        b.status = 'Pending Approval';
+      }
+      b.startTime = start;
+      b.endTime = end;
+      b.resourceId = resource.id;
+    }
+    if (dto.title !== undefined) b.title = dto.title;
+    if (dto.meetingUrl !== undefined) b.meetingUrl = dto.meetingUrl;
+    // Service add-ons are editable after creation (Outlook parity) — adding
+    // Catering later shouldn't force a cancel-and-rebook. An explicit empty
+    // array clears them; an absent field leaves the stored list alone.
+    if (dto.services !== undefined) {
+      b.services = dto.services.length ? dto.services : null;
+    }
+    // Custom-field answers: merge the incoming changes over what's stored,
+    // then re-validate against the resource so required fields stay enforced
+    // and unknown keys are dropped (mirrors create()). Validated against the
+    // booking's CURRENT resource (b.resourceId already reflects a room move).
+    if (dto.customFieldValues !== undefined) {
+      const resource = await m.getRepository(Resource).findOne({ where: { id: b.resourceId, tenantId } });
+      const merged = { ...(b.customFieldValues || {}), ...dto.customFieldValues };
+      const cleaned = resource ? this.validateCustomFields(resource, merged) : merged;
+      b.customFieldValues = Object.keys(cleaned).length ? cleaned : null;
+    }
+    b.version += 1;
+    return m.getRepository(Booking).save(b);
+  }
+
   // updateSeries applies an edit to the whole recurring series an instance
   // belongs to ("edit series"). Each future, non-settled occurrence is shifted
   // to the same LOCAL wall-clock the edited instance moved to (preserving the
   // tenant-timezone time-of-day, plus any whole-day move); title, meeting URL
-  // and room changes propagate to all. We reuse update() per occurrence so
-  // every occurrence gets the identical validation, locking and conflict
-  // re-check — and a clash on one occurrence is skipped and reported rather
-  // than aborting the batch (mirrors createSeries). Past and settled
-  // occurrences are left untouched, matching Outlook.
+  // and room changes propagate to all. Every occurrence runs through the same
+  // applyUpdate core (identical validation, locking and conflict re-check) — but
+  // all of them share ONE transaction rather than opening one per occurrence, so
+  // a 100-instance series is a single commit instead of 100 (the old loop over
+  // update() risked a 5–15s run, a 504, and connection-pool exhaustion). A clash
+  // on one occurrence is skipped and reported rather than aborting the batch
+  // (mirrors createSeries). Past and settled occurrences are left untouched,
+  // matching Outlook.
   async updateSeries(
     tenantId: string, userId: string, role: string, id: string, dto: UpdateBookingDto,
   ): Promise<{ updated: number; skipped: string[] }> {
@@ -377,29 +405,50 @@ export class BookingsService {
     });
 
     const result = { updated: 0, skipped: [] as string[] };
-    for (const s of siblings) {
-      // Future, editable occurrences only.
-      if (TERMINAL_STATUSES.includes(s.status)) continue;
-      if (s.startTime < now) continue;
+    const updatedBookings: Booking[] = [];
 
-      const patch: UpdateBookingDto = {};
-      if (dto.title !== undefined) patch.title = dto.title;
-      if (dto.meetingUrl !== undefined) patch.meetingUrl = dto.meetingUrl;
-      if (dto.resourceId) patch.resourceId = dto.resourceId;
-      // Service add-ons and custom-field answers propagate to every occurrence.
-      if (dto.services !== undefined) patch.services = dto.services;
-      if (dto.customFieldValues !== undefined) patch.customFieldValues = dto.customFieldValues;
-      if (timeShift) {
-        if (startShift) patch.startTime = applyWallShift(s.startTime, startShift, tz);
-        if (endShift) patch.endTime = applyWallShift(s.endTime, endShift, tz);
+    // One transaction for the whole series. applyUpdate runs per occurrence on
+    // the SAME EntityManager, so each resource lock is taken once, the conflict
+    // re-checks are fast in-transaction SELECTs, and we commit a single time. A
+    // per-occurrence clash throws an app-level exception *after* its SQL has
+    // succeeded, so catching it leaves the transaction healthy for the rest.
+    await this.bookings.manager.transaction(async (m) => {
+      for (const s of siblings) {
+        // Future, editable occurrences only.
+        if (TERMINAL_STATUSES.includes(s.status)) continue;
+        if (s.startTime < now) continue;
+
+        const patch: UpdateBookingDto = {};
+        if (dto.title !== undefined) patch.title = dto.title;
+        if (dto.meetingUrl !== undefined) patch.meetingUrl = dto.meetingUrl;
+        if (dto.resourceId) patch.resourceId = dto.resourceId;
+        // Service add-ons and custom-field answers propagate to every occurrence.
+        if (dto.services !== undefined) patch.services = dto.services;
+        if (dto.customFieldValues !== undefined) patch.customFieldValues = dto.customFieldValues;
+        if (timeShift) {
+          if (startShift) patch.startTime = applyWallShift(s.startTime, startShift, tz);
+          if (endShift) patch.endTime = applyWallShift(s.endTime, endShift, tz);
+        }
+        try {
+          const saved = await this.applyUpdate(m, tenantId, userId, role, s.id, patch);
+          updatedBookings.push(saved);
+          result.updated++;
+        } catch {
+          // Conflict / rule violation on this occurrence — skip and report.
+          result.skipped.push(s.startTime.toISOString());
+        }
       }
-      try {
-        await this.update(tenantId, userId, role, s.id, patch);
-        result.updated++;
-      } catch {
-        // Conflict / rule violation on this occurrence — skip and report.
-        result.skipped.push(s.startTime.toISOString());
-      }
+    });
+
+    // Side-effects fire only after the single commit, mirroring update(): a
+    // rolled-back occurrence never emits a realtime/calendar/notification event.
+    for (const saved of updatedBookings) {
+      this.realtime.emit({
+        type: 'booking.rescheduled',
+        tenantId, bookingId: saved.id, resourceId: saved.resourceId, userId: saved.userId,
+      });
+      this.dispatchSync('BOOKING_UPDATED', tenantId, saved.id);
+      void this.notifications.enqueue(tenantId, 'BOOKING_UPDATED', saved);
     }
     return result;
   }
@@ -513,15 +562,62 @@ export class BookingsService {
     const close = hhmmToMinutes(win.close);
     if (open == null || close == null || close <= open) return; // misconfigured — don't block
 
-    // end-of-day bookings land exactly on close (e.g. 18:00) — allow that by
-    // treating a local-midnight end (00:00, weekday rolled over) as the close.
-    const endMinutes = (e.weekday !== s.weekday && e.minutes === 0) ? close : e.minutes;
+    // A booking under operating hours must lie wholly within a single local
+    // day's open window. If it crosses into another calendar day the building
+    // physically closed in between — reject the overnight span rather than only
+    // checking the first day's start and the last day's end (the "overnight
+    // camping" loophole: Mon 17:00 → Tue 09:00 passed both edge checks while the
+    // room was closed all night). A booking ending exactly at the next local
+    // midnight is the one boundary case that *could* legitimately mean "up to
+    // close", but a daily-closing room can't be open at midnight, so we treat
+    // any day-crossing booking as outside hours.
+    if (e.dateStr !== s.dateStr) {
+      throw new ConflictException(
+        `${resource.name} closes daily — a booking can't run past ${win.close} into the next day`,
+      );
+    }
 
-    if (s.minutes < open || endMinutes > close) {
+    if (s.minutes < open || e.minutes > close) {
       throw new ConflictException(
         `outside ${weekdayName(s.weekday)} operating hours (${win.open}–${win.close})`,
       );
     }
+  }
+
+  // Map an "All Day" booking onto the resource's actual operating-hours window.
+  // The SPA sends an all-day request as the full local day (local 00:00 →
+  // 23:59). For a room with operating hours that window always exceeds the
+  // close time, so assertWithinOperatingHours would reject EVERY all-day booking
+  // (23:59 > 18:00). Instead we detect the whole-day span and clamp it to the
+  // day's open/close, so "All Day" books the room for exactly the hours it's
+  // open. Rooms with no operating hours (24h) or on a closed day are left
+  // untouched — the latter is then rejected with a clear "closed" message.
+  private async mapAllDayToOperatingHours(
+    tenantId: string, resource: Resource, start: Date, end: Date,
+  ): Promise<{ start: Date; end: Date }> {
+    const oh = resource.operatingHours;
+    if (!oh) return { start, end };
+
+    const cust = await this.customization.get(tenantId);
+    const tz = (cust as { timezone?: string }).timezone;
+    const s = utcToZonedWallClock(start, tz);
+    const e = utcToZonedWallClock(end, tz);
+
+    // Whole-day = starts at local midnight and runs to the end of that day
+    // (23:59 same day, or rolled to 00:00 the next day).
+    const startsAtMidnight = s.minutes === 0;
+    const endsAtDayEnd =
+      (e.dateStr !== s.dateStr && e.minutes === 0) ||
+      (e.dateStr === s.dateStr && e.minutes >= 23 * 60 + 59);
+    if (!startsAtMidnight || !endsAtDayEnd) return { start, end };
+
+    const win = windowForWeekday(oh, s.weekday);
+    if (!win) return { start, end }; // closed that day — let the hours check reject it clearly
+
+    return {
+      start: zonedTimeToUtc(s.dateStr, win.open, tz),
+      end: zonedTimeToUtc(s.dateStr, win.close, tz),
+    };
   }
 
   // Access control for restricted resources. An open resource (isRestricted

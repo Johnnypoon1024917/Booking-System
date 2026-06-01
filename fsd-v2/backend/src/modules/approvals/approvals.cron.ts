@@ -22,4 +22,18 @@ export class ApprovalsCron {
       this.log.error(`auto-approval sweep failed: ${(err as Error).message}`);
     }
   }
+
+  // Companion sweep: auto-reject bookings still Pending Approval after their
+  // start time has passed, so an approver's inaction can't leave the room
+  // blocked and the request stranded forever (see
+  // ApprovalsService.sweepStaleApprovals). Kept as its own try/catch so a
+  // failure here can't take down the auto-approval sweep above.
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async sweepStaleApprovals() {
+    try {
+      await this.approvals.sweepStaleApprovals();
+    } catch (err) {
+      this.log.error(`stale-approval sweep failed: ${(err as Error).message}`);
+    }
+  }
 }

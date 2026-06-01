@@ -2065,7 +2065,27 @@ table.dt th .caret, .caret { color: #5f6875; }
   color: var(--text);
   font-size: 12px;
   margin-top: 2px;
+  /* Let long subjects wrap to a second line instead of clipping to "Weeking…";
+     clamp at 2 lines so a tall booking card still reads cleanly. */
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.25;
 }
+/* Meeting-room subline, Teams/Outlook style: small, muted, single-line with an
+   ellipsis so it never pushes the card taller than its slot. */
+.fc .fc-modern-event .evt-room {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fc .fc-modern-event .evt-inner { overflow: hidden; }
 .fc .fc-modern-event:hover {
   box-shadow: var(--shadow-sm) !important;
   transform: translateY(-1px);
@@ -2077,6 +2097,20 @@ table.dt th .caret, .caret { color: #5f6875; }
 .fc .fc-modern-event.evt-private {
   background: var(--text-muted) !important;
   border-color: var(--text-muted) !important;
+}
+
+/* Bookings whose room has been soft-deactivated: dimmed + hatched so it reads as
+   "view-only" (drag/resize are disabled on these in CalendarView). */
+.fc .fc-modern-event.evt-inactive-room {
+  opacity: 0.6;
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    rgba(0, 0, 0, 0.03) 10px,
+    rgba(0, 0, 0, 0.03) 20px
+  );
+  cursor: not-allowed;
 }
 
 /* ── Offline / real-time-disconnect banner (Layout) ───────────────────────── */
@@ -2216,3 +2250,13 @@ table.dt th .caret, .caret { color: #5f6875; }
   z-index: 2;
 }
 .sched-evt.requested b { color: var(--warning); }
+
+/* Calendar / Rooms view toggle — segmented control in the schedule header. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg-btn {
+  appearance: none; border: 0; background: var(--surface); color: var(--text-muted);
+  padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; line-height: 1;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active { background: var(--brand-primary); color: #fff; }

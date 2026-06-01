@@ -74,6 +74,9 @@ export class PermissionsController {
   ) {
     const { previous, next, version } = await this.svc.setRole(
       u.tenantId, role, body.permissions, body.expectedVersion,
+      // Pass the editor so the service can block them granting a permission key
+      // they don't already hold (row-level privilege-escalation guard).
+      { role: u.role },
     );
     await this.audit.record(u, {
       action: 'PERMISSION_CHANGED', severity: 'warning',

@@ -2,11 +2,18 @@ import FullCalendar from '@fullcalendar/react';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
+// Named-timezone implementation for FullCalendar. Without it the grid can only
+// render in the browser's local zone or UTC — a named IANA zone like
+// 'Asia/Hong_Kong' silently reverts to UTC — so we register Luxon to make the
+// grid render in the *tenant's* zone (see the timeZone prop below).
+import luxonPlugin from '@fullcalendar/luxon3';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useRealtime } from '../hooks/useRealtime';
+import { useTimezone } from '../hooks/useTimezone';
 import { BookingModal } from '../components/BookingModal';
+import { RoomGridView } from '../components/RoomGridView';
 import { confirmDialog } from '../stores/confirm';
 
 // Schedule view — FullCalendar week/month/day grid with the v1 .mrbs panel
@@ -34,12 +41,21 @@ export function CalendarView() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [roomFilter, setRoomFilter] = useState('');   // '' = all rooms
+  // 'calendar' = FullCalendar day/week/month (drag to retime within a day).
+  // 'rooms' = our room-column day grid (drag to retime AND re-room). The week
+  // grid can't move a booking between rooms — only the room view can.
+  const [view, setView] = useState<'calendar' | 'rooms'>('calendar');
+  const [roomDate, setRoomDate] = useState<Date>(() => new Date());
   const [modal, setModal] = useState<{ existingBooking?: any; resource?: any; date: string; start: string; end: string } | null>(null);
   // Squeezing a 7-day × 24-hour week grid onto a phone is unreadable, so below
   // the 768px breakpoint we drop to a single-day view. Tracked in state (not a
   // one-shot read) so rotating the device or resizing re-flows live.
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   const { lastEvent } = useRealtime();
+  // The grid renders in the tenant's zone (via the Luxon timeZone prop), so
+  // every conversion of a FullCalendar Date back to wall-clock for the booking
+  // modal must go through this — never the browser-local hhmm()/isoDate().
+  const tz = useTimezone();
 
   useEffect(() => { api.resources().then(setRooms).catch(() => setRooms([])); reload(); }, []);
 
@@ -86,30 +102,76 @@ export function CalendarView() {
     api.bookingsRange(isoDate(s), isoDate(e)).then(setBookings).catch(() => setBookings([]));
   }
 
-  function roomName(id: string) { return rooms.find((r) => r.id === id)?.name || 'Room'; }
+  // Overlapping bookings get squeezed into narrow side-by-side columns, clipping
+  // the title to "Weekly M…". Give every card a native tooltip with the full
+  // time · subject · room so the details are recoverable on hover — including
+  // cards collapsed into the "+N more" popover.
+  function onEventDidMount(info: any) {
+    if (info.event.extendedProps?.subjectHidden) {
+      info.el.title = 'Private booking — reserved by another user';
+      return;
+    }
+    const s = info.event.start, e = info.event.end;
+    // The grid is in the tenant zone — format the tooltip there too, not in the
+    // browser zone, so the hover time matches the row the card sits on.
+    const range = s && e ? `${tz.toParts(s).time}–${tz.toParts(e).time}  ` : '';
+    const room = info.event.extendedProps?.roomName;
+    info.el.title = `${range}${info.event.title}${room ? `\n${room}` : ''}`;
+  }
+
+  // Teams/Outlook-style card: stack the time, the subject, and the meeting room
+  // on their own lines. Only enrich the timeGrid (day/week) cards — the month
+  // grid renders compact pills where a 3-line body would break the layout, so
+  // there we fall back to FullCalendar's default by returning undefined.
+  function renderEventContent(arg: any) {
+    if (!arg.view.type.startsWith('timeGrid')) return undefined;
+    const hidden = arg.event.extendedProps?.subjectHidden;
+    const room = arg.event.extendedProps?.roomName;
+    return (
+      <div className="evt-inner">
+        {arg.timeText && <div className="fc-event-time">{arg.timeText}</div>}
+        <div className="fc-event-title">{arg.event.title}</div>
+        {!hidden && room && <div className="evt-room">{room}</div>}
+      </div>
+    );
+  }
 
   const events = useMemo(() => bookings
     .filter((b) => b.status !== 'Cancelled')
     .filter((b) => !roomFilter || b.resourceId === roomFilter)
-    .map((b) => ({
-      id: b.id,
-      // subjectHidden is set by the API when the booking is private and the
-      // caller is neither its owner nor a System Admin: the real title is
-      // never sent, so we render a locked, blurred "Private" block instead.
-      title: b.subjectHidden ? '🔒 Private' : (b.title || `Booking · ${roomName(b.resourceId)}`),
-      start: b.startTime,
-      end: b.endTime,
-      // White "Live Preview" card: light surface fill + dark text, with the
-      // status accent applied only to the heavy left border. FullCalendar sets
-      // these as inline styles; fc-modern-event then forces the top/right/bottom
-      // borders light via CSS, leaving this borderColor to show on the left edge.
-      backgroundColor: 'var(--surface)',
-      borderColor: statusColor(b.status),
-      textColor: 'var(--text)',
-      editable: !b.subjectHidden,
-      classNames: ['fc-modern-event', ...(b.subjectHidden ? ['evt-private'] : [])],
-      extendedProps: { subjectHidden: !!b.subjectHidden },
-    })), [bookings, roomFilter, rooms]);
+    .map((b) => {
+      // A room can be soft-deactivated (isActive=false) while its historical and
+      // future bookings remain. list() returns inactive rooms too, so membership
+      // isn't enough — read the room's isActive flag. The backend rejects edits to
+      // such bookings with NotFoundException('resource not bookable'), so we make
+      // them non-editable here and explain why on the drag handlers below.
+      const room = rooms.find((r) => r.id === b.resourceId);
+      const isRoomActive = !!room?.isActive;
+      const rName = room?.name || b.resourceName || 'Inactive room';
+      return {
+        id: b.id,
+        // subjectHidden is set by the API when the booking is private and the
+        // caller is neither its owner nor a System Admin: the real title is
+        // never sent, so we render a locked, blurred "Private" block instead.
+        title: b.subjectHidden ? '🔒 Private' : (b.title || `Booking · ${rName}`),
+        start: b.startTime,
+        end: b.endTime,
+        // White "Live Preview" card: light surface fill + dark text, with the
+        // status accent applied only to the heavy left border. FullCalendar sets
+        // these as inline styles; fc-modern-event then forces the top/right/bottom
+        // borders light via CSS, leaving this borderColor to show on the left edge.
+        backgroundColor: 'var(--surface)',
+        borderColor: statusColor(b.status),
+        textColor: 'var(--text)',
+        editable: !b.subjectHidden && isRoomActive,
+        classNames: [
+          'fc-modern-event',
+          ...(b.subjectHidden ? ['evt-private'] : []),
+          ...(!isRoomActive ? ['evt-inactive-room'] : []),
+        ],
+        extendedProps: { subjectHidden: !!b.subjectHidden, isRoomActive, roomName: rName },
+      };
+    }), [bookings, roomFilter, rooms]);
 
   function onSelect(info: any) {
     if (!rooms.length) { toast.warning('No bookable rooms'); return; }
@@ -117,13 +179,19 @@ export function CalendarView() {
     // If a room filter is active we pre-select it; otherwise the modal shows
     // a resource picker so the user can pick from the full list (QA #12).
     const resource = roomFilter ? rooms.find((r) => r.id === roomFilter) : undefined;
+    // info.start/end are real instants from a grid now rendered in the tenant
+    // zone, so split them back to tenant-zone wall-clock (NOT browser-local
+    // hhmm/isoDate) — otherwise the modal would re-interpret the browser time
+    // as a tenant time and the saved slot would jump.
+    const sParts = tz.toParts(info.start);
+    const eParts = tz.toParts(info.end);
     // Month view (dayGridMonth) hands back an all-day selection running
     // midnight→midnight, which formats to "00:00 – 00:00" and a 0-minute
     // booking the validator rejects. Default to a sensible 09:00–10:00 working
     // hour (Teams-style) — the user can fine-tune it in the modal.
-    const start = info.allDay ? '09:00' : hhmm(info.start);
-    const end = info.allDay ? '10:00' : hhmm(info.end);
-    setModal({ resource, date: isoDate(info.start), start, end });
+    const start = info.allDay ? '09:00' : sParts.time;
+    const end = info.allDay ? '10:00' : eParts.time;
+    setModal({ resource, date: sParts.date, start, end });
     fcRef.current?.getApi()?.unselect();
   }
 
@@ -131,16 +199,34 @@ export function CalendarView() {
     // A private booking the caller can't see is read-only; bail before the
     // backend would reject the edit anyway.
     if (info.event.extendedProps?.subjectHidden) { info.revert(); return; }
+    // The room was deactivated; the backend would reject this with a confusing
+    // "not bookable" 404. Explain it and snap the card back.
+    if (!info.event.extendedProps?.isRoomActive) {
+      toast.error('Cannot reschedule', 'This room is no longer active or bookable.');
+      info.revert();
+      return;
+    }
+    const newStart: Date = info.event.start;
+    // Dragging in the month grid (or onto an all-day cell) yields an event with a
+    // null end, so info.event.end.toISOString() threw a TypeError that silently
+    // aborted the drop. Reconstruct the end by preserving the original duration.
+    let newEnd: Date | null = info.event.end;
+    if (!newEnd) {
+      const oldDuration = info.oldEvent.end
+        ? info.oldEvent.end.getTime() - info.oldEvent.start.getTime()
+        : 3_600_000; // fall back to 1h if the prior end was also missing
+      newEnd = new Date(newStart.getTime() + oldDuration);
+    }
     const ok = await confirmDialog({
       title: 'Reschedule booking',
-      message: `Move "${info.event.title}" to ${info.event.start?.toLocaleString()}?`,
+      message: `Move "${info.event.title}" to ${newStart.toLocaleString()}?`,
       confirmText: 'Reschedule',
     });
     if (!ok) { info.revert(); return; }
     try {
       await api.updateBooking(info.event.id, {
-        startTime: info.event.start.toISOString(),
-        endTime: info.event.end.toISOString(),
+        startTime: newStart.toISOString(),
+        endTime: newEnd.toISOString(),
       });
       reload();
     } catch (e: any) { toast.error('Reschedule failed', e.displayMessage || e.message); info.revert(); }
@@ -152,6 +238,11 @@ export function CalendarView() {
   // duration instead.
   async function onResize(info: any) {
     if (info.event.extendedProps?.subjectHidden) { info.revert(); return; }
+    if (!info.event.extendedProps?.isRoomActive) {
+      toast.error('Cannot change duration', 'This room is no longer active or bookable.');
+      info.revert();
+      return;
+    }
     const start: Date = info.event.start;
     const end: Date = info.event.end;
     const mins = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
@@ -193,14 +284,79 @@ export function CalendarView() {
     });
   }
 
+  // Room columns for the room-grid view: bookable (active) rooms, narrowed to
+  // the filtered room when one is selected so a single-room day reads cleanly.
+  const roomColumns = useMemo(
+    () => rooms.filter((r) => r.isActive !== false && (!roomFilter || r.id === roomFilter)),
+    [rooms, roomFilter],
+  );
+
+  // Drag a booking onto another room/time in the room grid → confirm, then
+  // persist the room move + retime in one call (the backend re-runs the full
+  // conflict + operating-hours check against the new room).
+  async function onRoomMove(bookingId: string, resourceId: string, startISO: string, endISO: string) {
+    const b = bookings.find((x) => x.id === bookingId);
+    const room = rooms.find((r) => r.id === resourceId);
+    const moved = b && b.resourceId !== resourceId;
+    const ok = await confirmDialog({
+      title: moved ? 'Move booking' : 'Reschedule booking',
+      message: `${moved ? `Move "${b?.title || 'booking'}" to ${room?.name || 'this room'}` : `Reschedule "${b?.title || 'booking'}"`} at ${tz.formatDateTime(startISO)}?`,
+      confirmText: moved ? 'Move' : 'Reschedule',
+    });
+    if (!ok) return;
+    try {
+      await api.updateBooking(bookingId, { resourceId, startTime: startISO, endTime: endISO });
+      reload();
+    } catch (e: any) {
+      toast.error(moved ? 'Move failed' : 'Reschedule failed', e.displayMessage || e.message);
+    }
+  }
+
+  // Click empty space in a room column → open the booking modal pre-filled with
+  // that room and slot. The grid already handed us tenant-zone-correct instants;
+  // split them back to tenant wall-clock for the modal (not browser-local).
+  function onRoomCreate(resourceId: string, startISO: string, endISO: string) {
+    const s = tz.toParts(startISO); const e = tz.toParts(endISO);
+    setModal({ resource: rooms.find((r) => r.id === resourceId), date: s.date, start: s.time, end: e.time });
+  }
+
+  // Click an existing block → open it for editing (same path as a calendar click).
+  function onRoomOpen(bookingId: string) {
+    const fullBooking = bookings.find((b) => b.id === bookingId);
+    if (!fullBooking) return;
+    const s = tz.toParts(fullBooking.startTime); const e = tz.toParts(fullBooking.endTime);
+    setModal({
+      existingBooking: fullBooking,
+      resource: rooms.find((r) => r.id === fullBooking.resourceId),
+      date: s.date, start: s.time, end: e.time,
+    });
+  }
+
+  function shiftRoomDate(days: number) {
+    setRoomDate((d) => { const n = new Date(d); n.setDate(n.getDate() + days); return n; });
+  }
+  // The tenant-zone calendar day the room grid renders. Derived from the Date so
+  // stepping ±1 day stays correct across the tenant/browser zone gap.
+  const roomDateStr = tz.toParts(roomDate).date;
+
   return (
     <div className="mrbs">
       <h1 className="fsd-page-title">Schedule</h1>
 
       <div className="panel">
         <div className="ph cal-head">
-          <span className="cal-title">Calendar — drag across open slots to reserve</span>
+          <span className="cal-title">
+            {view === 'rooms'
+              ? 'Rooms — drag a booking sideways to change room, up/down to retime'
+              : 'Calendar — drag across open slots to reserve'}
+          </span>
           <div className="row gap-sm cal-ctrls">
+            <div className="seg" role="group" aria-label="View mode">
+              <button type="button" className={`seg-btn${view === 'calendar' ? ' active' : ''}`}
+                aria-pressed={view === 'calendar'} onClick={() => setView('calendar')}>Calendar</button>
+              <button type="button" className={`seg-btn${view === 'rooms' ? ' active' : ''}`}
+                aria-pressed={view === 'rooms'} onClick={() => setView('rooms')}>Rooms</button>
+            </div>
             <select className="d-in" aria-label="Filter by room" style={{ width: 200, maxWidth: '60vw' }} value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
               <option value="">All rooms</option>
               {groupedRooms.map(([loc, list]) => (
@@ -212,24 +368,61 @@ export function CalendarView() {
           </div>
         </div>
 
-        <div className="pb">
+        {view === 'rooms' && (
+          <div className="pb">
+            <div className="row" style={{ alignItems: 'center', gap: 8, padding: '8px 14px', borderBottom: '1px solid var(--asl-line)' }}>
+              <button type="button" className="btn ghost" onClick={() => shiftRoomDate(-1)} aria-label="Previous day">‹</button>
+              <button type="button" className="btn ghost" onClick={() => setRoomDate(new Date())}>Today</button>
+              <button type="button" className="btn ghost" onClick={() => shiftRoomDate(1)} aria-label="Next day">›</button>
+              <strong style={{ marginLeft: 8 }}>
+                {roomDate.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: tz.tz })}
+              </strong>
+              <span className="muted text-sm" style={{ marginLeft: 'auto' }}>Times shown in {tz.label}</span>
+            </div>
+            <RoomGridView
+              dateStr={roomDateStr}
+              tz={tz}
+              rooms={roomColumns}
+              bookings={bookings}
+              onMove={onRoomMove}
+              onCreate={onRoomCreate}
+              onOpen={onRoomOpen}
+            />
+          </div>
+        )}
+
+        <div className="pb" style={{ display: view === 'calendar' ? undefined : 'none' }}>
           <FullCalendar
             ref={fcRef}
-            plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
+            plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin, luxonPlugin]}
+            // Render the grid in the tenant's zone, not the browser's. Otherwise
+            // a traveller in New York sees a booking stored as 09:00 Hong Kong
+            // time rendered at their local 21:00 the day before — and a slot they
+            // drag to "09:00" on screen is saved as 09:00 HK and visibly jumps.
+            // The Luxon plugin above makes this named zone resolvable.
+            timeZone={tz.tz}
             initialView={isMobile ? 'timeGridDay' : 'timeGridWeek'}
             height={620}
             selectable
             editable
             eventDurationEditable
             nowIndicator
+            // Place overlapping bookings fully side-by-side (no overlap) and cap
+            // the stack at 3 columns; further overlaps collapse into a "+N more"
+            // link that opens a popover showing each booking at readable width.
+            slotEventOverlap={false}
+            eventMaxStack={3}
+            moreLinkClick="popover"
             headerToolbar={isMobile
               ? { left: 'prev,next', center: 'title', right: 'timeGridDay,dayGridMonth' }
               : { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' }}
             events={events}
+            eventContent={renderEventContent}
             select={onSelect}
             eventDrop={onDrop}
             eventResize={onResize}
             eventClick={onEventClick}
+            eventDidMount={onEventDidMount}
             viewDidMount={hideDecorativeIcons}
             datesSet={hideDecorativeIcons}
           />

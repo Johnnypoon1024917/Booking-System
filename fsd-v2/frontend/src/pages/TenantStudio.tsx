@@ -120,6 +120,18 @@ export function TenantStudio() {
     const sh = c.calendar_start_hour ?? 8;
     const eh = c.calendar_end_hour ?? 20;
     if (sh >= eh) return 'Calendar start hour must be before the end hour.';
+    // Custom-field keys become JSONB object keys on every booking, so a
+    // duplicate key silently overwrites a sibling field's value before the
+    // payload ever reaches the server ({ cc: "A", cc: "B" } → { cc: "B" }).
+    // Block the save on any missing or repeated key.
+    const fieldKeys = (c.custom_fields || []).map((f: any) => (f.key || '').trim());
+    if (fieldKeys.some((k: string) => !k)) {
+      return 'Every custom field needs a key.';
+    }
+    const dupKey = fieldKeys.find((k: string, i: number) => fieldKeys.indexOf(k) !== i);
+    if (dupKey) {
+      return `Custom field key "${dupKey}" is used more than once — keys must be unique.`;
+    }
     return null;
   }
 

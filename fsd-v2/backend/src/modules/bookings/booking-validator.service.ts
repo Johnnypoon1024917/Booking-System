@@ -78,22 +78,67 @@ export class BookingValidatorService {
       throw new BadRequestException(`maximum booking duration is ${Math.round(maxMinutes / 6) / 10} hours`);
     }
 
-    // Blackout + holiday: evaluated against the start's *local* calendar
-    // date so a tenant in UTC+8 doesn't trip the previous day's blackout.
-    const local = utcToZonedWallClock(start, tz);
-    if (blackout.includes(local.dateStr)) {
-      throw new BadRequestException('selected date is a blackout / closed day');
+    // Blackout + holiday: evaluated against EVERY local calendar date the
+    // booking spans, not just the start. A multi-day booking (e.g. a Mon–Wed
+    // workshop) must be rejected if ANY day it covers is a blackout day or a
+    // blocker holiday — checking only the start date let a booking straddle a
+    // closed Tuesday undetected. Dates are the local calendar days in the
+    // tenant's timezone so a UTC+8 tenant doesn't trip the neighbouring day.
+    const spannedDates = localDatesSpanned(start, end, tz);
+
+    const blackoutHit = spannedDates.find((d) => blackout.includes(d));
+    if (blackoutHit) {
+      throw new BadRequestException(`selected dates include a blackout / closed day (${blackoutHit})`);
     }
+
     // Tenant-wide ('') plus this resource's region (if any). A row scoped to
-    // a different region does not block this booking.
+    // a different region does not block this booking. One IN-query covers the
+    // whole spanned range instead of a lookup per day.
     const regions = resourceRegion ? ['', resourceRegion] : [''];
     const holiday = await this.holidays.findOne({
-      where: { tenantId, holidayDate: local.dateStr, isBlocker: true, region: In(regions) },
+      where: { tenantId, holidayDate: In(spannedDates), isBlocker: true, region: In(regions) },
     });
     if (holiday) {
-      throw new BadRequestException(`selected date is a closed holiday (${holiday.name || 'holiday'})`);
+      throw new BadRequestException(
+        `selected dates include a closed holiday (${holiday.name || 'holiday'} on ${holiday.holidayDate})`,
+      );
     }
   }
+}
+
+// Every local calendar date (YYYY-MM-DD, in `tz`) a booking touches, from its
+// start day through its end day inclusive. An end landing exactly on local
+// midnight belongs to the previous day (the booking doesn't actually occupy any
+// of the new day), so it's excluded — otherwise an 09:00→24:00 booking would
+// spuriously claim the next calendar day.
+function localDatesSpanned(start: Date, end: Date, tz: string): string[] {
+  const s = utcToZonedWallClock(start, tz);
+  const e = utcToZonedWallClock(end, tz);
+  // The end's effective last occupied day: if it lands exactly on midnight,
+  // step back to the prior day.
+  const endDateStr = e.minutes === 0 && e.dateStr !== s.dateStr
+    ? addDaysToDateStr(e.dateStr, -1)
+    : e.dateStr;
+
+  const dates: string[] = [];
+  let cur = s.dateStr;
+  // Guard against pathological ranges; the duration cap above already bounds
+  // sane bookings, but never loop unbounded on bad data.
+  for (let i = 0; i < 366 && cur <= endDateStr; i++) {
+    dates.push(cur);
+    if (cur === endDateStr) break;
+    cur = addDaysToDateStr(cur, 1);
+  }
+  return dates;
+}
+
+// Whole-day arithmetic on a YYYY-MM-DD string via UTC midnight (DST-independent
+// — we're moving calendar dates, not instants).
+function addDaysToDateStr(s: string, n: number): string {
+  const [y, m, d] = s.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d) + n * 86_400_000);
+  const pad = (x: number) => String(x).padStart(2, '0');
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
 
 function num(v: unknown, fallback: number): number {

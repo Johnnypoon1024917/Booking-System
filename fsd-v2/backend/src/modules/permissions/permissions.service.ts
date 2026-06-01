@@ -35,18 +35,22 @@ export class PermissionsService {
   // falls back to the catalog defaults so a tenant that never opened the admin
   // matrix still behaves exactly as before this guard existed (no lock-out).
   async hasPermission(tenantId: string, role: string, permission: string): Promise<boolean> {
+    return (await this.permsForRole(tenantId, role)).has(permission);
+  }
+
+  // Resolve (and cache) a role's effective permission set in the tenant, falling
+  // back to the catalog defaults for a role with no stored row — the same source
+  // the hot enforcement path reads, so an escalation check here can't disagree
+  // with what the guard would actually grant.
+  private async permsForRole(tenantId: string, role: string): Promise<Set<string>> {
     const key = `${tenantId}::${role}`;
     const hit = this.cache.get(key);
-    let perms: Set<string>;
-    if (hit && hit.expiresAt > Date.now()) {
-      perms = hit.perms;
-    } else {
-      const row = await this.repo.findOne({ where: { tenantId, role } });
-      const list = row?.permissions ?? defaultMatrix()[role] ?? [];
-      perms = new Set(list);
-      this.cache.set(key, { perms, expiresAt: Date.now() + PermissionsService.CACHE_TTL_MS });
-    }
-    return perms.has(permission);
+    if (hit && hit.expiresAt > Date.now()) return hit.perms;
+    const row = await this.repo.findOne({ where: { tenantId, role } });
+    const list = row?.permissions ?? defaultMatrix()[role] ?? [];
+    const perms = new Set(list);
+    this.cache.set(key, { perms, expiresAt: Date.now() + PermissionsService.CACHE_TTL_MS });
+    return perms;
   }
 
   private invalidate(tenantId: string) {
@@ -81,6 +85,7 @@ export class PermissionsService {
     role: string,
     permissions: string[],
     expectedVersion?: string,
+    actor?: { role: string },
   ): Promise<{ previous: string[]; next: string[]; version: string }> {
     // The root superuser role is immutable: PermissionsGuard hard-bypasses
     // System Admin regardless of the matrix, so editing its row is both
@@ -110,6 +115,23 @@ export class PermissionsService {
       }
     }
     const previous = existing?.permissions ?? [];
+
+    // Anti-escalation: a non-root editor may only GRANT permission keys they
+    // already hold themselves. Without this an admin with `permission.manage`
+    // could tick `tenant.manage` / `customization.manage` on their own (or any)
+    // role and instantly self-elevate to root. Removing keys is always allowed;
+    // we only gate the keys being newly added. System Admin is hard-bypassed by
+    // PermissionsGuard and holds everything, so it is exempt.
+    if (actor && actor.role !== Roles.SystemAdmin) {
+      const actorPerms = await this.permsForRole(tenantId, actor.role);
+      const escalated = clean.filter((p) => !previous.includes(p) && !actorPerms.has(p));
+      if (escalated.length) {
+        throw new ForbiddenException(
+          `You cannot grant permission(s) you do not hold yourself: ${escalated.join(', ')}.`,
+        );
+      }
+    }
+
     let saved: RolePermission;
     if (existing) {
       existing.permissions = clean;

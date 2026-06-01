@@ -160,11 +160,22 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Switching booking model must clear the OTHER model's leftover state, or the
+  // save payload ships fields from both shapes at once and the backend persists
+  // a "mutant" room (e.g. sharedCapacity 10 AND a subResources list), which
+  // breaks the cross-locking query in findAvailable. Pods can't carry sub-rooms;
+  // a splittable/whole room can't carry a shared-pod capacity.
   useEffect(() => {
     if (mode === 'pods') {
-      patch({ bookingMode: 'shared', sharedCapacity: form.sharedCapacity || form.capacity || 2 });
+      patch({
+        bookingMode: 'shared',
+        sharedCapacity: form.sharedCapacity || form.capacity || 2,
+        subResources: [],
+      });
+    } else if (mode === 'splittable') {
+      patch({ bookingMode: 'exclusive', sharedCapacity: 1 });
     } else {
-      patch({ bookingMode: 'exclusive' });
+      patch({ bookingMode: 'exclusive', sharedCapacity: 1, subResources: [] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -253,6 +264,14 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
 
   async function save() {
     if (!form.name?.trim()) { toast.warning('Name is required'); return; }
+    // Custom-field keys are the JSONB object keys stored on every booking of
+    // this resource, so a duplicate key silently clobbers a sibling field's
+    // answer ({ cc: "A", cc: "B" } collapses to { cc: "B" }) before it reaches
+    // the API. Require a key on every field and block any repeat.
+    const fieldKeys = (form.customFields || []).map((f) => (f.key || '').trim());
+    if (fieldKeys.some((k) => !k)) { toast.warning('Every custom field needs a key'); return; }
+    const dupFieldKey = fieldKeys.find((k, i) => fieldKeys.indexOf(k) !== i);
+    if (dupFieldKey) { toast.warning(`Custom field key "${dupFieldKey}" is used more than once — keys must be unique`); return; }
     // Operating hours are optional; when enabled, validate each open day's
     // window (close after open) and require at least one open day.
     if (hoursEnabled) {

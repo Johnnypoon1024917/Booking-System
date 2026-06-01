@@ -212,8 +212,15 @@ export class RecurrenceService {
         while (emitted < count) {
           for (const dom of days) {
             const s = new Date(firstStart);
-            s.setMonth(s.getMonth() + monthOffset * interval);
-            s.setDate(dom);
+            // Step to the target month WITHOUT letting an out-of-range day
+            // silently roll forward. JS Date does: (Jan 31).setMonth(1) → Mar 3
+            // because Feb 31 doesn't exist, so an "end of month" series would
+            // bounce between the 28th/30th/31st and the 2nd/3rd. Pin to the 1st
+            // first (setMonth with day=1 can't overflow), then snap the
+            // requested day-of-month down to the days that month actually has.
+            s.setMonth(s.getMonth() + monthOffset * interval, 1);
+            const maxDom = new Date(s.getFullYear(), s.getMonth() + 1, 0).getDate();
+            s.setDate(Math.min(dom, maxDom));
             if (s < firstStart) continue;
             if (until && s > until) { emitted = count; break; }
             push(s);

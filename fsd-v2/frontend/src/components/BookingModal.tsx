@@ -92,15 +92,19 @@ function FreeBusyTimeline({ winStart, winEnd, busy, slotStart, slotEnd, conflict
 
 // The nth occurrence date (YYYY-MM-DD) of a recurrence starting at `dateStr`.
 // Mirrors the backend's stepping so the modal can preview conflicts before the
-// series is submitted. n=0 is the first booking. Monthly keeps the day-of-month
-// (overflow rolls forward, e.g. Jan 31 → Mar 3) — a close-enough preview; the
-// server is the source of truth for the materialised dates.
+// series is submitted. n=0 is the first booking. Monthly snaps the day-of-month
+// down to the days the target month actually has (Jan 31 → Feb 28, not a
+// rolled-over Mar 3), matching RecurrenceService; the server is still the
+// source of truth for the materialised dates.
 function pad2(n: number) { return String(n).padStart(2, '0'); }
 function occurrenceDate(dateStr: string, pattern: string, n: number): string {
   const [y, m, d] = dateStr.split('-').map(Number);
-  const base = pattern === 'monthly'
-    ? new Date(y, m - 1 + n, d)
-    : new Date(y, m - 1, d + n * (pattern === 'daily' ? 1 : pattern === 'bi-weekly' ? 14 : 7));
+  if (pattern === 'monthly') {
+    const maxDom = new Date(y, m - 1 + n + 1, 0).getDate(); // day 0 of next month
+    const base = new Date(y, m - 1 + n, Math.min(d, maxDom));
+    return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
+  }
+  const base = new Date(y, m - 1, d + n * (pattern === 'daily' ? 1 : pattern === 'bi-weekly' ? 14 : 7));
   return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
 }
 

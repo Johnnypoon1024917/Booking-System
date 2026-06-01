@@ -2,7 +2,7 @@ import {
   BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, LessThanOrEqual, Repository } from 'typeorm';
+import { EntityManager, In, LessThan, LessThanOrEqual, Repository } from 'typeorm';
 import { ApprovalRule, ApprovalLevel, ApprovalScopeType } from './approval-rule.entity';
 import { ApprovalStep, ApprovalStepStatus } from './approval-step.entity';
 import { Approval } from './approval.entity';
@@ -398,6 +398,58 @@ export class ApprovalsService {
     return true;
   }
 
+  // ---- stale-approval sweep (cron-driven) ----
+
+  // Auto-reject bookings stuck in Pending Approval whose start time has already
+  // passed. If the approver goes on vacation (or simply never acts) the request
+  // would otherwise sit Pending Approval forever — permanently blocking the room
+  // from anyone else and clogging the approver's inbox. We flip each to the same
+  // terminal state a human rejection uses (Cancelled), clear any still-pending
+  // chain steps so it leaves every approver's inbox, release the room, and email
+  // the requester that the meeting was aborted. Each booking is handled in its
+  // own conditional transaction so a live approve/reject in the same tick wins
+  // the race instead of being clobbered. Returns the count actually rejected.
+  async sweepStaleApprovals(now: Date = new Date()): Promise<number> {
+    const stale = await this.bookings.find({
+      where: { status: 'Pending Approval', startTime: LessThan(now) },
+      order: { startTime: 'ASC' },
+      take: 1000,
+    });
+    let rejected = 0;
+    for (const b of stale) {
+      try {
+        if (await this.autoRejectStale(b.tenantId, b.id, now)) rejected++;
+      } catch (err) {
+        this.log.warn(`stale-approval auto-reject failed for booking ${b.id}: ${(err as Error).message}`);
+      }
+    }
+    if (rejected) this.log.log(`auto-rejected ${rejected} stale pending-approval booking(s)`);
+    return rejected;
+  }
+
+  // Reject one stale booking under a conditional write. The booking row is only
+  // flipped while it is STILL Pending Approval, so an approver/auto-approval that
+  // confirmed it microseconds earlier is left untouched (affected === 0 → no-op).
+  private async autoRejectStale(tenantId: string, bookingId: string, now: Date): Promise<boolean> {
+    const note = 'Auto-rejected: approver did not act before the meeting start time';
+    const acted = await this.bookings.manager.transaction(async (m) => {
+      const res = await m.getRepository(Booking).update(
+        { id: bookingId, tenantId, status: 'Pending Approval' },
+        { status: 'Cancelled', exceptionNotes: note },
+      );
+      if (!res.affected) return false;
+      // The approver inbox is driven off pending STEP rows, not booking status,
+      // so a chained booking would linger there unless we also close its steps.
+      await m.getRepository(ApprovalStep).update(
+        { tenantId, bookingId, status: 'pending' as ApprovalStepStatus },
+        { status: 'rejected' as ApprovalStepStatus, reason: note, decisionAt: now },
+      );
+      return true;
+    });
+    if (acted) await this.notifyDecision(tenantId, bookingId, 'BOOKING_REJECTED');
+    return acted;
+  }
+
   // Reassign approval to another user. For a materialized chain we re-point
   // the first pending step; for a LEGACY (single-level, no chain) booking
   // there is no step to reassign, so we hand off via Booking.delegatedTo
@@ -412,6 +464,16 @@ export class ApprovalsService {
 
     const pending = steps.find((s) => s.status === 'pending');
     if (pending) {
+      // Authorization (the "approval hijack" fix): only the approver currently
+      // assigned to this step — or an admin — may hand it off. Without this
+      // gate any authenticated user could POST /delegate, re-point the step to
+      // themselves, then approve their own restricted booking. canDecideStep
+      // covers the assigned approver (and an admin standing in for an
+      // unassigned step); isAdmin additionally lets an admin reassign a step
+      // that already targets specific approvers.
+      if (!this.canDecideStep(pending, user) && !this.isAdmin(user)) {
+        throw new ForbiddenException('You are not authorized to delegate this step.');
+      }
       pending.approverIds = [toUserId];
       pending.approverRole = '';
       const note = `Delegated ${user.id} → ${toUserId}${reason ? ` (${reason})` : ''}`;
@@ -427,6 +489,11 @@ export class ApprovalsService {
     if (!b) throw new NotFoundException('booking not found');
     if (b.status !== 'Pending Approval') {
       throw new BadRequestException('booking is not pending approval');
+    }
+    // Same hijack gate for the legacy path: only an existing approver (an admin
+    // role, or whoever it was already delegated to) may re-delegate it.
+    if (!this.canDecideLegacy(user, b)) {
+      throw new ForbiddenException('You are not authorized to delegate this booking.');
     }
     const note = `Delegated ${user.id} → ${toUserId}${reason ? ` (${reason})` : ''}`;
     await this.bookings.update(
@@ -477,6 +544,12 @@ export class ApprovalsService {
   // booking was explicitly delegated to them (even if they're a plain user).
   private canDecideLegacy(user: AuthUser, booking?: Booking): boolean {
     if (booking?.delegatedTo && booking.delegatedTo === user.id) return true;
+    return this.isAdmin(user);
+  }
+
+  // Holds one of the approver-capable admin roles. Used as the override that
+  // lets an admin delegate/decide a step they aren't the named approver for.
+  private isAdmin(user: AuthUser): boolean {
     return [Roles.SystemAdmin, Roles.SecurityAdmin, Roles.RoomAdmin, Roles.Secretary].includes(user.role as any);
   }
 
