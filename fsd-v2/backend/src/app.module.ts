@@ -9,6 +9,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { TenantTxInterceptor } from './common/interceptors/tenant-tx.interceptor';
+import { AuditInterceptor } from './modules/audit/audit.interceptor';
 import { RlsService } from './common/rls.service';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -117,6 +118,12 @@ import { DemoSeederService } from './common/demo-seeder.service';
     // Fine-grained permission-matrix enforcement. Runs after the JWT guard
     // (needs req.user) and only acts on routes carrying @RequirePermission.
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    // Global audit net. Registered BEFORE TenantTxInterceptor so it is the
+    // OUTERMOST interceptor: its logging runs outside the request's tenant
+    // transaction and writes on its own connection, so an audit entry persists
+    // even when the request rolls back (denied/failed actions). Auto-captures
+    // every mutation + sensitive read across all controllers.
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
     // Per-request tenant transaction: opens one explicit transaction per
     // authenticated request, sets the tenant GUC (SET LOCAL), routes all
     // queries onto it, and commits/rolls back deterministically. Feeds the

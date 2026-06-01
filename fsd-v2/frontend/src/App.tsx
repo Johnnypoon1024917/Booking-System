@@ -25,6 +25,7 @@ import { AdminHolidays } from './pages/AdminHolidays';
 import { AdminIntegrations } from './pages/AdminIntegrations';
 import { AdminWebhooks } from './pages/AdminWebhooks';
 import { AdminScim } from './pages/AdminScim';
+import { AdminAudit } from './pages/AdminAudit';
 import { AdminLocations } from './pages/AdminLocations';
 import { AdminLocationGroups } from './pages/AdminLocationGroups';
 import { AdminResourceTypes } from './pages/AdminResourceTypes';
@@ -88,6 +89,7 @@ export function App() {
           <Route path="/admin/integrations"   element={<AdminIntegrations />} />
           <Route path="/admin/webhooks"       element={<AdminWebhooks />} />
           <Route path="/admin/scim"           element={<AdminScim />} />
+          <Route path="/admin/audit"          element={<AdminAudit />} />
           <Route path="/admin/locations"        element={<AdminLocations />} />
           <Route path="/admin/location-groups"  element={<AdminLocationGroups />} />
           <Route path="/admin/resource-types"   element={<AdminResourceTypes />} />

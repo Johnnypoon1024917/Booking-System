@@ -77,7 +77,7 @@ export class TenantTxInterceptor implements NestInterceptor {
       let hasValue = false;
       // Subscribe INSIDE the ALS context so the handler + all its awaited DB
       // calls observe the pinned runner.
-      tenantContext.run({ queryRunner: qr }, () => {
+      tenantContext.run({ queryRunner: qr, req }, () => {
         sub = next.handle().subscribe({
           next: (v) => { value = v; hasValue = true; },
           error: (err) => { void finish(false).finally(() => subscriber.error(err)); },

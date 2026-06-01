@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock, Trash2, CalendarClock } from 'lucide-react';
+import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock, Trash2, CalendarClock, SlidersHorizontal, ChevronRight } from 'lucide-react';
 import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { Combobox } from './Combobox';
@@ -181,6 +181,10 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   function clearError(key: string) {
     setFieldErrors((e) => { if (!e[key]) return e; const { [key]: _, ...rest } = e; return rest; });
   }
+  // Secondary inputs (cost center, services, custom fields) collapse behind an
+  // "Add-ons & details" toggle so a quick 30-minute booking isn't a wall of
+  // fields. Auto-expanded below when the booking actually needs one of them.
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Tenant chargeback codes. When the tenant has configured any, a code is
   // required for every booking (the server re-checks against the same list).
@@ -294,6 +298,14 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   // modal only renders/submits the keys the chosen room actually defines, so
   // stray answers from a previous room are harmless and never sent.
   const customFields = selected?.customFields || [];
+  // Open the add-ons section automatically when the chosen room makes one of its
+  // fields mandatory (a required cost center or custom field), or when editing a
+  // booking that already carries services — so nothing required is ever hidden.
+  const hasRequiredExtras = costCenters.length > 0 || customFields.some((f) => f.required);
+  useEffect(() => {
+    if (hasRequiredExtras || (isEdit && services.length > 0)) setShowAdvanced(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasRequiredExtras]);
   useEffect(() => {
     // Apply the new room's default chargeback code only when the user hasn't
     // already chosen a (still-valid) one — don't clobber a draft selection.
@@ -427,9 +439,11 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
     if (costCenters.length && !costCenter) errs.costCenter = requiredMsg;
     if (Object.keys(errs).length) {
       setFieldErrors(errs);
+      setShowAdvanced(true); // the offending fields live in the add-ons section
       // Bring the first offending control into view (the modal body scrolls).
+      // Deferred so the just-expanded add-ons section is in the DOM first.
       const firstKey = customFields.find((f) => errs[f.key])?.key ?? (errs.costCenter ? 'costCenter' : '');
-      if (firstKey) document.getElementById(`bm-field-${firstKey}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (firstKey) setTimeout(() => document.getElementById(`bm-field-${firstKey}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0);
       return;
     }
     setFieldErrors({});
@@ -642,6 +656,17 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
                placeholder="https://teams.microsoft.com/…" />
       </label>
 
+      <div className="bm-advanced">
+        <button type="button" className="bm-advanced-toggle" aria-expanded={showAdvanced}
+                onClick={() => setShowAdvanced((s) => !s)}>
+          <SlidersHorizontal size={14} />
+          <span className="bm-advanced-label">{t('bookingModal.advancedToggle', { defaultValue: 'Add-ons & details' })}</span>
+          {hasRequiredExtras && <span className="bm-advanced-req">{t('bookingModal.advancedRequired', { defaultValue: 'Required' })}</span>}
+          <ChevronRight size={16} className={`bm-advanced-chev${showAdvanced ? ' open' : ''}`} />
+        </button>
+        {showAdvanced && (
+        <div className="bm-advanced-body">
+
       {!isEdit && costCenters.length > 0 && (
         <label id="bm-field-costCenter">Cost center*
           <Combobox
@@ -715,6 +740,10 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           </label>
         );
       })}
+
+        </div>
+        )}
+      </div>
 
       {!isEdit && (
       <div className="field bm-box">

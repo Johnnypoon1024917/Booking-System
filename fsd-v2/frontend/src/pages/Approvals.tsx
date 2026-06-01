@@ -166,6 +166,41 @@ function ScheduleContext({ booking, resourceName, onClose }: { booking: any; res
     };
   }).sort((a, b) => a.start.getTime() - b.start.getTime()), [rows, reqStart, reqEnd, resourceName]);
 
+  // Side-by-side lane layout for overlapping bookings. Without this, two
+  // bookings on the same room/day (a pre-validation double-book, or parallel
+  // shared-desk slots) draw on top of each other and the lower one is invisible.
+  // We split each overlap cluster into greedy columns (FullCalendar-style) and
+  // hand back, per booking, its column index and the cluster's column count so
+  // the render can size width/left. Non-overlapping bookings stay full width.
+  const lanes = useMemo(() => {
+    const sorted = [...blocks].sort((a, b) =>
+      a.start.getTime() - b.start.getTime() || a.end.getTime() - b.end.getTime());
+    const out = new Map<string, { col: number; cols: number }>();
+    let cluster: typeof sorted = [];
+    let clusterEnd = -Infinity;
+    const flush = () => {
+      if (!cluster.length) return;
+      const colEnds: number[] = []; // last end-time placed in each column
+      const colOf = new Map<string, number>();
+      for (const b of cluster) {
+        let col = colEnds.findIndex((end) => end <= b.start.getTime());
+        if (col === -1) { col = colEnds.length; colEnds.push(0); }
+        colEnds[col] = b.end.getTime();
+        colOf.set(b.id, col);
+      }
+      const cols = colEnds.length;
+      for (const b of cluster) out.set(b.id, { col: colOf.get(b.id)!, cols });
+      cluster = [];
+    };
+    for (const b of sorted) {
+      if (cluster.length && b.start.getTime() >= clusterEnd) flush();
+      cluster.push(b);
+      clusterEnd = cluster.length === 1 ? b.end.getTime() : Math.max(clusterEnd, b.end.getTime());
+    }
+    flush();
+    return out;
+  }, [blocks]);
+
   const conflicts = blocks.filter((b) => b.conflict);
   // Tightest gap to an adjacent (non-overlapping) booking, in minutes.
   const bufferBefore = blocks.filter((b) => b.end <= reqStart)
@@ -228,15 +263,24 @@ function ScheduleContext({ booking, resourceName, onClose }: { booking: any; res
                   <span className="sched-hour-label">{String(h).padStart(2, '0')}:00</span>
                 </div>
               ))}
-              {/* Existing bookings */}
-              {blocks.map((b) => (
-                <div key={b.id} className={`sched-evt${b.conflict ? ' conflict' : ''}`}
-                     style={{ top: topFor(b.start), height: heightFor(b.start, b.end) }}
-                     {...tip(`${hm(b.start)}–${hm(b.end)} · ${b.title}`)}>
-                  <b className="truncate">{b.title}</b>
-                  <small>{hm(b.start)}–{hm(b.end)}</small>
-                </div>
-              ))}
+              {/* Existing bookings — width/left split into lanes when they overlap. */}
+              {blocks.map((b) => {
+                const lane = lanes.get(b.id) ?? { col: 0, cols: 1 };
+                const w = 100 / lane.cols;
+                return (
+                  <div key={b.id} className={`sched-evt${b.conflict ? ' conflict' : ''}`}
+                       style={{
+                         top: topFor(b.start), height: heightFor(b.start, b.end),
+                         left: `calc(${lane.col * w}% + 3px)`,
+                         width: `calc(${w}% - 6px)`,
+                         right: 'auto',
+                       }}
+                       {...tip(`${hm(b.start)}–${hm(b.end)} · ${b.title}`)}>
+                    <b className="truncate">{b.title}</b>
+                    <small>{hm(b.start)}–{hm(b.end)}</small>
+                  </div>
+                );
+              })}
               {/* The slot under review — drawn on top so it's unmistakable. */}
               <div className="sched-evt requested"
                    style={{ top: topFor(reqStart), height: heightFor(reqStart, reqEnd) }}

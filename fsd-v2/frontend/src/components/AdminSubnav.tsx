@@ -6,7 +6,7 @@ import {
   Boxes, Tag, Network,
   Users as UsersIcon, Lock, KeyRound,
   Webhook, Plug,
-  LayoutPanelTop, BookOpen, DoorOpen, ShieldCheck, Cable, LucideIcon,
+  LayoutPanelTop, BookOpen, DoorOpen, ShieldCheck, Cable, ScrollText, LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -55,6 +55,7 @@ const ALL_GROUPS: Group[] = [
       { to: '/admin/users',       label: 'Users',       icon: UsersIcon },
       { to: '/admin/permissions', label: 'Permissions', icon: Lock },
       { to: '/admin/scim',        label: 'SCIM',        icon: KeyRound },
+      { to: '/admin/audit',       label: 'Audit Log',   icon: ScrollText },
     ],
   },
   {

@@ -13,7 +13,23 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 export class AuditController {
   constructor(private readonly svc: AuditService) {}
 
-  @Get() list(@CurrentUser() u: AuthUser, @Query('limit') limit?: number) {
-    return this.svc.list(u.tenantId, limit);
+  @Get()
+  list(
+    @CurrentUser() u: AuthUser,
+    @Query('action') action?: string,
+    @Query('outcome') outcome?: string,
+    @Query('userId') userId?: string,
+    @Query('q') q?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: number,
+  ) {
+    return this.svc.list(u.tenantId, { action, outcome, userId, q, from, to, limit });
+  }
+
+  // Distinct action vocabulary for the viewer's filter dropdown.
+  @Get('actions')
+  actions(@CurrentUser() u: AuthUser) {
+    return this.svc.actions(u.tenantId);
   }
 }

@@ -2250,6 +2250,26 @@ input.invalid, select.invalid, textarea.invalid { border-color: var(--danger) !i
 
 .cal-room-filter { width: 200px; max-width: 60vw; }
 
+/* ---- Booking modal: collapsible "Add-ons & details" section ---- */
+.modal section .bm-advanced { display: flex; flex-direction: column; gap: 16px; }
+.bm-advanced-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--surface-inset); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+}
+.bm-advanced-toggle:hover { border-color: var(--brand-primary); }
+.bm-advanced-label { flex: 1; text-align: left; }
+.bm-advanced-req { font-size: 11px; font-weight: 700; color: var(--warning); text-transform: uppercase; letter-spacing: 0.03em; }
+.bm-advanced-chev { flex: none; color: var(--text-muted); transition: transform .15s; }
+.bm-advanced-chev.open { transform: rotate(90deg); }
+.bm-advanced-body { display: flex; flex-direction: column; gap: 16px; }
+/* Labels inside the body aren't direct children of `.modal section` anymore, so
+   re-apply the stacked-caption styling they'd otherwise inherit. */
+.modal section .bm-advanced-body > label {
+  display: flex; flex-direction: column; gap: 6px; margin: 0;
+  font-size: 12.5px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.01em;
+}
+
 /* ---- Booking summary header (BookingModal) ---- */
 .modal section .bm-summary { padding: 14px; border-radius: 12px; gap: 14px; }
 .modal section .bm-summary label { width: 100%; }

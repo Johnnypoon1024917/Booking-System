@@ -256,6 +256,13 @@ export const api = {
   syncHKHolidays: (locale?: string) =>
     http.post('/api/v1/admin/holidays/sync-hk', null, { params: { locale } }).then((r) => r.data),
 
+  // Audit log (admin) — system-wide trail of user actions & behaviour.
+  auditLog: (params: {
+    action?: string; outcome?: string; userId?: string;
+    q?: string; from?: string; to?: string; limit?: number;
+  } = {}) => http.get('/api/v1/admin/audit', { params }).then((r) => r.data),
+  auditActions: () => http.get('/api/v1/admin/audit/actions').then((r) => r.data),
+
   // Weather (HKO)
   weather: () => http.get('/api/v1/weather').then((r) => r.data),
 

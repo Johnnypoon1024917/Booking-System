@@ -9,6 +9,11 @@ import { QueryRunner } from 'typeorm';
 // single explicit transaction that commits/rolls back deterministically.
 export interface TenantStore {
   queryRunner: QueryRunner;
+  // The live Express request. Stashed so request-scoped services (e.g.
+  // AuditService) can read the caller's IP / user-agent and flag that a rich
+  // semantic audit entry was written, without threading `req` through every
+  // controller signature.
+  req?: any;
 }
 
 export const tenantContext = new AsyncLocalStorage<TenantStore>();
