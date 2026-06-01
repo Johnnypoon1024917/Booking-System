@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { PushModule } from '../push/push.module';
 import { Tenant } from '../tenants/tenant.entity';
 
 @Module({
@@ -17,6 +18,9 @@ import { Tenant } from '../tenants/tenant.entity';
     }),
     TypeOrmModule.forFeature([Tenant]),
     UsersModule,
+    // Logout deletes the device's push subscription (shared-device privacy),
+    // so the auth controller needs PushService.
+    PushModule,
   ],
   providers: [AuthService, JwtStrategy],
   controllers: [AuthController],

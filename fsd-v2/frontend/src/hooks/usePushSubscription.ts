@@ -40,6 +40,30 @@ export interface UsePushSubscriptionResult {
   unsubscribe: () => Promise<void>;
 }
 
+// Unbind THIS device's push subscription as part of logout. Tells the server to
+// delete the row (via the authenticated /auth/logout endpoint) so a later user
+// on a shared device can't receive the previous user's notifications, then
+// removes the browser-level subscription. Best-effort, and MUST run while the
+// JWT is still in localStorage (i.e. before the auth store is cleared).
+export async function dropDevicePushOnLogout(): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager.getSubscription();
+    if (!sub) return;
+    await fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ pushEndpoint: sub.endpoint }),
+    }).catch(() => undefined);
+    // Drop the browser-level subscription too, so this device stops being a push
+    // target until the next user explicitly re-enables notifications.
+    await sub.unsubscribe().catch(() => undefined);
+  } catch {
+    // Best-effort cleanup — never block logout on it.
+  }
+}
+
 export function usePushSubscription(): UsePushSubscriptionResult {
   const supported =
     typeof window !== 'undefined' &&
@@ -106,9 +130,11 @@ export function usePushSubscription(): UsePushSubscriptionResult {
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
         // Tell the server to drop the row first so we don't keep a
-        // stale subscription pointing at a now-revoked endpoint.
+        // stale subscription pointing at a now-revoked endpoint. The route is
+        // DELETE /push/unsubscribe — POSTing it silently 405'd, so the row was
+        // never actually removed.
         await fetch(UNSUBSCRIBE_URL, {
-          method: 'POST',
+          method: 'DELETE',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ endpoint: sub.endpoint }),
         }).catch(() => undefined);

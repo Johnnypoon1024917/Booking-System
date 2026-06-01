@@ -38,6 +38,14 @@ function statusColor(status: string) {
 export function CalendarView() {
   const toast = useToast();
   const fcRef = useRef<any>(null);
+  // A live SSE booking event triggers reload() → refetch + re-render. If that
+  // fires WHILE the user is mid-drag (rescheduling/resizing an event), the grid
+  // re-renders out from under the cursor and the drag is aborted — the card
+  // snaps back. In a busy tenant with constant events that makes drag-and-drop
+  // practically impossible. So we suppress reloads during an active gesture and
+  // replay a single catch-up reload once it ends.
+  const interacting = useRef(false);
+  const missedReload = useRef(false);
   const [bookings, setBookings] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [roomFilter, setRoomFilter] = useState('');   // '' = all rooms
@@ -91,7 +99,27 @@ export function CalendarView() {
     // and avoids depending on FullCalendar's internal element ref.
     document.querySelectorAll('.fc-icon').forEach((el) => el.setAttribute('aria-hidden', 'true'));
   }
-  useEffect(() => { if (lastEvent?.type?.startsWith('booking.')) reload(); /* eslint-disable-next-line */ }, [lastEvent]);
+  useEffect(() => {
+    if (!lastEvent?.type?.startsWith('booking.')) return;
+    // Defer the refresh if the user is actively dragging/resizing — replay it
+    // when the gesture ends so the grid still converges, just not mid-drag.
+    if (interacting.current) { missedReload.current = true; return; }
+    reload();
+    /* eslint-disable-next-line */
+  }, [lastEvent]);
+
+  // FullCalendar drag/resize gesture boundaries. While a gesture is in flight we
+  // hold off live reloads (see refs above); on completion we flush a single
+  // catch-up reload if any event was suppressed. Deferred a tick so the gesture's
+  // own eventDrop/eventResize handler (and its confirm dialog) runs first.
+  function onInteractionStart() { interacting.current = true; }
+  function onInteractionEnd() {
+    interacting.current = false;
+    if (missedReload.current) {
+      missedReload.current = false;
+      setTimeout(() => { if (!interacting.current) reload(); }, 0);
+    }
+  }
 
   function reload() {
     // Pull a generous window so prev/next navigation has data without a
@@ -419,6 +447,10 @@ export function CalendarView() {
             events={events}
             eventContent={renderEventContent}
             select={onSelect}
+            eventDragStart={onInteractionStart}
+            eventDragStop={onInteractionEnd}
+            eventResizeStart={onInteractionStart}
+            eventResizeStop={onInteractionEnd}
             eventDrop={onDrop}
             eventResize={onResize}
             eventClick={onEventClick}

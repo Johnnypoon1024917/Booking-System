@@ -40,6 +40,14 @@ export interface ExpansionResult {
 // risk runaway insert storms (e.g. "every minute, count=10000").
 const MAX_OCCURRENCES = 100;
 
+// Hard ceiling on candidate-date iterations in the weekly/monthly expansion
+// loops. Those loops walk forward week-by-week / month-by-month searching for
+// `count` valid dates; an adversarial payload (e.g. COUNT=100 with an exDates /
+// BYDAY combination that never resolves) could otherwise spin and block Node's
+// single thread, freezing the whole backend (a one-request DoS). A legitimate
+// series resolves in ~count iterations (≤100); this bound sits well above that.
+const MAX_EXPANSION_ITERATIONS = 1000;
+
 @Injectable()
 export class RecurrenceService {
   constructor(
@@ -182,7 +190,12 @@ export class RecurrenceService {
         // selected week, until we reach `count` or `until`.
         let weekStart = startOfWeek(firstStart);
         let emitted = 0;
+        let guard = 0;
         while (emitted < count) {
+          // Fail-safe: never let an unresolvable rule spin the event loop.
+          if (guard++ > MAX_EXPANSION_ITERATIONS) {
+            throw new BadRequestException('Recurrence rule is too restrictive or never resolves to a valid date.');
+          }
           for (const wd of days) {
             const candidate = addDays(weekStart, wd);
             // Skip days before firstStart so we don't backfill the past.
@@ -209,7 +222,12 @@ export class RecurrenceService {
         const days = dto.bymonth && dto.bymonth.length ? dto.bymonth : [firstStart.getDate()];
         let emitted = 0;
         let monthOffset = 0;
+        let guard = 0;
         while (emitted < count) {
+          // Fail-safe: never let an unresolvable rule spin the event loop.
+          if (guard++ > MAX_EXPANSION_ITERATIONS) {
+            throw new BadRequestException('Recurrence rule is too restrictive or never resolves to a valid date.');
+          }
           for (const dom of days) {
             const s = new Date(firstStart);
             // Step to the target month WITHOUT letting an out-of-range day

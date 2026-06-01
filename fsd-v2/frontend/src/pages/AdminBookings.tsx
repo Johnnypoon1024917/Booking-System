@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Calendar, RefreshCcw, Search as SearchIcon, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
@@ -52,11 +53,25 @@ export function AdminBookings() {
   const [resources, setResources] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
 
-  const [rangeStart, setRangeStart] = useState(todayStr());
-  const [rangeEnd, setRangeEnd] = useState(plusDays(todayStr(), 7));
-  const [q, setQ] = useState('');
-  const [resourceFilter, setResourceFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  // Date range + filters live in the URL query string so the admin's view
+  // (range, search, room, status) survives a bulk action's reload, a full
+  // refresh, the back button and shared deep-links — instead of snapping back
+  // to the default week of unfiltered bookings (QA: "pagination amnesia").
+  const DEFAULT_FROM = todayStr();
+  const DEFAULT_TO = plusDays(todayStr(), 7);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rangeStart = searchParams.get('from') || DEFAULT_FROM;
+  const rangeEnd = searchParams.get('to') || DEFAULT_TO;
+  const q = searchParams.get('q') || '';
+  const resourceFilter = searchParams.get('room') || '';
+  const statusFilter = searchParams.get('status') || '';
+  function setParam(key: string, val: string, def = '') {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (val && val !== def) next.set(key, val); else next.delete(key);
+      return next;
+    }, { replace: true });
+  }
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => { load(); }, [rangeStart, rangeEnd]);
@@ -209,21 +224,21 @@ export function AdminBookings() {
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div className="row gap" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
           <label className="row" style={{ gap: 6 }}>{t('adminBookings.from')}
-            <input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} />
+            <input type="date" value={rangeStart} onChange={(e) => setParam('from', e.target.value, DEFAULT_FROM)} />
           </label>
           <label className="row" style={{ gap: 6 }}>{t('adminBookings.to')}
-            <input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} />
+            <input type="date" value={rangeEnd} onChange={(e) => setParam('to', e.target.value, DEFAULT_TO)} />
           </label>
           <label className="row" style={{ gap: 6, flex: 1, minWidth: 200 }}>
             <SearchIcon size={14} className="muted" />
             <input placeholder={t('adminBookings.searchPh')}
-                   value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} />
+                   value={q} onChange={(e) => setParam('q', e.target.value)} style={{ flex: 1 }} />
           </label>
-          <select aria-label={t('adminBookings.allRooms')} value={resourceFilter} onChange={(e) => setResourceFilter(e.target.value)}>
+          <select aria-label={t('adminBookings.allRooms')} value={resourceFilter} onChange={(e) => setParam('room', e.target.value)}>
             <option value="">{t('adminBookings.allRooms')}</option>
             {resources.map((r) => <option key={r.id || r.ID} value={r.id || r.ID}>{r.name || r.Name}</option>)}
           </select>
-          <select aria-label={t('adminBookings.allStatuses')} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select aria-label={t('adminBookings.allStatuses')} value={statusFilter} onChange={(e) => setParam('status', e.target.value)}>
             <option value="">{t('adminBookings.allStatuses')}</option>
             {STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
           </select>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
@@ -84,8 +85,19 @@ export function AdminUsers() {
   const { t } = useT();
   const [users, setUsers] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
+  // Page + search live in the URL query string (?page=4&q=john) so the admin's
+  // place in the table survives a save/reload, a full refresh, the back button
+  // and shared deep-links — instead of resetting to page 1 of an unfiltered list
+  // (QA: "pagination amnesia"). The URL is the single source of truth.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+  const search = searchParams.get('q') || '';
+  function patchParams(mut: (p: URLSearchParams) => void) {
+    setSearchParams((prev) => { const next = new URLSearchParams(prev); mut(next); return next; }, { replace: true });
+  }
+  function goPage(p: number) {
+    patchParams((next) => { if (p <= 1) next.delete('page'); else next.set('page', String(p)); });
+  }
   const [depts, setDepts] = useState<any[]>([]);
   const [regions, setRegions] = useState<string[]>([]);
   // Assignable roles — fetched from the permissions matrix so a custom role
@@ -125,7 +137,10 @@ export function AdminUsers() {
       .then((r) => { setUsers(r.items || []); setTotal(r.total || 0); })
       .catch(() => {});
   }
-  function onSearch(v: string) { setSearch(v); setPage(1); }
+  // New search resets to page 1 (the old page may not exist for fewer matches).
+  function onSearch(v: string) {
+    patchParams((next) => { if (v) next.set('q', v); else next.delete('q'); next.delete('page'); });
+  }
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -231,11 +246,11 @@ export function AdminUsers() {
       <div className="pager" style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
         <span className="muted">{t('adminUsers.totalCount', { count: total })}</span>
         <span className="spacer" style={{ flex: 1 }} />
-        <button className="btn ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+        <button className="btn ghost" disabled={page <= 1} onClick={() => goPage(page - 1)}>
           <ChevronLeft size={14} /> {t('common.prev')}
         </button>
         <span className="muted">{t('adminUsers.pageOf', { page, pages: pageCount })}</span>
-        <button className="btn ghost" disabled={page >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))}>
+        <button className="btn ghost" disabled={page >= pageCount} onClick={() => goPage(page + 1)}>
           {t('common.next')} <ChevronRight size={14} />
         </button>
       </div>

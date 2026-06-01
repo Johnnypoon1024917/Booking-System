@@ -50,4 +50,21 @@ describe('RecurrenceService.expand', () => {
     expect(occ).toHaveLength(4);
     expect(+occ[1].start - +occ[0].start).toBe(7 * 24 * 3600 * 1000);
   });
+
+  // QA enterprise #1: a monthly "end of month" series must snap an out-of-range
+  // day-of-month down to the target month's last valid day, not let JS Date
+  // silently roll it forward (Jan 31 .setMonth(1) → Mar 3). Local-time string
+  // (no trailing Z) so the assertion matches expand()'s local Date arithmetic.
+  it('monthly clamps an end-of-month day instead of rolling into the next month', () => {
+    const occ = call({
+      firstStart: '2026-01-31T09:00:00', firstEnd: '2026-01-31T10:00:00',
+      pattern: 'monthly', count: 4,
+    });
+    expect(occ).toHaveLength(4);
+    // Jan 31 → Feb 28 (2026 is not a leap year) → Mar 31 → Apr 30; never Mar 2/3.
+    expect(occ.map((o) => o.start.getMonth())).toEqual([0, 1, 2, 3]);
+    expect(occ.map((o) => o.start.getDate())).toEqual([31, 28, 31, 30]);
+    // Duration preserved across the clamp.
+    expect(+occ[1].end - +occ[1].start).toBe(3600 * 1000);
+  });
 });

@@ -11,6 +11,7 @@ import { useBookingRules } from '../hooks/useBookingRules';
 import { useTimezone } from '../hooks/useTimezone';
 import { useT } from '../hooks/useT';
 import { promptDialog } from '../stores/confirm';
+import { useBookingDraft } from '../stores/bookingDraft';
 
 interface CustomField {
   key: string;
@@ -141,20 +142,28 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   const [bStart, setBStart] = useState(editStart ? editStart.time : start);
   const [bEnd, setBEnd] = useState(editEnd ? editEnd.time : end);
 
-  const [title, setTitle] = useState(existingBooking?.title || '');
-  const [meetingUrl, setMeetingUrl] = useState(existingBooking?.meetingUrl || '');
-  const [isPrivate, setPrivate] = useState(!!existingBooking?.isPrivate);
-  // Seed recurrence from the caller (Search page), but never in edit mode where
-  // the recurrence UI is hidden and a series can't be created.
-  const [recur, setRecur] = useState(!isEdit && !!initialRecur);
-  const [pattern, setPattern] = useState<'daily' | 'weekly' | 'bi-weekly' | 'monthly'>(initialPattern || 'weekly');
-  const [count, setCount] = useState(4);
-  const [until, setUntil] = useState(initialUntil || '');   // optional end-date for the series (QA #7)
+  // Restore the persisted draft (QA enterprise #4) for a NEW booking so a
+  // conflict-and-retry — or simply closing and reopening on another room —
+  // doesn't wipe the laborious content. Read once at mount (getState, no
+  // subscription); the sync effect below writes changes straight back. Edit
+  // mode never uses the draft (it's seeded from the existing booking).
+  const draft0 = isEdit ? null : useBookingDraft.getState().draft;
+  const [title, setTitle] = useState(existingBooking?.title || draft0?.title || '');
+  const [meetingUrl, setMeetingUrl] = useState(existingBooking?.meetingUrl || draft0?.meetingUrl || '');
+  const [isPrivate, setPrivate] = useState(draft0 ? draft0.isPrivate : !!existingBooking?.isPrivate);
+  // Seed recurrence from the draft, else from the caller (Search page), but
+  // never in edit mode where the recurrence UI is hidden and a series can't be
+  // created.
+  const [recur, setRecur] = useState(!isEdit && (draft0?.recur ?? !!initialRecur));
+  const [pattern, setPattern] = useState<'daily' | 'weekly' | 'bi-weekly' | 'monthly'>(draft0?.pattern || initialPattern || 'weekly');
+  const [count, setCount] = useState(draft0?.count ?? 4);
+  const [until, setUntil] = useState(draft0?.until ?? (initialUntil || ''));   // optional end-date for the series (QA #7)
   // Seed from the booking in edit mode so existing add-ons show pre-ticked and
-  // can be changed (services are now editable post-creation).
-  const [services, setServices] = useState<string[]>(existingBooking?.services || []);
-  const [cfValues, setCfValues] = useState<Record<string, any>>({});
-  const [costCenter, setCostCenter] = useState('');
+  // can be changed (services are now editable post-creation); otherwise from the
+  // saved draft so add-ons survive a room switch.
+  const [services, setServices] = useState<string[]>(existingBooking?.services || draft0?.services || []);
+  const [cfValues, setCfValues] = useState<Record<string, any>>(draft0?.cfValues || {});
+  const [costCenter, setCostCenter] = useState(draft0?.costCenter || '');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any | null>(null);
 
@@ -264,19 +273,33 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   // a booking can now be moved to another room (resourceId on UpdateBookingDto).
   const showPicker = choices.length > 1 || !resource;
 
-  // Custom booking-form fields are defined per resource; reset answers
-  // whenever the selected resource changes so a different room never
-  // inherits the previous one's answers.
+  // Custom booking-form fields are defined per resource. Answers are KEPT across
+  // a room switch (keyed by field key) so a conflict-and-retry pre-fills the new
+  // room's matching fields instead of wiping the form (QA enterprise #4); the
+  // modal only renders/submits the keys the chosen room actually defines, so
+  // stray answers from a previous room are harmless and never sent.
   const customFields = selected?.customFields || [];
   useEffect(() => {
-    setCfValues({});
-    // Pre-fill the chargeback code from the resource's default (if any and
-    // still valid for the tenant), so the common case is one click.
-    const def = (selected as any)?.costCenterCode || '';
-    setCostCenter(def && costCenters.includes(def) ? def : '');
+    // Apply the new room's default chargeback code only when the user hasn't
+    // already chosen a (still-valid) one — don't clobber a draft selection.
+    setCostCenter((cc) => {
+      if (cc && costCenters.includes(cc)) return cc;
+      const def = (selected as any)?.costCenterCode || '';
+      return def && costCenters.includes(def) ? def : '';
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selResId]);
   function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); }
+
+  // Persist the draft content on every change so it survives the modal
+  // unmounting (close/reopen on another room). Create mode only — edit mode
+  // operates on an existing booking and must not pollute the new-booking draft.
+  useEffect(() => {
+    if (isEdit) return;
+    useBookingDraft.getState().save({
+      title, meetingUrl, isPrivate, recur, pattern, count, until, services, costCenter, cfValues,
+    });
+  }, [isEdit, title, meetingUrl, isPrivate, recur, pattern, count, until, services, costCenter, cfValues]);
 
   // Pre-defined service add-ons — admins can override these via the
   // tenant studio later; for now this matches v1's hard-coded list.
@@ -385,7 +408,13 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
     if (costCenters.length && !costCenter) {
       toast.warning(t('bookingModal.requiredField', { field: 'Cost center' })); return;
     }
-    const customFieldValues = Object.keys(cfValues).length ? cfValues : undefined;
+    // Only submit answers for fields the chosen room actually defines — the
+    // draft may still hold answers from a previous room we switched away from.
+    const definedKeys = new Set(customFields.map((f) => f.key));
+    const scopedCf = Object.fromEntries(
+      Object.entries(cfValues).filter(([k]) => definedKeys.has(k)),
+    );
+    const customFieldValues = Object.keys(scopedCf).length ? scopedCf : undefined;
     setBusy(true);
     try {
       // Lock the wall-clock slot to the tenant zone (not the browser's) so a
@@ -429,6 +458,9 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           costCenterCode: costCenter || undefined,
         });
       }
+      // Booking committed — drop the saved draft so the next new booking starts
+      // clean (it only existed to survive a conflict-and-retry).
+      useBookingDraft.getState().clear();
       setResult(r || { status: 'Confirmed' });
       // Name the approver in the toast too (single-booking path), so the info
       // is visible even if the user dismisses the result panel quickly.

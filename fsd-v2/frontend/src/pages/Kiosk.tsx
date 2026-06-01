@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useT } from '../hooks/useT';
+import { useIdleTimer } from '../hooks/useIdleTimer';
+
+// Walk-away idle window for the shared tablet. After this long with no touch we
+// discard any transient state and return to the clean default screen so the
+// next person never inherits the previous user's session.
+const KIOSK_IDLE_MS = 45_000;
 
 // Kiosk display — full-screen, no app shell. Designed for a wall-mounted
 // tablet outside the meeting room. Auto-refreshes every 30s. Polls the
@@ -31,6 +37,17 @@ export function Kiosk() {
     const id2 = setInterval(() => setNow(new Date()), 1_000);
     return () => { clearInterval(id1); clearInterval(id2); };
   }, [resourceId]);
+
+  // Shared-device reset: after 45s of no interaction, drop any lingering
+  // walk-in confirmation/error and re-pull a fresh state so the screen returns
+  // to its default available/in-use view for the next person (QA: kiosk
+  // "walk-away" leak). The kiosk has no half-filled form to discard, so clearing
+  // the transient message and refreshing state is the full reset here.
+  useIdleTimer(KIOSK_IDLE_MS, () => {
+    setMsg(null);
+    setBusy(false);
+    if (resourceId) api.kioskState(resourceId).then(setState).catch(() => {});
+  });
 
   async function walkIn(minutes: number) {
     if (!resourceId) return;

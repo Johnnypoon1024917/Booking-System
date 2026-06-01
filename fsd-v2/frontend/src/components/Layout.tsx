@@ -9,6 +9,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { useT } from '../hooks/useT';
 import { useRealtime } from '../hooks/useRealtime';
+import { dropDevicePushOnLogout } from '../hooks/usePushSubscription';
 import { api } from '../api/client';
 import { BroadcastBanner } from './BroadcastBanner';
 import { AdminSubnav } from './AdminSubnav';
@@ -217,6 +218,11 @@ export function Layout() {
     // Logging out unmounts everything — guard unsaved work the same way.
     if (navBlocked && !(await confirmLeave(t, navMessage))) return;
     if (navBlocked) clearBlocker(false);
+    // Shared-device privacy: unbind this browser's push subscription from the
+    // logging-out user BEFORE we drop the token (the call is authenticated), so
+    // the next user on this device can never receive the previous user's
+    // notifications. Best-effort — never block logout on it.
+    await dropDevicePushOnLogout();
     logout();
     nav('/login');
   }

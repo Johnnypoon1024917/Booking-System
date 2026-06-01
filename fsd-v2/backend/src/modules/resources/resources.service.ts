@@ -69,10 +69,44 @@ export class ResourcesService {
     }
     const r = await this.get(tenantId, id);
     if (subResources && subResources.length) fields.compositeMode = 'parent';
+
+    // TARDIS guard: a composite parent can't be smaller than the sum of its
+    // sub-rooms. The editor blocks adding children beyond the parent, but the
+    // REVERSE edit — shrinking the parent below its existing children — slipped
+    // through, producing a "20-seat room containing two 50-seat rooms" that
+    // corrupts capacity search/reporting. Enforce it server-side against the
+    // intended children: the incoming subResources list if provided, else the
+    // current active children in the DB.
+    const willBeParent = (fields.compositeMode ?? r.compositeMode) === 'parent';
+    if (willBeParent) {
+      const newCapacity = Number(fields.capacity ?? r.capacity ?? 0);
+      const childSum = subResources
+        ? subResources.reduce((n, s) => n + (Number(s.capacity) || 0), 0)
+        : await this.activeChildrenCapacitySum(tenantId, r.id);
+      if (newCapacity > 0 && childSum > newCapacity) {
+        throw new BadRequestException(
+          `Parent capacity (${newCapacity}) cannot be less than the sum of its sub-rooms (${childSum}).`,
+        );
+      }
+    }
+
     Object.assign(r, fields, { id: r.id, tenantId: r.tenantId });
     const saved = await this.repo.save(r);
     if (subResources) await this.syncSubResources(tenantId, saved, subResources);
     return saved;
+  }
+
+  // Sum of the active child sub-rooms' capacities for a parent — backs the
+  // TARDIS guard in update() when the edit doesn't restate the children.
+  private async activeChildrenCapacitySum(tenantId: string, parentResourceId: string): Promise<number> {
+    const { sum } = await this.repo
+      .createQueryBuilder('r')
+      .select('COALESCE(SUM(r.capacity), 0)', 'sum')
+      .where('r.tenant_id = :tenantId', { tenantId })
+      .andWhere('r.parent_resource_id = :parentResourceId', { parentResourceId })
+      .andWhere('r.is_active = TRUE')
+      .getRawOne<{ sum: string }>() ?? { sum: '0' };
+    return Number(sum) || 0;
   }
 
   // Reconcile a parent's child resources against the editor's list. Upserts by

@@ -55,6 +55,11 @@ export const api = {
   login: (tenantSlug: string, username: string, password: string) =>
     http.post('/api/v1/auth/login', { tenantSlug, username, password }).then((r) => r.data),
   me: () => http.get('/api/v1/auth/me').then((r) => r.data),
+  // Logout. Passes this device's push-subscription endpoint so the server can
+  // unbind it — critical on shared devices so the next user doesn't inherit the
+  // previous user's notifications. Must be called while the JWT is still valid.
+  authLogout: (pushEndpoint?: string) =>
+    http.post('/api/v1/auth/logout', { pushEndpoint }).then((r) => r.data),
   // Completes a forced first-login password reset. Returns a full session
   // ({ accessToken, user }) on success.
   changePassword: (changeToken: string, newPassword: string) =>
