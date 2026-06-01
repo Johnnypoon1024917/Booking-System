@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, ArrowUp, ArrowDown, Trash2, Save, ChevronRight, GitBranch } from 'lucide-react';
+import { Plus, ArrowUp, ArrowDown, Trash2, Save, ChevronRight, GitBranch, FlaskConical, CheckCircle2, AlertTriangle, CornerDownRight } from 'lucide-react';
 import { api } from '../api/client';
-import { Modal } from '../components/Modal';
 import { TokenSelect, TokenOption } from '../components/TokenSelect';
 import { useT } from '../hooks/useT';
 import { useToast } from '../stores/toast';
@@ -50,6 +49,20 @@ interface Rule {
   levels: Level[];
 }
 
+// Mirrors the backend ApprovalsService.scopeMatches exactly (resource > the
+// asset_type / department exact match > tenant catch-all). Kept in lockstep so
+// the client-side simulator routes a sample booking the same way the server
+// will when the booking is really created.
+function scopeMatchesRes(type: Scope, value: string, res: any): boolean {
+  switch (type) {
+    case 'resource':   return res?.id === value;
+    case 'asset_type': return (res?.assetType ?? '') === value;
+    case 'department': return (res?.departmentId ?? '') === value;
+    case 'tenant':     return value === '';
+    default:           return false;
+  }
+}
+
 function emptyLevel(name: string): Level {
   return { name, approver_type: 'user', approver_role: '', min_grade: '', approver_user_ids: [], auto_after_hours: 0, parallel: false, require_all: false, dependencies: [] };
 }
@@ -83,6 +96,153 @@ function ChainGraph({ levels, fallback }: { levels: Level[]; fallback: string })
           {c < cols.length - 1 && <ChevronRight size={16} className="muted" />}
         </div>
       ))}
+    </div>
+  );
+}
+
+// "Test with a sample booking" — pick a room + requester and see exactly which
+// rule the server would route to and who each step resolves to, WITHOUT saving
+// or creating a throwaway booking. Replicates matchRule (priority-ordered first
+// scope match) and resolveLevelApprovers (manager / dept-head / role / user) so
+// the preview matches production. The edited rule is spliced into the live set
+// at its current (unsaved) priority/scope, so the test reflects pending changes.
+function RuleSimulator({ editing, rules, resources, departments, users }: {
+  editing: Rule; rules: any[]; resources: any[]; departments: any[]; users: any[];
+}) {
+  const { t } = useT();
+  const [resId, setResId] = useState('');
+  const [userId, setUserId] = useState('');
+
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const deptById = useMemo(() => new Map(departments.map((d) => [d.id, d])), [departments]);
+
+  // Default the room to one this rule's scope actually matches, so the first
+  // glance is the "happy path" rather than an arbitrary mismatch.
+  useEffect(() => {
+    setResId((cur) => {
+      if (cur && resources.some((r) => r.id === cur)) return cur;
+      const m = resources.find((r) => scopeMatchesRes(editing.scopeType, editing.scopeValue, r));
+      return (m || resources[0])?.id ?? '';
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing.id, resources]);
+
+  const resObj = useMemo(() => resources.find((r) => r.id === resId), [resources, resId]);
+  const requester = userId ? userById.get(userId) : undefined;
+
+  // The live rule set with the in-editor rule substituted at its current values
+  // (or appended when it's brand new), filtered to active and priority-ordered —
+  // exactly the list matchRule walks.
+  const effective = useMemo(() => {
+    const list = rules.map((r) => (editing.id && r.id === editing.id ? editing : r));
+    if (!editing.id) list.push(editing);
+    return list
+      .filter((r) => r.isActive)
+      .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+  }, [rules, editing]);
+
+  const winner = useMemo(
+    () => (resObj ? effective.find((r) => scopeMatchesRes(r.scopeType, r.scopeValue, resObj)) : undefined),
+    [effective, resObj],
+  );
+  const isEditedWinner = !!winner && winner === editing;
+  const editedMatches = !!resObj && editing.isActive && scopeMatchesRes(editing.scopeType, editing.scopeValue, resObj);
+
+  // One resolved sentence per level — names, not ids — matching how the server
+  // bakes each step's approvers at materialise time.
+  function resolveLevel(lvl: Level): { text: string; warn?: boolean } {
+    const tp = effectiveType(lvl);
+    const grade = lvl.min_grade ? t('approvalChain.simGrade', { grade: lvl.min_grade, defaultValue: `, grade ≥ ${lvl.min_grade}` }) : '';
+    if (tp === 'manager') {
+      if (!requester) return { text: t('approvalChain.simPickRequester', { defaultValue: "Requester's manager — pick a requester to resolve" }), warn: true };
+      const mgr = requester.managerId ? userById.get(requester.managerId) : undefined;
+      return mgr
+        ? { text: t('approvalChain.simManager', { name: mgr.username, defaultValue: `${mgr.username} (requester's manager)` }) }
+        : { text: t('approvalChain.simNoManager', { defaultValue: "Requester has no manager → System Admin decides" }), warn: true };
+    }
+    if (tp === 'department_head') {
+      const dept = resObj?.departmentId ? deptById.get(resObj.departmentId) : undefined;
+      const head = dept?.headUserId ? userById.get(dept.headUserId) : undefined;
+      return head
+        ? { text: t('approvalChain.simDeptHead', { name: head.username, dept: dept?.name ?? '', defaultValue: `${head.username} (${dept?.name} head)` }) }
+        : { text: t('approvalChain.simNoDeptHead', { defaultValue: "No department head set → System Admin decides" }), warn: true };
+    }
+    if (tp === 'role') {
+      const base = lvl.approver_role
+        ? t('approvalChain.simRole', { role: lvl.approver_role, defaultValue: `Anyone with role "${lvl.approver_role}"` })
+        : t('approvalChain.simNoRole', { defaultValue: '(no role configured)' });
+      return { text: base + grade, warn: !lvl.approver_role };
+    }
+    // user
+    const names = (lvl.approver_user_ids ?? []).map((id) => userById.get(id)?.username || id);
+    if (!names.length) return { text: t('approvalChain.simNoUsers', { defaultValue: '(no specific approvers configured)' }) + grade, warn: true };
+    const joiner = lvl.require_all ? ' + ' : ' / ';
+    const mode = names.length > 1
+      ? (lvl.require_all ? t('approvalChain.simAll', { defaultValue: ' — all must approve' }) : t('approvalChain.simAny', { defaultValue: ' — any one approves' }))
+      : '';
+    return { text: names.join(joiner) + grade + mode };
+  }
+
+  const verdict = (() => {
+    if (!resObj) return { tone: 'muted', msg: t('approvalChain.simPickResource', { defaultValue: 'Pick a resource to simulate routing.' }) };
+    if (!winner) return { tone: 'muted', msg: t('approvalChain.simNoRule', { defaultValue: 'No rule matches → the booking auto-approves (or uses the room’s single-level approval).' }) };
+    if (isEditedWinner) return { tone: 'ok', msg: t('approvalChain.simWins', { p: winner.priority, defaultValue: `This rule routes the booking (priority ${winner.priority}).` }) };
+    if (editedMatches) return { tone: 'warn', msg: t('approvalChain.simShadowed', { name: winner.name, p: winner.priority, defaultValue: `Intercepted: “${winner.name}” (priority ${winner.priority}) has higher priority and fires first. This rule matches too, but never runs for this booking.` }) };
+    return { tone: 'warn', msg: t('approvalChain.simNoMatchOther', { name: winner.name, p: winner.priority, defaultValue: `This rule’s scope doesn’t match this booking — it would route via “${winner.name}” (priority ${winner.priority}).` }) };
+  })();
+
+  return (
+    <div className="card sim-panel">
+      <div className="sim-head">
+        <FlaskConical size={15} /> {t('approvalChain.simTitle', { defaultValue: 'Test with a sample booking' })}
+      </div>
+      <div className="grid-2">
+        <label>{t('approvalChain.simResource', { defaultValue: 'Resource' })}
+          <select value={resId} onChange={(e) => setResId(e.target.value)}>
+            <option value="">{t('approvalChain.simChooseResource', { defaultValue: 'Choose a resource…' })}</option>
+            {resources.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}{r.assetType ? ` · ${r.assetType}` : ''}</option>
+            ))}
+          </select>
+        </label>
+        <label>{t('approvalChain.simRequester', { defaultValue: 'Requester' })}
+          <select value={userId} onChange={(e) => setUserId(e.target.value)}>
+            <option value="">{t('approvalChain.simChooseRequester', { defaultValue: 'Choose a requester…' })}</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>{u.username}{u.role ? ` · ${u.role}` : ''}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className={`sim-verdict ${verdict.tone}`}>
+        {verdict.tone === 'ok' && <CheckCircle2 size={15} />}
+        {verdict.tone === 'warn' && <AlertTriangle size={15} />}
+        <span>{verdict.msg}</span>
+      </div>
+
+      {winner && winner.levels.length > 0 && (
+        <ol className="sim-chain">
+          {winner.levels.map((lvl: Level, i: number) => {
+            const r = resolveLevel(lvl);
+            const deps = (lvl.dependencies?.length ? lvl.dependencies : (i === 0 ? [] : [i - 1]))
+              .map((d: number) => winner.levels[d]?.name || t('approvalChain.stepN', { n: d + 1 }));
+            return (
+              <li key={i} className="sim-step">
+                <span className="num small">{i + 1}</span>
+                <div className="sim-step-body">
+                  <b>{lvl.name || t('approvalChain.ruleFallback')}</b>
+                  <span className={`sim-who${r.warn ? ' warn' : ''}`}>{r.text}</span>
+                  {lvl.auto_after_hours ? <small className="muted">{t('approvalChain.autoHours', { n: lvl.auto_after_hours })}</small> : null}
+                  {deps.length > 0 && i > 0 && (
+                    <small className="muted"><CornerDownRight size={11} /> {t('approvalChain.simAfter', { steps: deps.join(', '), defaultValue: `after ${deps.join(', ')}` })}</small>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </div>
   );
 }
@@ -164,6 +324,22 @@ export function AdminApprovalChain() {
     }));
     setEditing(clone);
     setEditBaseline(JSON.stringify(clone));
+  }
+
+  // Switching the selected rule (or starting a new one) now happens in-pane, so
+  // a dirty editor must confirm before the right pane swaps out from under the
+  // admin's half-finished chain. useUnsavedGuard still covers route changes.
+  async function guardThen(fn: () => void) {
+    if (dirty) {
+      const ok = await confirmDialog({
+        title: t('approvalChain.leaveWarn'),
+        tone: 'danger',
+        confirmText: t('approvalChain.discardChanges', { defaultValue: 'Discard changes' }),
+        cancelText: t('approvalChain.keepEditing', { defaultValue: 'Keep editing' }),
+      });
+      if (!ok) return;
+    }
+    fn();
   }
 
   function setEd<K extends keyof Rule>(k: K, v: Rule[K]) {
@@ -309,39 +485,69 @@ export function AdminApprovalChain() {
           <h1>{t('approvalChain.title')}</h1>
           <p className="muted">{t('approvalChain.routingSubtitle')}</p>
         </div>
-        <button className="btn primary" onClick={openNew}><Plus size={14}/> {t('approvalChain.newRule')}</button>
       </header>
 
-      {rules.length === 0 && <p className="muted">{t('approvalChain.routingEmpty')}</p>}
-
-      {rules.map((r) => (
-        <article key={r.id} className="card rule-card" onClick={() => openExisting(r)} style={{ cursor: 'pointer' }}>
-          <div className="prio">{r.priority}</div>
-          <div style={{ minWidth: 0 }}>
-            <div className="row gap-sm" style={{ alignItems: 'baseline' }}>
-              <h3 className="truncate">{r.name}</h3>
-              <span className="tag info">{r.scopeType}{r.scopeValue ? `: ${scopeLabel(r)}` : ''}</span>
-              {!r.isActive && <span className="tag warning">{t('common.inactive')}</span>}
-            </div>
-            <div className="muted text-sm row gap-sm" style={{ flexWrap: 'wrap' }}>
-              {(r.levels ?? []).map((l: Level, i: number) => (
-                <span key={i} className="level-pill">
-                  <span className="num">{i + 1}</span> {l.name} <small>{describeLevel(l)}</small>
-                </span>
-              ))}
-            </div>
+      <div className="rule-builder">
+        {/* Left pane: the rule list. Persistent, so an admin can scan rules and
+            jump between them without losing the editor (a dirty switch prompts). */}
+        <aside className="rule-list">
+          <div className="rule-list-head">
+            <span className="rule-list-title">{t('approvalChain.rulesHeading', { defaultValue: 'Rules' })}</span>
+            <button className="btn primary sm" onClick={() => guardThen(openNew)}>
+              <Plus size={14}/> {t('approvalChain.newRule')}
+            </button>
           </div>
-          <ChevronRight size={16} className="muted"/>
-        </article>
-      ))}
+          {rules.length === 0 && <p className="muted text-sm" style={{ padding: '8px 4px' }}>{t('approvalChain.routingEmpty')}</p>}
+          {rules.map((r) => {
+            const isActive = editing?.id === r.id;
+            return (
+              <article key={r.id} className={`card rule-card${isActive ? ' active' : ''}`}
+                       onClick={() => guardThen(() => openExisting(r))} style={{ cursor: 'pointer' }}>
+                <div className="prio">{r.priority}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="row gap-sm" style={{ alignItems: 'baseline' }}>
+                    <h3 className="truncate">{r.name}</h3>
+                    <span className="tag info">{r.scopeType}{r.scopeValue ? `: ${scopeLabel(r)}` : ''}</span>
+                    {!r.isActive && <span className="tag warning">{t('common.inactive')}</span>}
+                  </div>
+                  <div className="muted text-sm row gap-sm" style={{ flexWrap: 'wrap' }}>
+                    {(r.levels ?? []).map((l: Level, i: number) => (
+                      <span key={i} className="level-pill">
+                        <span className="num">{i + 1}</span> {l.name} <small>{describeLevel(l)}</small>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <ChevronRight size={16} className="muted"/>
+              </article>
+            );
+          })}
+        </aside>
 
-      {editing && (
-        <Modal title={editing.id ? t('approvalChain.editRuleNamed', { name: editing.name || t('approvalChain.ruleFallback') }) : t('approvalChain.newRuleTitle')} onClose={() => setEditing(null)} footer={<>
-          {editing.id && <button className="btn danger" disabled={busy} onClick={del}><Trash2 size={13}/> {t('common.delete')}</button>}
-          <span className="spacer" />
-          <button className="btn ghost" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
-          <button className="btn primary" disabled={busy || !editing.name.trim()} onClick={save}><Save size={13}/> {t('common.save')}</button>
-        </>}>
+        {/* Right pane: the selected rule, edited in place. */}
+        <section className="rule-editor">
+          {!editing ? (
+            <div className="rule-editor-empty muted">
+              <GitBranch size={32} className="muted" style={{ opacity: 0.4 }}/>
+              <p>{t('approvalChain.selectOrCreate', { defaultValue: 'Select a rule to edit, or create a new one.' })}</p>
+              <button className="btn primary" onClick={() => guardThen(openNew)}>
+                <Plus size={14}/> {t('approvalChain.newRule')}
+              </button>
+            </div>
+          ) : (
+          <>
+          <header className="rule-editor-head">
+            <h2 className="truncate">{editing.id
+              ? t('approvalChain.editRuleNamed', { name: editing.name || t('approvalChain.ruleFallback') })
+              : t('approvalChain.newRuleTitle')}</h2>
+            <div className="rule-editor-actions">
+              {editing.id && <button className="btn danger" disabled={busy} onClick={del}><Trash2 size={13}/> {t('common.delete')}</button>}
+              <span className="spacer" />
+              <button className="btn ghost" onClick={() => guardThen(() => setEditing(null))}>{t('common.cancel')}</button>
+              <button className="btn primary" disabled={busy || !dirty || !editing.name.trim()} onClick={save}><Save size={13}/> {t('common.save')}</button>
+            </div>
+          </header>
+          <div className="rule-editor-body">
           <div className="grid-2">
             <label>{t('approvalChain.name')}<input value={editing.name} onChange={(e) => setEd('name', e.target.value)}/></label>
             <label>{t('approvalChain.priority')}
@@ -486,8 +692,14 @@ export function AdminApprovalChain() {
             </div>
           ))}
           <button className="btn ghost" onClick={addLevel}><Plus size={13}/> {t('approvalChain.addLevel')}</button>
-        </Modal>
-      )}
+
+          <RuleSimulator editing={editing} rules={rules} resources={resources}
+                         departments={departments} users={users} />
+          </div>
+          </>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

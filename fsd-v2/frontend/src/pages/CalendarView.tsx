@@ -14,7 +14,7 @@ import { useRealtime } from '../hooks/useRealtime';
 import { useTimezone } from '../hooks/useTimezone';
 import { BookingModal } from '../components/BookingModal';
 import { RoomGridView } from '../components/RoomGridView';
-import { confirmDialog } from '../stores/confirm';
+import { Combobox, ComboOption } from '../components/Combobox';
 
 // Schedule view — FullCalendar week/month/day grid with the v1 .mrbs panel
 // chrome, a room filter, a status legend, and BookingModal-based creation.
@@ -89,6 +89,17 @@ export function CalendarView() {
       .map(([loc, list]) => [loc, list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))] as const)
       .sort(([a], [b]) => a.localeCompare(b));
   }, [rooms]);
+
+  // Flattened, location-grouped options for the searchable room filter. A native
+  // <select>+<optgroup> of 100+ rooms spans the whole viewport and forces manual
+  // scrolling; the Combobox lets the user type to narrow instead.
+  const roomFilterOptions = useMemo<ComboOption[]>(() => {
+    const opts: ComboOption[] = [{ value: '', label: 'All rooms' }];
+    for (const [loc, list] of groupedRooms) {
+      for (const r of list) opts.push({ value: r.id, label: r.name, sub: loc, group: loc });
+    }
+    return opts;
+  }, [groupedRooms]);
 
   // FullCalendar renders its prev/next/today toolbar icons as
   // `<span class="fc-icon" role="img">` with no accessible text, which trips
@@ -223,6 +234,39 @@ export function CalendarView() {
     fcRef.current?.getApi()?.unselect();
   }
 
+  // Restore a booking to its pre-drag values (the "Undo" affordance).
+  async function undoChange(bookingId: string, prev: any) {
+    try { await api.updateBooking(bookingId, prev); reload(); }
+    catch (e: any) { toast.error('Undo failed', e.displayMessage || e.message); }
+  }
+
+  // Persist a calendar edit optimistically and surface a Gmail-style Undo toast
+  // instead of a blocking confirm. The card has already moved on screen, so a
+  // modal dialog on every drag/resize just interrupted the gesture; this keeps
+  // the calendar fluid while still making the change reversible. On failure we
+  // run `revert` to snap the card back.
+  async function applyWithUndo(
+    bookingId: string,
+    next: any,
+    prev: any,
+    opts: { title: string; failTitle: string; revert: () => void },
+  ) {
+    try {
+      await api.updateBooking(bookingId, next);
+      reload();
+      const canUndo = prev && prev.startTime && prev.endTime;
+      toast.push({
+        title: opts.title,
+        kind: 'success',
+        duration: 8000, // a beat longer than default so Undo is actually reachable
+        ...(canUndo ? { action: { label: 'Undo', onClick: () => undoChange(bookingId, prev) } } : {}),
+      });
+    } catch (e: any) {
+      toast.error(opts.failTitle, e.displayMessage || e.message);
+      opts.revert();
+    }
+  }
+
   async function onDrop(info: any) {
     // A private booking the caller can't see is read-only; bail before the
     // backend would reject the edit anyway.
@@ -245,19 +289,13 @@ export function CalendarView() {
         : 3_600_000; // fall back to 1h if the prior end was also missing
       newEnd = new Date(newStart.getTime() + oldDuration);
     }
-    const ok = await confirmDialog({
-      title: 'Reschedule booking',
-      message: `Move "${info.event.title}" to ${newStart.toLocaleString()}?`,
-      confirmText: 'Reschedule',
-    });
-    if (!ok) { info.revert(); return; }
-    try {
-      await api.updateBooking(info.event.id, {
-        startTime: newStart.toISOString(),
-        endTime: newEnd.toISOString(),
-      });
-      reload();
-    } catch (e: any) { toast.error('Reschedule failed', e.displayMessage || e.message); info.revert(); }
+    const b = bookings.find((x) => x.id === info.event.id);
+    await applyWithUndo(
+      info.event.id,
+      { startTime: newStart.toISOString(), endTime: newEnd.toISOString() },
+      { startTime: b?.startTime, endTime: b?.endTime },
+      { title: `Moved “${info.event.title}”`, failTitle: 'Reschedule failed', revert: () => info.revert() },
+    );
   }
 
   // Resize is a distinct gesture from a move: the start usually stays put and
@@ -273,21 +311,13 @@ export function CalendarView() {
     }
     const start: Date = info.event.start;
     const end: Date = info.event.end;
-    const mins = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
-    const human = mins % 60 === 0 ? `${mins / 60}h` : mins > 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-    const ok = await confirmDialog({
-      title: 'Change duration',
-      message: `Change duration of "${info.event.title}" to ${human} (${hhmm(start)}–${hhmm(end)})?`,
-      confirmText: 'Change duration',
-    });
-    if (!ok) { info.revert(); return; }
-    try {
-      await api.updateBooking(info.event.id, {
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-      });
-      reload();
-    } catch (e: any) { toast.error('Update failed', e.displayMessage || e.message); info.revert(); }
+    const b = bookings.find((x) => x.id === info.event.id);
+    await applyWithUndo(
+      info.event.id,
+      { startTime: start.toISOString(), endTime: end.toISOString() },
+      { startTime: b?.startTime, endTime: b?.endTime },
+      { title: `Updated “${info.event.title}”`, failTitle: 'Update failed', revert: () => info.revert() },
+    );
   }
 
   // Teams/Outlook parity: clicking an event opens its details for editing
@@ -325,19 +355,17 @@ export function CalendarView() {
   async function onRoomMove(bookingId: string, resourceId: string, startISO: string, endISO: string) {
     const b = bookings.find((x) => x.id === bookingId);
     const room = rooms.find((r) => r.id === resourceId);
-    const moved = b && b.resourceId !== resourceId;
-    const ok = await confirmDialog({
-      title: moved ? 'Move booking' : 'Reschedule booking',
-      message: `${moved ? `Move "${b?.title || 'booking'}" to ${room?.name || 'this room'}` : `Reschedule "${b?.title || 'booking'}"`} at ${tz.formatDateTime(startISO)}?`,
-      confirmText: moved ? 'Move' : 'Reschedule',
-    });
-    if (!ok) return;
-    try {
-      await api.updateBooking(bookingId, { resourceId, startTime: startISO, endTime: endISO });
-      reload();
-    } catch (e: any) {
-      toast.error(moved ? 'Move failed' : 'Reschedule failed', e.displayMessage || e.message);
-    }
+    const moved = !!b && b.resourceId !== resourceId;
+    await applyWithUndo(
+      bookingId,
+      { resourceId, startTime: startISO, endTime: endISO },
+      b ? { resourceId: b.resourceId, startTime: b.startTime, endTime: b.endTime } : null,
+      {
+        title: moved ? `Moved “${b?.title || 'booking'}” to ${room?.name || 'room'}` : `Rescheduled “${b?.title || 'booking'}”`,
+        failTitle: moved ? 'Move failed' : 'Reschedule failed',
+        revert: () => reload(),
+      },
+    );
   }
 
   // Click empty space in a room column → open the booking modal pre-filled with
@@ -385,14 +413,9 @@ export function CalendarView() {
               <button type="button" className={`seg-btn${view === 'rooms' ? ' active' : ''}`}
                 aria-pressed={view === 'rooms'} onClick={() => setView('rooms')}>Rooms</button>
             </div>
-            <select className="d-in" aria-label="Filter by room" style={{ width: 200, maxWidth: '60vw' }} value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
-              <option value="">All rooms</option>
-              {groupedRooms.map(([loc, list]) => (
-                <optgroup key={loc} label={loc}>
-                  {list.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </optgroup>
-              ))}
-            </select>
+            <Combobox className="cal-room-filter" ariaLabel="Filter by room"
+                      value={roomFilter} onChange={setRoomFilter}
+                      placeholder="All rooms" options={roomFilterOptions} />
           </div>
         </div>
 

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock, Trash2, CalendarClock } from 'lucide-react';
 import { Modal } from './Modal';
 import { Switch } from './Switch';
+import { Combobox } from './Combobox';
+import { tip } from '../stores/tooltip';
 import { ApprovalTimeline } from './ApprovalTimeline';
 import { api } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
@@ -78,15 +80,20 @@ function FreeBusyTimeline({ winStart, winEnd, busy, slotStart, slotEnd, conflict
   const width = (a: number, b: number) => `${((Math.min(b, winEnd) - Math.max(a, winStart)) / span) * 100}%`;
   const ticks: number[] = [];
   for (let h = Math.ceil(winStart / 60); h * 60 <= winEnd; h++) ticks.push(h);
+  // Minute-of-day → HH:MM, for the instant hover tooltips (replacing the sluggish
+  // ~1.5s native `title` the audit flagged).
+  const hhmm = (m: number) => `${pad2(Math.floor(m / 60))}:${pad2(Math.round(m % 60))}`;
   return (
     <div className="bm-fb-track">
       {ticks.map((h) => (
         <div key={h} className="bm-fb-tick" style={{ left: left(h * 60) }}><span>{pad2(h)}</span></div>
       ))}
       {busy.map((b, i) => (
-        <div key={i} className="bm-fb-busy" style={{ left: left(b.start), width: width(b.start, b.end) }} title={b.title} />
+        <div key={i} className="bm-fb-busy" style={{ left: left(b.start), width: width(b.start, b.end) }}
+             {...tip(`${hhmm(b.start)}–${hhmm(b.end)} · ${b.title}`)} />
       ))}
-      <div className={`bm-fb-slot${conflict ? ' conflict' : ''}`} style={{ left: left(slotStart), width: width(slotStart, slotEnd) }} />
+      <div className={`bm-fb-slot${conflict ? ' conflict' : ''}`} style={{ left: left(slotStart), width: width(slotStart, slotEnd) }}
+           {...tip(`${hhmm(slotStart)}–${hhmm(slotEnd)} · your slot`)} />
     </div>
   );
 }
@@ -166,6 +173,14 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   const [costCenter, setCostCenter] = useState(draft0?.costCenter || '');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any | null>(null);
+  // Inline field-level validation. Enterprise forms surface "missing Cost
+  // center" right under the control, not as a corner toast the user has to hunt
+  // the matching field for. Keyed by custom-field key, plus 'costCenter'.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  // Clear a single field's error the moment the user supplies a value.
+  function clearError(key: string) {
+    setFieldErrors((e) => { if (!e[key]) return e; const { [key]: _, ...rest } = e; return rest; });
+  }
 
   // Tenant chargeback codes. When the tenant has configured any, a code is
   // required for every booking (the server re-checks against the same list).
@@ -289,7 +304,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selResId]);
-  function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); }
+  function setCf(key: string, value: any) { setCfValues((m) => ({ ...m, [key]: value })); clearError(key); }
 
   // Persist the draft content on every change so it survives the modal
   // unmounting (close/reopen on another room). Create mode only — edit mode
@@ -398,16 +413,26 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
       return;
     }
 
-    // Enforce required custom fields client-side (the server re-checks).
+    // Enforce required fields client-side (the server re-checks). Collect every
+    // missing field so the user sees all of them inline at once, rather than
+    // fixing one, re-submitting, and discovering the next.
+    const errs: Record<string, string> = {};
+    const requiredMsg = t('bookingModal.fieldRequired', { defaultValue: 'This field is required' });
     for (const f of customFields) {
       if (!f.required) continue;
       const v = cfValues[f.key];
       const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
-      if (empty) { toast.warning(t('bookingModal.requiredField', { field: f.label || f.key })); return; }
+      if (empty) errs[f.key] = requiredMsg;
     }
-    if (costCenters.length && !costCenter) {
-      toast.warning(t('bookingModal.requiredField', { field: 'Cost center' })); return;
+    if (costCenters.length && !costCenter) errs.costCenter = requiredMsg;
+    if (Object.keys(errs).length) {
+      setFieldErrors(errs);
+      // Bring the first offending control into view (the modal body scrolls).
+      const firstKey = customFields.find((f) => errs[f.key])?.key ?? (errs.costCenter ? 'costCenter' : '');
+      if (firstKey) document.getElementById(`bm-field-${firstKey}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
     }
+    setFieldErrors({});
     // Only submit answers for fields the chosen room actually defines — the
     // draft may still hold answers from a previous room we switched away from.
     const definedKeys = new Set(customFields.map((f) => f.key));
@@ -618,11 +643,16 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
       </label>
 
       {!isEdit && costCenters.length > 0 && (
-        <label>Cost center*
-          <select value={costCenter} onChange={(e) => setCostCenter(e.target.value)}>
-            <option value="">Choose a cost center…</option>
-            {costCenters.map((cc) => <option key={cc} value={cc}>{cc}</option>)}
-          </select>
+        <label id="bm-field-costCenter">Cost center*
+          <Combobox
+            className={fieldErrors.costCenter ? 'invalid' : undefined}
+            ariaLabel="Cost center"
+            value={costCenter}
+            onChange={(v) => { setCostCenter(v); clearError('costCenter'); }}
+            placeholder="Choose a cost center…"
+            options={costCenters.map((cc) => ({ value: cc, label: cc }))}
+          />
+          {fieldErrors.costCenter && <small className="field-err">{fieldErrors.costCenter}</small>}
         </label>
       )}
 
@@ -645,32 +675,43 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           change them. */}
       {!isEdit && customFields.map((f) => {
         const label = `${f.label || f.key}${f.required ? '*' : ''}`;
+        const err = fieldErrors[f.key];
+        const errEl = err ? <small className="field-err">{err}</small> : null;
         if (f.type === 'checkbox') {
           return (
-            <label key={f.key} className="row" style={{ alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={!!cfValues[f.key]}
-                     onChange={(e) => setCf(f.key, e.target.checked)} />
-              <span>{label}</span>
-            </label>
+            <div key={f.key} id={`bm-field-${f.key}`}>
+              <label className="row" style={{ alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={!!cfValues[f.key]}
+                       onChange={(e) => setCf(f.key, e.target.checked)} />
+                <span>{label}</span>
+              </label>
+              {errEl}
+            </div>
           );
         }
         if (f.type === 'select') {
           return (
-            <label key={f.key}>{label}
-              <select value={cfValues[f.key] ?? ''} onChange={(e) => setCf(f.key, e.target.value)}>
+            <label key={f.key} id={`bm-field-${f.key}`}>{label}
+              <select value={cfValues[f.key] ?? ''} aria-invalid={!!err}
+                      className={err ? 'invalid' : ''}
+                      onChange={(e) => setCf(f.key, e.target.value)}>
                 <option value="">{t('bookingModal.choose')}</option>
                 {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
+              {errEl}
             </label>
           );
         }
         return (
-          <label key={f.key}>{label}
+          <label key={f.key} id={`bm-field-${f.key}`}>{label}
             <input
               type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
               value={cfValues[f.key] ?? ''}
+              aria-invalid={!!err}
+              className={err ? 'invalid' : ''}
               onChange={(e) => setCf(f.key, f.type === 'number' ? (e.target.value === '' ? '' : +e.target.value) : e.target.value)}
             />
+            {errEl}
           </label>
         );
       })}

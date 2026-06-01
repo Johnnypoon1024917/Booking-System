@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch, Search, CalendarClock, AlertTriangle } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { ApprovalTimeline } from '../components/ApprovalTimeline';
 import { useT } from '../hooks/useT';
 import { useToast } from '../stores/toast';
+import { tip } from '../stores/tooltip';
 
 // Async typeahead for the delegate picker. Queries the directory search
 // endpoint (capped, server-side) instead of rendering every user as a DOM
@@ -15,7 +16,10 @@ function ApproverSearch({ onSelect, placeholder }: { onSelect: (id: string) => v
   const [results, setResults] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Highlighted row for keyboard navigation (-1 = nothing highlighted).
+  const [active, setActive] = useState(-1);
   const boxRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Debounced search — empty query returns the first page so the menu is
   // never blank on focus.
@@ -30,6 +34,10 @@ function ApproverSearch({ onSelect, placeholder }: { onSelect: (id: string) => v
     return () => { active = false; clearTimeout(h); };
   }, [text]);
 
+  // Reset the highlight whenever the result set changes so the arrow keys start
+  // from the top of the fresh list rather than a now-invalid index.
+  useEffect(() => { setActive(-1); }, [results]);
+
   useEffect(() => {
     function onDoc(e: MouseEvent) { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); }
     document.addEventListener('mousedown', onDoc);
@@ -42,6 +50,35 @@ function ApproverSearch({ onSelect, placeholder }: { onSelect: (id: string) => v
     setOpen(false);
   }
 
+  // Keyboard support: ↑/↓ move the highlight, Enter confirms it, Escape closes.
+  // Executives drive this from the keyboard, so the menu has to be operable
+  // without the mouse.
+  function onKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActive((i) => Math.min(i + 1, results.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (open && active >= 0 && active < results.length) {
+        e.preventDefault();
+        pick(results[active]);
+      }
+    } else if (e.key === 'Escape') {
+      if (open) { e.preventDefault(); setOpen(false); }
+    }
+  }
+
+  // Keep the highlighted row scrolled into view as the user arrows past the
+  // visible window of the (scrollable) menu.
+  useEffect(() => {
+    if (active < 0 || !menuRef.current) return;
+    const el = menuRef.current.querySelectorAll('.typeahead-item')[active] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+
   return (
     <div className="typeahead" ref={boxRef}>
       <div className="typeahead-input">
@@ -49,18 +86,27 @@ function ApproverSearch({ onSelect, placeholder }: { onSelect: (id: string) => v
         <input
           value={text}
           placeholder={placeholder}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="approver-typeahead-menu"
+          aria-activedescendant={active >= 0 && results[active] ? `approver-opt-${results[active].id}` : undefined}
           onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
           // Editing after a pick invalidates the selection so a stale id can't
           // be submitted under a different visible name.
           onChange={(e) => { setText(e.target.value); onSelect(''); setOpen(true); }}
         />
       </div>
       {open && (
-        <div className="typeahead-menu">
+        <div className="typeahead-menu" ref={menuRef} id="approver-typeahead-menu" role="listbox">
           {loading && <div className="typeahead-empty muted text-sm">{t('common.loading')}</div>}
           {!loading && results.length === 0 && <div className="typeahead-empty muted text-sm">{t('approvals.noMatches')}</div>}
-          {!loading && results.map((u) => (
-            <button type="button" key={u.id} className="typeahead-item" onClick={() => pick(u)}>
+          {!loading && results.map((u, i) => (
+            <button type="button" key={u.id} id={`approver-opt-${u.id}`} role="option"
+                    aria-selected={i === active}
+                    className={`typeahead-item${i === active ? ' active' : ''}`}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => pick(u)}>
               <b>{u.username}</b>
               {u.role && <span className="muted"> — {u.role}</span>}
               {u.grade && <span className="muted"> · {u.grade}</span>}
@@ -186,7 +232,7 @@ function ScheduleContext({ booking, resourceName, onClose }: { booking: any; res
               {blocks.map((b) => (
                 <div key={b.id} className={`sched-evt${b.conflict ? ' conflict' : ''}`}
                      style={{ top: topFor(b.start), height: heightFor(b.start, b.end) }}
-                     title={`${hm(b.start)}–${hm(b.end)} · ${b.title}`}>
+                     {...tip(`${hm(b.start)}–${hm(b.end)} · ${b.title}`)}>
                   <b className="truncate">{b.title}</b>
                   <small>{hm(b.start)}–{hm(b.end)}</small>
                 </div>
@@ -194,7 +240,7 @@ function ScheduleContext({ booking, resourceName, onClose }: { booking: any; res
               {/* The slot under review — drawn on top so it's unmistakable. */}
               <div className="sched-evt requested"
                    style={{ top: topFor(reqStart), height: heightFor(reqStart, reqEnd) }}
-                   title={`${hm(reqStart)}–${hm(reqEnd)} · ${t('approvals.ctxRequested')}`}>
+                   {...tip(`${hm(reqStart)}–${hm(reqEnd)} · ${t('approvals.ctxRequested')}`)}>
                 <b className="truncate">{t('approvals.ctxRequested')}</b>
                 <small>{hm(reqStart)}–{hm(reqEnd)}</small>
               </div>
@@ -225,6 +271,11 @@ export function Approvals() {
   const [delegateReason, setDelegateReason] = useState('');
   // The booking whose room schedule is shown in the slide-out context panel.
   const [contextFor, setContextFor] = useState<any | null>(null);
+  // Bulk approvals: a manager back from leave with 40 pending rooms shouldn't
+  // click Approve 40 times. Track the selected booking ids and approve them in
+  // one sweep.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -279,6 +330,52 @@ export function Approvals() {
     const steps = chains[id] ?? [];
     for (let i = 0; i < steps.length; i++) if ((steps[i].status ?? '').toLowerCase() === 'pending') return i + 1;
     return steps.length;
+  }
+
+  // Drop ids that no longer correspond to a pending row (after a reload) so a
+  // stale selection can't linger or be re-approved.
+  useEffect(() => {
+    setSelected((prev) => {
+      const live = new Set(rows.map((r) => r.id));
+      const next = new Set([...prev].filter((id) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [rows]);
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  const allSelected = sorted.length > 0 && selected.size === sorted.length;
+  function toggleSelectAll() {
+    setSelected(allSelected ? new Set() : new Set(sorted.map((b) => b.id)));
+  }
+
+  // Approve every selected booking in sequence. Sequential (not parallel) so the
+  // server processes one chain transition at a time and a mid-batch failure
+  // reports an accurate count instead of a thundering herd.
+  async function approveSelected() {
+    const ids = sorted.filter((b) => selected.has(b.id)).map((b) => b.id);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    let ok = 0; const failed: string[] = [];
+    for (const id of ids) {
+      try { await api.approveBooking(id, ''); ok++; }
+      catch { failed.push(id); }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    if (failed.length) {
+      toast.error(
+        t('approvals.bulkPartial', { ok, fail: failed.length, defaultValue: `${ok} approved, ${failed.length} failed` }),
+      );
+    } else {
+      toast.success(t('approvals.bulkApproved', { count: ok, defaultValue: `${ok} bookings approved` }));
+    }
+    await load();
   }
 
   async function onApprove(b: any) {
@@ -336,11 +433,35 @@ export function Approvals() {
       {loading && <p className="muted">{t('common.loading')}</p>}
       {!loading && rows.length === 0 && <p className="muted">{t('approvals.nonePending')}</p>}
 
+      {!loading && rows.length > 0 && (
+        <div className="bulk-bar">
+          <label className="bulk-select-all">
+            <input type="checkbox" checked={allSelected}
+                   ref={(el) => { if (el) el.indeterminate = selected.size > 0 && !allSelected; }}
+                   onChange={toggleSelectAll} disabled={bulkBusy} />
+            <span>{selected.size > 0
+              ? t('approvals.selectedCount', { count: selected.size, defaultValue: `${selected.size} selected` })
+              : t('approvals.selectAll', { defaultValue: 'Select all' })}</span>
+          </label>
+          {selected.size > 0 && (
+            <button className="btn-fsd" disabled={bulkBusy}
+                    style={{ background: 'var(--fsd-success)', borderColor: 'var(--fsd-success)' }}
+                    onClick={approveSelected}>
+              <Check size={14}/> {t('approvals.approveSelected', { count: selected.size, defaultValue: `Approve ${selected.size} selected` })}
+            </button>
+          )}
+        </div>
+      )}
+
       {sorted.map((b) => {
         const steps = chains[b.id] ?? [];
         const r = resourceMap[b.resourceId];
         return (
-          <article key={b.id} className="fsd-card approval-card">
+          <article key={b.id} className={`fsd-card approval-card${selected.has(b.id) ? ' selected' : ''}`}>
+            <label className="approval-check" aria-label={t('approvals.selectOne', { defaultValue: 'Select booking' })}>
+              <input type="checkbox" checked={selected.has(b.id)}
+                     onChange={() => toggleSelect(b.id)} disabled={bulkBusy} />
+            </label>
             <div className="thumb"><Clock size={18} color="white"/></div>
             <div className="approval-info">
               <div className="row gap-sm" style={{ alignItems: 'baseline' }}>
@@ -360,20 +481,20 @@ export function Approvals() {
               {steps.length > 0 && <div style={{ marginTop: 8 }}><ApprovalTimeline steps={steps} submittedAt={b.createdAt}/></div>}
             </div>
             <div className="row gap-sm approval-actions">
-              <button className="btn-fsd ghost" disabled={busyId === b.id}
+              <button className="btn-fsd ghost" disabled={busyId === b.id || bulkBusy}
                       onClick={() => setContextFor(b)}>
                 <CalendarClock size={13}/> {t('approvals.viewContext')}
               </button>
-              <button className="btn-fsd ghost" disabled={busyId === b.id}
+              <button className="btn-fsd ghost" disabled={busyId === b.id || bulkBusy}
                       onClick={() => { setDelegating(b); setDelegateTo(''); setDelegateReason(''); }}>
                 <UserCog size={13}/> {t('approvals.delegate')}
               </button>
-              <button className="btn-fsd danger" disabled={busyId === b.id}
+              <button className="btn-fsd danger" disabled={busyId === b.id || bulkBusy}
                       onClick={() => { setRejecting(b); setRejectReason(''); }}>
                 <X size={13}/> {t('approvals.reject')}
               </button>
               <button className="btn-fsd" style={{ background: 'var(--fsd-success)', borderColor: 'var(--fsd-success)' }}
-                      disabled={busyId === b.id} onClick={() => onApprove(b)}>
+                      disabled={busyId === b.id || bulkBusy} onClick={() => onApprove(b)}>
                 <Check size={13}/> {t('approvals.approve')}
               </button>
             </div>

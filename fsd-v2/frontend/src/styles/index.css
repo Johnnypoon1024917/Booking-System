@@ -1356,6 +1356,127 @@ h1.page-title::after { content: ' »'; color: var(--fsd-muted); font-weight: 400
 .dep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 6px; }
 .dep-chip { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; font-size: 13px; }
 .dep-chip:hover { background: var(--surface-inset); }
+/* Selected dependency reads as "wired in" — the chip checkbox is hidden, so the
+   active state is the only signal that a dependency is set. */
+.dep-chip.active {
+  border-color: var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-primary) 12%, transparent);
+  color: var(--text); font-weight: 600;
+}
+
+/* ===== Approval-rule builder: two-pane (rule list | inline editor) =====
+   Replaces the old editor-in-a-modal. Left pane stays put while the right pane
+   edits the selected rule in place, so a half-built chain can't be lost to a
+   stray backdrop click. */
+.rule-builder {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) { .rule-builder { grid-template-columns: 1fr; } }
+
+.rule-list { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 16px; }
+.rule-list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rule-list-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+.btn.sm { min-height: 0; padding: 6px 12px; font-size: 13px; }
+
+.rule-card { display: flex; align-items: center; gap: 12px; }
+.rule-card.active { box-shadow: 0 0 0 2px var(--brand-primary); border-color: var(--brand-primary); }
+.rule-card .prio {
+  flex: none; width: 34px; height: 34px; border-radius: 8px;
+  display: grid; place-items: center; font-weight: 700; font-size: 13px;
+  background: var(--surface-inset); color: var(--text-secondary);
+}
+.level-pill { display: inline-flex; align-items: center; gap: 4px; }
+.level-pill .num, .num { font-weight: 700; }
+
+.rule-editor {
+  border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+  min-height: 320px; display: flex; flex-direction: column; overflow: hidden;
+}
+.rule-editor-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 60px 24px; text-align: center;
+}
+.rule-editor-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
+.rule-editor-head h2 { font-size: 17px; font-weight: 700; margin: 0; flex: 1; min-width: 0; }
+.rule-editor-actions { display: flex; align-items: center; gap: 10px; }
+.rule-editor-actions .spacer { display: none; }
+.rule-editor-body { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Form-control styling — mirrors the .modal section rules the editor used to
+   inherit, now that the form lives outside any modal. */
+.rule-editor-body > label,
+.rule-editor-body .field,
+.rule-editor-body .grid-2 > label {
+  display: flex; flex-direction: column; gap: 6px; margin: 0;
+  font-size: 12.5px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.01em;
+}
+.rule-editor-body label input,
+.rule-editor-body label select,
+.rule-editor-body label textarea,
+.rule-editor-body input[type=text],
+.rule-editor-body input[type=number],
+.rule-editor-body select,
+.rule-editor-body textarea {
+  display: block; width: 100%; box-sizing: border-box;
+  min-height: 44px; margin: 0; padding: 11px 14px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  font-size: 14px; font-weight: 400;
+  background: var(--surface); color: var(--text);
+  transition: border-color .15s, box-shadow .15s;
+}
+.rule-editor-body input:hover,
+.rule-editor-body select:hover,
+.rule-editor-body textarea:hover { border-color: var(--brand-primary); }
+.rule-editor-body input:focus,
+.rule-editor-body select:focus,
+.rule-editor-body textarea:focus {
+  outline: none; border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 16%, transparent);
+}
+.rule-editor-body .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.rule-editor-body input[type=checkbox],
+.rule-editor-body input[type=radio] {
+  width: 16px; height: 16px; min-height: 0; flex: none; display: inline-block;
+  margin: 0; padding: 0; border-radius: 4px;
+}
+.rule-editor-body label.dep-chip,
+.rule-editor-body .row.gap label,
+.rule-editor-body .row.gap-sm label,
+.rule-editor-body label:has(> input[type=checkbox]) {
+  flex-direction: row; align-items: center; gap: 8px;
+  font-weight: 500; color: var(--text);
+}
+.rule-editor-body label.dep-chip input,
+.rule-editor-body label:has(> input[type=checkbox]) input { width: 16px; min-height: 0; flex: none; }
+.rule-editor-body .field > label { font-weight: 600; color: var(--text-secondary); }
+.rule-editor-body .row { gap: 10px; }
+.rule-editor-body .level-card { gap: 8px; }
+
+/* Rule test simulator — "what would this booking do?" preview. */
+.sim-panel {
+  margin-top: 8px; border: 1px dashed var(--border-strong); background: var(--surface-inset);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.sim-head { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: var(--text-secondary); }
+.sim-verdict { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+.sim-verdict svg { flex: none; margin-top: 1px; }
+.sim-verdict.ok { background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent); color: var(--success, #15803d); }
+.sim-verdict.warn { background: color-mix(in srgb, var(--warning, #d97706) 14%, transparent); color: var(--warning, #b45309); }
+.sim-verdict.muted { background: var(--surface); color: var(--text-secondary); }
+.sim-chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sim-step { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.sim-step .num { flex: none; }
+.sim-step-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sim-who { font-size: 13px; color: var(--text); }
+.sim-who.warn { color: var(--warning, #b45309); }
+.sim-step-body small { display: inline-flex; align-items: center; gap: 4px; }
 
 /* Settings preferences -------------------------------------------- */
 .settings-prefs { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
@@ -2039,8 +2160,95 @@ table.dt th .caret, .caret { color: #5f6875; }
   padding: 8px 10px; border: 0; background: transparent; border-radius: 7px;
   font-size: 13px; color: var(--text);
 }
-.typeahead-item:hover { background: var(--surface-inset); }
+.typeahead-item:hover,
+.typeahead-item.active { background: var(--surface-inset); }
+.typeahead-item.active { box-shadow: inset 2px 0 0 var(--brand-primary); }
 .typeahead-empty { padding: 10px; text-align: center; }
+
+/* ---- Bulk approvals (Approvals page) ---- */
+.bulk-bar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: 4px 0 14px; padding: 10px 14px;
+  background: var(--surface-inset); border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.bulk-select-all { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; margin: 0; }
+.bulk-bar .btn-fsd { margin-left: auto; }
+.approval-card { position: relative; }
+.approval-check { display: flex; align-items: center; margin: 0 4px 0 0; cursor: pointer; }
+.approval-check input { width: 16px; height: 16px; cursor: pointer; }
+.approval-card.selected { box-shadow: 0 0 0 2px var(--brand-primary); }
+
+/* ---- Inline field validation (forms) ---- */
+.field-err { display: block; margin-top: 4px; color: var(--danger); font-size: 12px; font-weight: 500; }
+input.invalid, select.invalid, textarea.invalid { border-color: var(--danger) !important; }
+
+/* ---- Toast inline action (Gmail-style "Undo") ---- */
+.toast-action {
+  flex: none; align-self: center; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--brand-primary);
+  font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+  padding: 5px 12px; border-radius: 8px;
+}
+.toast-action:hover { background: var(--surface-inset); }
+
+/* ---- Instant hover tooltip (TooltipLayer) ---- */
+.tooltip-pop {
+  position: fixed; z-index: 3000; pointer-events: none;
+  transform: translate(12px, calc(-100% - 10px));
+  background: #1e293b; color: #fff;
+  padding: 6px 9px; border-radius: 6px; font-size: 12px; line-height: 1.35;
+  max-width: 260px; box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+}
+
+/* ---- Searchable single-select combobox ---- */
+.combo { position: relative; }
+.combo-control {
+  display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+  min-height: 40px; padding: 8px 12px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+  font: inherit; font-size: 14px; text-align: left;
+  transition: border-color .15s, box-shadow .15s;
+}
+.combo-control:hover { border-color: var(--brand-primary); }
+.combo-control:focus-visible { outline: none; border-color: var(--brand-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 16%, transparent); }
+.combo-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-value.placeholder { color: var(--text-muted); }
+.combo-chevron { flex: none; color: var(--text-muted); }
+.combo-clear { flex: none; display: inline-flex; color: var(--text-muted); cursor: pointer; }
+.combo-clear:hover { color: var(--text); }
+.combo.invalid .combo-control { border-color: var(--danger); }
+
+.combo-menu {
+  position: absolute; z-index: 1200; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.14);
+  overflow: hidden; display: flex; flex-direction: column; min-width: 220px;
+}
+.combo-search { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+/* Beat .modal section label input (specificity 0,1,3) so the search field stays
+   a borderless inline input when the combobox is used inside a modal. */
+.combo .combo-search input {
+  flex: 1; border: 0; outline: none; background: transparent;
+  font: inherit; font-size: 14px; color: var(--text); min-height: 0; padding: 2px 0;
+}
+.combo-list { max-height: 260px; overflow-y: auto; padding: 4px; }
+.combo-group { padding: 6px 10px 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.combo-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: 0; background: transparent; cursor: pointer; border-radius: 7px;
+  padding: 8px 10px; font-size: 13px; color: var(--text);
+}
+.combo-opt.active { background: var(--surface-inset); }
+.combo-opt.selected { font-weight: 600; }
+.combo-opt-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.combo-opt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-opt-sub { font-size: 11px; color: var(--text-muted); }
+.combo-opt-check { flex: none; color: var(--brand-primary); }
+.combo-empty { padding: 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+.cal-room-filter { width: 200px; max-width: 60vw; }
 
 /* ---- Booking summary header (BookingModal) ---- */
 .modal section .bm-summary { padding: 14px; border-radius: 12px; gap: 14px; }

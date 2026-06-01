@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastHost } from './components/ToastHost';
+import { TooltipLayer } from './components/TooltipLayer';
 import { ConfirmHost } from './components/ConfirmHost';
 import { SessionExpiredModal } from './components/SessionExpiredModal';
 import { Login } from './pages/Login';
@@ -100,6 +101,7 @@ export function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <ToastHost />
+      <TooltipLayer />
       <ConfirmHost />
       <SessionExpiredModal />
     </>
