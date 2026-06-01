@@ -9,24 +9,24 @@
   --brand-secondary: #d71920;
   --brand-accent: #f7b500;
 
-  /* Surfaces — light theme */
-  --bg: #f6f7fb;
+  /* Surfaces — classic AdminLTE/Bootstrap light canvas (FSD mockups) */
+  --bg: #f4f6f9;
   --bg-elevated: #ffffff;
   --surface: #ffffff;
-  --surface-hover: #f9fafc;
-  --surface-pressed: #f1f3f8;
-  --surface-inset: #f6f7fb;
+  --surface-hover: #f6f7f9;
+  --surface-pressed: #eef1f4;
+  --surface-inset: #f9f9f9;
 
-  /* Text */
-  --text: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  /* Text — dark enterprise grey */
+  --text: #333333;
+  --text-secondary: #555f6b;
+  --text-muted: #8a93a0;
   --text-inverse: #ffffff;
 
   /* Lines */
-  --border: #e6e8ee;
+  --border: #e5e5e5;
   --border-strong: #cbd5e1;
-  --divider: #eef0f5;
+  --divider: #ededed;
 
   /* Status */
   --success: #16a34a;
@@ -62,10 +62,10 @@
   --sidebar-w: 92px;
   --topbar-h: 0px;
 
-  /* Type */
-  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
-          "PingFang HK", "Microsoft JhengHei", "Microsoft YaHei",
-          Roboto, sans-serif;
+  /* Type — standard dense enterprise sans (Arial / system-ui) per FSD deck */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial,
+          "Helvetica Neue", Helvetica, "PingFang HK", "Microsoft JhengHei",
+          "Microsoft YaHei", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -561,8 +561,10 @@ label.toggle input { width: auto; }
 }
 /* Default brand for tenants that haven't set a custom colour. The
    per-tenant value is applied inline at boot (see main.js
-   applyBrandColors) and overrides this. */
-:root { --brand-primary: #1e2a44; }
+   applyBrandColors) and overrides this. Classic Bootstrap primary blue
+   (#337ab7) so charts, steppers and the legacy mrbs skin all share the
+   one corporate blue from the FSD mockups. */
+:root { --brand-primary: #337ab7; }
 
 .mrbs { color: #33414e; }
 .mrbs .mrbs-crumb { color: var(--asl-blue); font-size: 18px; font-weight: 600; margin-bottom: 14px; }
@@ -735,9 +737,10 @@ label.toggle input { width: auto; }
   --fsd-side-bg-active: #2c3e50;
   --fsd-side-fg: #cfd8dc;
   --fsd-side-fg-active: #ffffff;
-  --fsd-primary: #3498db;
-  --fsd-primary-hover: #2980b9;
-  --fsd-line: #e3e6ea;
+  /* Classic Bootstrap "primary" blue + its darker active shade. */
+  --fsd-primary: #337ab7;
+  --fsd-primary-hover: #2e6da4;
+  --fsd-line: #e5e5e5;
   --fsd-muted: #7a8290;
   --fsd-success: #27ae60;
   --fsd-success-bg: #dff7e6;
@@ -762,8 +765,10 @@ label.toggle input { width: auto; }
   border-right: 1px solid var(--fsd-line);
   --side-fg: #6b7280;
   --side-fg-hover: #1f2937;
-  --side-active-bg: #2c3e50;
-  --side-active-fg: #ffffff;
+  /* Active item: faint blue wash, blue left-border highlight and the
+     icon/label switching to the primary blue (FSD mockup §2). */
+  --side-active-bg: #eaf2fb;
+  --side-active-fg: var(--fsd-primary);
 }
 .sidebar.fsd-side-light .fsd-brand {
   border-bottom: 1px solid #eef0f3;
@@ -784,9 +789,10 @@ label.toggle input { width: auto; }
 .sidebar.fsd-side-light .fsd-nav a.router-link-active {
   background: var(--side-active-bg);
   color: var(--side-active-fg);
-  border-left-color: var(--side-active-bg);
+  border-left-color: var(--fsd-primary);
+  font-weight: 600;
 }
-.sidebar.fsd-side-light .fsd-nav a.router-link-active svg { color: var(--side-active-fg); }
+.sidebar.fsd-side-light .fsd-nav a.router-link-active svg { color: var(--fsd-primary); }
 .sidebar.fsd-side-light .fsd-foot {
   border-top: 1px solid #eef0f3;
   color: #9aa0a6;
@@ -847,16 +853,23 @@ label.toggle input { width: auto; }
 .fsd-page-title { font-size: 22px; font-weight: 500; margin: 0 0 18px 0; color: var(--text); }
 .fsd-page-title small { color: var(--fsd-muted); font-weight: 400; margin-left: 4px; }
 
-/* Card (the screenshots use thin-border white boxes, not heavy shadows) */
+/* Card (the screenshots use thin-border white boxes — no drop shadow at
+   all, just a 1px grey hairline like Bootstrap 3 .panel) */
 .fsd-card {
   background: #fff; border: 1px solid var(--fsd-line); border-radius: 3px;
   padding: 18px 20px; margin-bottom: 22px;
-  box-shadow: 0 1px 2px rgba(15,23,42,.03);
+  box-shadow: none;
 }
+/* Title rendered as a full-width "panel-heading" band: subtle #f9f9f9
+   strip with a bottom hairline, pulled out to the card edges via negative
+   margins so it reads as a classic Bootstrap card header. */
 .fsd-card .fsd-card-title {
   font-size: 13px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .04em; color: var(--fsd-muted);
-  margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: .04em; color: var(--text);
+  margin: -18px -20px 16px; padding: 10px 20px;
+  background: #f9f9f9; border-bottom: 1px solid var(--fsd-line);
+  border-radius: 3px 3px 0 0;
+  display: flex; justify-content: space-between; align-items: center;
 }
 .fsd-card .fsd-card-title .picker { font-weight: 400; color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
 
@@ -949,7 +962,7 @@ table.dt td .icon-btn.del  { color: var(--fsd-danger); }
 }
 .fsd-form .fld input:focus, .fsd-form .fld select:focus, .fsd-form .fld textarea:focus {
   outline: none; border-color: var(--fsd-primary);
-  box-shadow: 0 0 0 2px rgba(52,152,219,.18);
+  box-shadow: 0 0 0 2px rgba(51,122,183,.20);
 }
 .fsd-form .fld-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .fsd-form .fld-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
@@ -1280,7 +1293,7 @@ label.fld > span {
 .field textarea:focus, .fld textarea:focus {
   outline: none;
   border-color: var(--fsd-primary);
-  box-shadow: 0 0 0 2px rgba(52,152,219,.18);
+  box-shadow: 0 0 0 2px rgba(51,122,183,.20);
 }
 
 /* ---------- .stat tiles ---------- */
@@ -1301,7 +1314,7 @@ label.fld > span {
   margin-bottom: 18px;
 }
 .panel > .ph {
-  background: transparent;
+  background: #f9f9f9;
   border-bottom: 1px solid var(--fsd-line);
   padding: 10px 16px;
   font-weight: 600;

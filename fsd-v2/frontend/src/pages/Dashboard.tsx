@@ -268,8 +268,8 @@ export function Dashboard() {
         <div className="fsd-card">
           <div className="fsd-card-title">{t('dashboard.statBox')} <span className="picker">{rangeLabel}</span></div>
           <div className="fsd-bigstats">
-            <div className="item"><Calendar size={22} color="#3498db" /><strong>{stats.total}</strong><span>{t('dashboard.bookings')}</span></div>
-            <div className="item"><Clock size={22} color="#3498db" /><strong>{stats.avgMin} {t('dashboard.mins')}</strong><span>{t('dashboard.avgMeetingDuration')}</span></div>
+            <div className="item"><Calendar size={22} color="#337ab7" /><strong>{stats.total}</strong><span>{t('dashboard.bookings')}</span></div>
+            <div className="item"><Clock size={22} color="#337ab7" /><strong>{stats.avgMin} {t('dashboard.mins')}</strong><span>{t('dashboard.avgMeetingDuration')}</span></div>
           </div>
           {/* Segment widths must track the data, not split into fixed thirds:
               .fsd-seg defaults to flex:1, so without an inline flex a 2% no-show

@@ -11,24 +11,24 @@
   --brand-secondary: #d71920;
   --brand-accent: #f7b500;
 
-  /* Surfaces — light theme */
-  --bg: #f6f7fb;
+  /* Surfaces — classic AdminLTE/Bootstrap light canvas (FSD mockups) */
+  --bg: #f4f6f9;
   --bg-elevated: #ffffff;
   --surface: #ffffff;
-  --surface-hover: #f9fafc;
-  --surface-pressed: #f1f3f8;
-  --surface-inset: #f6f7fb;
+  --surface-hover: #f6f7f9;
+  --surface-pressed: #eef1f4;
+  --surface-inset: #f9f9f9;
 
-  /* Text */
-  --text: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  /* Text — dark enterprise grey */
+  --text: #333333;
+  --text-secondary: #555f6b;
+  --text-muted: #8a93a0;
   --text-inverse: #ffffff;
 
   /* Lines */
-  --border: #e6e8ee;
+  --border: #e5e5e5;
   --border-strong: #cbd5e1;
-  --divider: #eef0f5;
+  --divider: #ededed;
 
   /* Status */
   --success: #16a34a;
@@ -64,10 +64,10 @@
   --sidebar-w: 92px;
   --topbar-h: 48px;   /* non-zero default so a bare .topbar can't collapse to 0px */
 
-  /* Type */
-  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
-          "PingFang HK", "Microsoft JhengHei", "Microsoft YaHei",
-          Roboto, sans-serif;
+  /* Type — standard dense enterprise sans (Arial / system-ui) per FSD deck */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial,
+          "Helvetica Neue", Helvetica, "PingFang HK", "Microsoft JhengHei",
+          "Microsoft YaHei", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -591,7 +591,10 @@ label.toggle input { width: auto; }
   --asl-amber-bg: #fef3c7;
   --asl-avail: #059669;
 }
-:root { --brand-primary: #1e2a44; }
+/* Classic Bootstrap primary blue (#337ab7) is the default brand so charts,
+   steppers and the legacy mrbs skin all share the one corporate blue from the
+   FSD mockups. Per-tenant brand_primary still overrides this at boot. */
+:root { --brand-primary: #337ab7; }
 
 .mrbs { color: #33414e; }
 .mrbs .mrbs-crumb { color: var(--asl-blue); font-size: 18px; font-weight: 600; margin-bottom: 14px; }
@@ -775,9 +778,10 @@ label.toggle input { width: auto; }
   --fsd-side-bg-active: #2c3e50;
   --fsd-side-fg: #cfd8dc;
   --fsd-side-fg-active: #ffffff;
-  --fsd-primary: #3498db;
-  --fsd-primary-hover: #2980b9;
-  --fsd-line: #e3e6ea;
+  /* Classic Bootstrap "primary" blue + its darker active shade. */
+  --fsd-primary: #337ab7;
+  --fsd-primary-hover: #2e6da4;
+  --fsd-line: #e5e5e5;
   --fsd-muted: #7a8290;
   --fsd-success: #27ae60;
   --fsd-success-bg: #dff7e6;
@@ -800,8 +804,12 @@ label.toggle input { width: auto; }
      nav labels. #57606f lifts it to ~6.3:1 while staying visually muted. */
   --side-fg: #57606f;
   --side-fg-hover: #1f2937;
-  --side-active-bg: #2c3e50;
-  --side-active-fg: #ffffff;
+  /* Active item: faint blue wash + a darker Bootstrap blue label/icon (FSD
+     mockup §2). #2e6da4 on the #eaf2fb wash is ~4.85:1 — clears WCAG AA for
+     the small nav labels; the bright #337ab7 is reserved for the left border
+     (decorative, no contrast requirement). */
+  --side-active-bg: #eaf2fb;
+  --side-active-fg: #2e6da4;
   /* The shell sets BOTH `fsd-side` and `fsd-side-light`. The `.fsd-side`
      nav rule (`color: var(--fsd-side-fg)`) is declared later with equal
      specificity, so it actually wins over the `--side-fg` rule above — and
@@ -809,7 +817,11 @@ label.toggle input { width: auto; }
      white light sidebar. Re-point --fsd-side-fg here so the label colour that
      really renders meets AA. */
   --fsd-side-fg: #57606f;
-  --fsd-side-fg-active: #ffffff;
+  /* The later `.fsd-side` active rule wins on equal specificity and reads
+     --fsd-side-bg-active / --fsd-side-fg-active — so the light active state
+     must be set through THESE vars (the faint blue wash + dark blue label). */
+  --fsd-side-bg-active: #eaf2fb;
+  --fsd-side-fg-active: #2e6da4;
 }
 .sidebar.fsd-side-light .fsd-brand {
   border-bottom: 1px solid #eef0f3;
@@ -857,8 +869,11 @@ label.toggle input { width: auto; }
   --side-active-bg: var(--fsd-primary);
   --side-active-fg: #ffffff;
   /* Keep the actually-rendered label colour (--fsd-side-fg) light on the
-     dark surface — the light-mode #57606f override above must not leak here. */
+     dark surface — the light-mode #57606f override above must not leak here.
+     Likewise re-pin --fsd-side-bg-active (the var the winning .fsd-side rule
+     reads) to the solid blue so the light-mode faint wash can't leak in. */
   --fsd-side-fg: var(--text-muted);
+  --fsd-side-bg-active: var(--fsd-primary);
   --fsd-side-fg-active: #ffffff;
 }
 [data-theme="dark"] .sidebar.fsd-side-light .fsd-brand { border-bottom: 1px solid var(--border); }
@@ -866,6 +881,11 @@ label.toggle input { width: auto; }
 [data-theme="dark"] .sidebar.fsd-side-light .fsd-nav a:hover { background: var(--surface-hover); color: var(--text); }
 [data-theme="dark"] .sidebar.fsd-side-light .fsd-foot { border-top: 1px solid var(--border); color: var(--text-muted); }
 [data-theme="dark"] .fsd-card { background: var(--surface); border-color: var(--border); }
+/* The light-mode #f9f9f9 header band would stay light-on-dark — re-skin it to
+   a faintly elevated dark surface so the title strip reads in dark mode. */
+[data-theme="dark"] .fsd-card .fsd-card-title {
+  background: var(--surface-inset); border-bottom-color: var(--border); color: var(--text);
+}
 .sidebar.fsd-side .fsd-brand {
   padding: 12px 6px 10px;
   text-align: center;
@@ -922,12 +942,18 @@ label.toggle input { width: auto; }
 .fsd-card {
   background: #fff; border: 1px solid var(--fsd-line); border-radius: 3px;
   padding: 18px 20px; margin-bottom: 22px;
-  box-shadow: 0 1px 2px rgba(15,23,42,.03);
+  box-shadow: none;
 }
+/* Title rendered as a full-width "panel-heading" band: subtle #f9f9f9 strip
+   with a bottom hairline, pulled to the card edges via negative margins so it
+   reads as a classic Bootstrap card header. */
 .fsd-card .fsd-card-title {
   font-size: 13px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .04em; color: var(--fsd-muted);
-  margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: .04em; color: var(--text);
+  margin: -18px -20px 16px; padding: 10px 20px;
+  background: #f9f9f9; border-bottom: 1px solid var(--fsd-line);
+  border-radius: 3px 3px 0 0;
+  display: flex; justify-content: space-between; align-items: center;
 }
 .fsd-card .fsd-card-title .picker { font-weight: 400; color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
 
@@ -1017,7 +1043,7 @@ table.dt td .icon-btn.del  { color: var(--fsd-danger); }
 }
 .fsd-form .fld input:focus, .fsd-form .fld select:focus, .fsd-form .fld textarea:focus {
   outline: none; border-color: var(--fsd-primary);
-  box-shadow: 0 0 0 2px rgba(52,152,219,.18);
+  box-shadow: 0 0 0 2px rgba(51,122,183,.20);
 }
 .fsd-form .fld-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .fsd-form .fld-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
@@ -1761,7 +1787,7 @@ label.fld > span {
   margin-bottom: 18px;
 }
 .panel > .ph {
-  background: transparent;
+  background: #f9f9f9;
   border-bottom: 1px solid var(--fsd-line);
   padding: 10px 16px;
   font-weight: 600;

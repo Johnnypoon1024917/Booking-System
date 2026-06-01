@@ -99,12 +99,12 @@
         <div class="fsd-card-title">Stat Box <span class="picker">{{ rangeLabel }}</span></div>
         <div class="fsd-bigstats">
           <div class="item">
-            <Calendar :size="22" color="#3498db" />
+            <Calendar :size="22" color="#337ab7" />
             <strong>{{ stats.total }}</strong>
             <span>Bookings</span>
           </div>
           <div class="item">
-            <Clock :size="22" color="#3498db" />
+            <Clock :size="22" color="#337ab7" />
             <strong>{{ stats.avgMin }} mins</strong>
             <span>Avg. Meeting Duration</span>
           </div>
