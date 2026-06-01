@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Save, X, Combine } from 'lucide-react';
+import { Plus, Trash2, Save, X, Combine, Loader2 } from 'lucide-react';
 import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { api } from '../api/client';
@@ -336,7 +336,7 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
         <span className="spacer" />
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn primary" disabled={busy} onClick={save}>
-          <Save size={13} /> Save
+          {busy ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Save
         </button>
       </>}
     >

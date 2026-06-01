@@ -229,6 +229,37 @@ export class ApprovalsService {
     });
   }
 
+  // The first step a booking is currently waiting on, resolved for display:
+  // its level name, the role it routes to (if role-based), and the concrete
+  // approver name(s) (if it targets specific users). Powers the "waiting on
+  // approval from X" line the SPA shows right after a booking is requested.
+  // Returns null when there is no materialized chain (legacy single-level
+  // bookings) or every step is already decided.
+  async firstPendingApprover(
+    tenantId: string, bookingId: string,
+  ): Promise<{ stepIndex: number; levelName: string; role: string; names: string[] } | null> {
+    const steps = await this.steps.find({
+      where: { tenantId, bookingId },
+      order: { stepIndex: 'ASC' },
+    });
+    const pending = steps.find((s) => s.status === 'pending');
+    if (!pending) return null;
+    let names: string[] = [];
+    if (pending.approverIds?.length) {
+      const us = await this.users.find({
+        where: { id: In(pending.approverIds), tenantId },
+        select: { id: true, username: true },
+      });
+      names = us.map((u) => u.username);
+    }
+    return {
+      stepIndex: pending.stepIndex,
+      levelName: pending.levelName ?? '',
+      role: pending.approverRole ?? '',
+      names,
+    };
+  }
+
   // ---- decide ----
 
   // Routes the decision through the chain if one is materialized,

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SyncOutbox } from './sync-outbox.entity';
 import { SyncOutboxService } from './sync-outbox.service';
+import { Booking } from '../bookings/booking.entity';
 import { OutlookSyncModule } from '../outlook-sync/outlook-sync.module';
 import { GoogleSyncModule } from '../google-sync/google-sync.module';
 
@@ -10,7 +11,7 @@ import { GoogleSyncModule } from '../google-sync/google-sync.module';
 // external calendars even across transient provider outages.
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SyncOutbox]),
+    TypeOrmModule.forFeature([SyncOutbox, Booking]),
     OutlookSyncModule,
     GoogleSyncModule,
   ],

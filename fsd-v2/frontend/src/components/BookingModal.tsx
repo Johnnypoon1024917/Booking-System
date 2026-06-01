@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock, Trash2, CalendarClock } from 'lucide-react';
 import { Modal } from './Modal';
 import { Switch } from './Switch';
+import { ApprovalTimeline } from './ApprovalTimeline';
 import { api } from '../api/client';
+import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../stores/toast';
 import { useTenant } from '../stores/tenant';
 import { useBookingRules } from '../hooks/useBookingRules';
@@ -114,6 +116,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   const { validate, allowsPattern } = useBookingRules();
   const tz = useTimezone();
   const { t } = useT();
+  const authUser = useAuth((s) => s.user);
 
   const isEdit = !!existingBooking;
   // A booking that belongs to a recurring series — editing/cancelling it offers
@@ -317,7 +320,13 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
     if (ruleError) { toast.error(t('bookingModal.cannotBook'), ruleError); return; }
     if (!resId) { toast.warning(t('bookingModal.pickResource')); return; }
     if (selectedBusy) { toast.error(t('bookingModal.cannotBook'), t('bookingModal.roomBusyConflict', { room: resName })); return; }
-    if (!title.trim()) { toast.warning(t('bookingModal.titleRequired')); return; }
+
+    // Title is optional: a blank title auto-generates "[Requester] - [Room]"
+    // (e.g. "Johnny Poon - Boardroom A") for a cleaner calendar, instead of the
+    // old generic "Booking". Falls back gracefully if either part is unknown.
+    const finalTitle = title.trim()
+      || [authUser?.username, resName].filter(Boolean).join(' - ')
+      || t('booking.untitled', { defaultValue: 'Booking' });
 
     // --- Edit: only the fields UpdateBookingDto accepts (plus resourceId, so a
     // booking can be moved to another room). Close on success (no two-step
@@ -326,7 +335,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
       const payload = {
         startTime: tz.toUtcIso(bDate, bStart),
         endTime: tz.toUtcIso(bDate, bEnd),
-        title: title.trim(),
+        title: finalTitle,
         meetingUrl: meetingUrl.trim(),
         // Service add-ons are editable post-creation now — send the current
         // selection (an empty array clears them server-side).
@@ -394,7 +403,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           // explicit until-date — mirrors the NewBooking wizard (QA #7).
           count: until ? undefined : count,
           until: until ? tz.toUtcIso(until, '23:59:59') : undefined,
-          title: title.trim(),
+          title: finalTitle,
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
           customFieldValues,
@@ -408,7 +417,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           resourceId: resId,
           startTime: startIso,
           endTime: endIso,
-          title: title.trim(),
+          title: finalTitle,
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
           services: services.length ? services : undefined,
@@ -417,7 +426,18 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         });
       }
       setResult(r || { status: 'Confirmed' });
-      toast.success(recur ? t('bookingModal.recurringSubmitted') : t('bookingModal.submitted'));
+      // Name the approver in the toast too (single-booking path), so the info
+      // is visible even if the user dismisses the result panel quickly.
+      const fa = r?.firstApprover as { role?: string; levelName?: string; names?: string[] } | undefined;
+      const approverLabel = fa ? (fa.names?.length ? fa.names.join(', ') : (fa.role || fa.levelName || '')) : '';
+      if (!recur && r?.requiresApproval && approverLabel) {
+        toast.success(
+          t('bookingModal.submitted'),
+          t('bookingModal.waitingOnApprover', { approver: approverLabel, defaultValue: `Waiting on approval from ${approverLabel}` }),
+        );
+      } else {
+        toast.success(recur ? t('bookingModal.recurringSubmitted') : t('bookingModal.submitted'));
+      }
       // Leave the confirmation on screen; the footer swaps to a "Done" button
       // so the user reads the result and dismisses it themselves (QA #2).
     } catch (e: any) {
@@ -548,9 +568,12 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         </div>
       )}
 
-      <label>{t('bookingModal.fieldTitle')}*
+      <label>{t('bookingModal.fieldTitle')}
         <input value={title} onChange={(e) => setTitle(e.target.value)}
-               placeholder={t('bookingModal.titlePlaceholder')} />
+               placeholder={authUser?.username && resName
+                 ? `${authUser.username} - ${resName}`
+                 : t('bookingModal.titlePlaceholder')} />
+        <small className="muted">{t('bookingModal.titleAutoHint', { defaultValue: 'Leave blank to auto-name it "[You] - [Room]".' })}</small>
       </label>
 
       <label>{t('bookingModal.meetingUrl')}
@@ -683,18 +706,45 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         const skipped: string[] = Array.isArray(result.skipped) ? result.skipped : [];
         const created = Array.isArray(result.bookingIds) ? result.bookingIds.length : null;
         const total = created != null ? created + skipped.length : null;
+        // requiresApproval comes back from the create response now (the old
+        // snake_case `requires_approval` was never set, so this panel always
+        // claimed "Confirmed" even for approval-gated rooms).
+        const pending = !!result.requiresApproval;
+        const fa = result.firstApprover as
+          | { levelName?: string; role?: string; names?: string[] } | null | undefined;
+        const approverLabel = fa
+          ? (fa.names && fa.names.length ? fa.names.join(', ') : (fa.role || fa.levelName || ''))
+          : '';
+        const chain = Array.isArray(result.approvalChain) ? result.approvalChain : [];
         return (
           <div className={`bm-result mt${skipped.length ? ' warning' : ''}`}>
             <Check size={16} />
-            <div>
-              <b>{result.requires_approval ? t('bookingModal.pendingApproval') : t('bookingModal.confirmed')}</b>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <b>{pending ? t('bookingModal.pendingApproval') : t('bookingModal.confirmed')}</b>
               <p className="muted small">
                 {created != null
                   ? t('bookingModal.recurBooked', { ok: created, total })
-                  : result.requires_approval
+                  : pending
                     ? t('bookingModal.pendingHint')
                     : t('bookingModal.confirmedHint')}
               </p>
+              {/* "Who is my approver?" — name the first step the booking is
+                  waiting on so the user knows who to chase (QA enterprise #4). */}
+              {pending && approverLabel && (
+                <p className="small" style={{ margin: '4px 0 0', fontWeight: 600 }}>
+                  {t('bookingModal.waitingOnApprover', {
+                    approver: approverLabel,
+                    defaultValue: `Waiting on approval from ${approverLabel}`,
+                  })}
+                </p>
+              )}
+              {/* Surface the full chain immediately after booking so the
+                  requester sees every step, not just a flat "Pending". */}
+              {pending && chain.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <ApprovalTimeline steps={chain} submittedAt={result.createdAt} />
+                </div>
+              )}
               {skipped.length > 0 && (
                 <p className="small" style={{ color: '#d97706', fontWeight: 600, margin: '4px 0 0' }}>
                   {t('bookingModal.recurSkipped', { count: skipped.length })}

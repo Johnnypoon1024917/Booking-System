@@ -9,6 +9,9 @@ export type BookingStatus =
   | 'Confirmed' | 'Pending Approval' | 'Cancelled'
   | 'Checked In' | 'No Show' | 'Attended' | 'Exception';
 
+// Calendar-sync lifecycle for a booking (Outlook / Google push via the outbox).
+export type SyncStatus = 'pending' | 'synced' | 'failed';
+
 @Entity('bookings')
 @Index(['tenantId', 'startTime'])
 @Index(['resourceId', 'startTime'])
@@ -52,6 +55,15 @@ export class Booking {
   // here so the delegate can act on it and it surfaces in their inbox.
   // Null for the common case (chain-based or undelegated bookings).
   @Column({ name: 'delegated_to', type: 'uuid', nullable: true }) delegatedTo?: string;
+
+  // Calendar-sync state, driven by the SyncOutboxService drain. 'pending' until
+  // the outbox worker pushes the booking to Outlook/Google, 'synced' once a push
+  // succeeds (or no provider is configured — the adapters no-op), 'failed' once
+  // the push has exhausted its retries (e.g. the M365 room mailbox rejected it).
+  // The SPA surfaces a "failed to sync" warning + retry only on 'failed', so a
+  // tenant with no calendar integration never sees a misleading badge.
+  @Column({ name: 'sync_status', type: 'varchar', length: 16, default: 'pending' })
+  syncStatus!: SyncStatus;
 
   @Column({ name: 'is_private', default: false }) isPrivate!: boolean;
   @Column({ name: 'is_recurring', default: false }) isRecurring!: boolean;

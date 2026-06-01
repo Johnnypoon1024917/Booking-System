@@ -1,8 +1,9 @@
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RolePermission } from './role-permission.entity';
-import { catalog, defaultMatrix, PermissionGroup } from './permission-catalog';
+import { User } from '../users/user.entity';
+import { catalog, defaultMatrix, systemRoles, PermissionGroup } from './permission-catalog';
 import { Roles } from '../../common/decorators/roles.decorator';
 
 export interface RoleMatrix {
@@ -26,6 +27,7 @@ export class PermissionsService {
 
   constructor(
     @InjectRepository(RolePermission) private readonly repo: Repository<RolePermission>,
+    @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
 
   // hasPermission resolves whether a role holds a permission in the tenant's
@@ -117,5 +119,45 @@ export class PermissionsService {
     }
     this.invalidate(tenantId);
     return { previous, next: clean, version: saved.updatedAt?.toISOString() ?? '' };
+  }
+
+  // Create a tenant-defined custom role (e.g. "Catering Staff"). It starts with
+  // no permissions; the admin then ticks boxes in the matrix and saves. Names
+  // are unique per tenant (case-insensitive) and can't collide with a built-in
+  // role, so the matrix never shows two rows that mean the same thing.
+  async createRole(
+    tenantId: string, role: string,
+  ): Promise<{ role: string; version: string }> {
+    const name = (role ?? '').trim();
+    if (!name) throw new BadRequestException('a role name is required');
+    if (name.length > 64) throw new BadRequestException('role name must be 64 characters or fewer');
+    if (systemRoles().some((r) => r.toLowerCase() === name.toLowerCase())) {
+      throw new ConflictException(`"${name}" is a built-in role name`);
+    }
+    // get() lazily seeds the built-in rows, so an existing-row check also covers
+    // a re-used built-in name even before the matrix was ever opened.
+    const existing = await this.repo.findOne({ where: { tenantId, role: name } });
+    if (existing) throw new ConflictException(`a role named "${name}" already exists`);
+    const saved = await this.repo.save(this.repo.create({ tenantId, role: name, permissions: [] }));
+    this.invalidate(tenantId);
+    return { role: saved.role, version: saved.updatedAt?.toISOString() ?? '' };
+  }
+
+  // Delete a custom role. Built-in roles are protected. A role still assigned to
+  // users is blocked (with a count) so we never strand accounts on a role that
+  // no longer exists in the matrix — reassign those users first.
+  async deleteRole(tenantId: string, role: string): Promise<void> {
+    if (systemRoles().includes(role)) {
+      throw new ForbiddenException('built-in roles cannot be deleted');
+    }
+    const inUse = await this.users.count({ where: { tenantId, role } });
+    if (inUse > 0) {
+      throw new ConflictException(
+        `${inUse} user(s) still have the "${role}" role — reassign them before deleting it`,
+      );
+    }
+    const res = await this.repo.delete({ tenantId, role });
+    if (!res.affected) throw new NotFoundException('role not found');
+    this.invalidate(tenantId);
   }
 }

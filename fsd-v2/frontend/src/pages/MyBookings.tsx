@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   RefreshCcw, Plus, Calendar, CalendarDays, Clock, Link as LinkIcon,
   Pencil, Trash2, Save, Repeat, Search, ChevronLeft, ChevronRight,
+  AlertTriangle, Loader2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
@@ -225,6 +226,39 @@ export function MyBookings() {
     }
   }
 
+  // Re-queue a booking whose calendar (Outlook/Google) push permanently failed.
+  // Optimistically flip the card to "syncing" then reload so the warning clears
+  // once the outbox drains. id-keyed busy flag so only the clicked row spins.
+  const [retrying, setRetrying] = useState<Record<string, boolean>>({});
+  async function retrySync(b: any) {
+    setRetrying((m) => ({ ...m, [b.id]: true }));
+    try {
+      await api.retryBookingSync(b.id);
+      toast.success(t('myBookings.syncRetrying', { defaultValue: 'Re-syncing to your calendar…' }));
+      // Reflect the optimistic 'pending' immediately; a later load() confirms.
+      setItems((arr) => arr.map((x) => (x.id === b.id ? { ...x, syncStatus: 'pending' } : x)));
+    } catch (e: any) {
+      toast.error(t('myBookings.syncRetryFailed', { defaultValue: 'Could not retry sync' }), e.displayMessage || e.message);
+    } finally {
+      setRetrying((m) => ({ ...m, [b.id]: false }));
+    }
+  }
+
+  // The step a pending booking is currently waiting on, for the status-badge
+  // tooltip ("Waiting on Step 1: Security Admin").
+  function pendingTooltip(b: any): string | undefined {
+    if (b.status !== 'Pending Approval') return undefined;
+    const steps = chains[b.id] || [];
+    const pending = steps.find((s: any) => (s.status ?? 'pending') === 'pending');
+    if (!pending) return undefined;
+    const who = pending.approverRole || pending.levelName || '';
+    const step = (pending.stepIndex ?? 0) + 1;
+    return t('myBookings.waitingOnStep', {
+      step, who,
+      defaultValue: who ? `Waiting on Step ${step}: ${who}` : `Waiting on Step ${step}`,
+    });
+  }
+
   // Prefer the resource name the API now denormalises onto the booking, then
   // the locally-loaded catalogue. Never fall back to the raw resource UUID —
   // an officer who cannot list every resource would otherwise see a
@@ -309,7 +343,7 @@ export function MyBookings() {
             <div style={{ minWidth: 0 }}>
               <div className="row gap-sm" style={{ alignItems: 'baseline' }}>
                 <h3 className="truncate">{resourceName(b)}</h3>
-                <span className={`tag ${statusClass(b.status)}`}>{b.status}</span>
+                <span className={`tag ${statusClass(b.status)}`} title={pendingTooltip(b)}>{b.status}</span>
                 {b.isRecurring && <span className="tag info"><Repeat size={11}/> {t('myBookings.recurring')}</span>}
               </div>
               <div className="muted text-sm row gap-sm" style={{ flexWrap: 'wrap', marginTop: 6 }}>
@@ -321,6 +355,22 @@ export function MyBookings() {
               </div>
               {steps.length > 0 && (
                 <div style={{ marginTop: 8 }}><ApprovalTimeline compact steps={steps}/></div>
+              )}
+              {/* Calendar-sync failure: the booking is Confirmed in our DB but
+                  the push to Outlook/Google permanently failed (e.g. the room
+                  mailbox rejected it), so it will never appear on the user's
+                  Outlook calendar. Surface it loudly with a one-click retry,
+                  rather than burying it in a backend log (enterprise #1). */}
+              {b.syncStatus === 'failed' && (
+                <div className="row gap-sm" style={{ marginTop: 8, alignItems: 'center', color: 'var(--danger)' }}>
+                  <AlertTriangle size={14} />
+                  <span className="text-sm">{t('myBookings.syncFailed', { defaultValue: 'Failed to sync to Outlook/Google.' })}</span>
+                  <button className="btn-fsd ghost" style={{ padding: '2px 8px' }}
+                          disabled={!!retrying[b.id]} onClick={() => retrySync(b)}>
+                    {retrying[b.id] ? <Loader2 size={12} className="spin" /> : <RefreshCcw size={12} />}
+                    {' '}{t('myBookings.syncRetry', { defaultValue: 'Retry' })}
+                  </button>
+                </div>
               )}
               {b.status === 'Pending Approval' && steps.length === 0 && chainFailed && (
                 <div className="muted text-sm" style={{ marginTop: 8 }}>
@@ -361,7 +411,9 @@ export function MyBookings() {
       {editing && (
         <Modal title={t('myBookings.edit')} onClose={() => setEditing(null)} footer={<>
           <button className="btn-fsd ghost" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
-          <button className="btn-fsd" disabled={busy} onClick={save}><Save size={13}/> {t('common.save')}</button>
+          <button className="btn-fsd" disabled={busy} onClick={save}>
+            {busy ? <Loader2 size={13} className="spin"/> : <Save size={13}/>} {t('common.save')}
+          </button>
         </>}>
           {/* Read-only context so the edit modal isn't a bare date/URL form
               with no indication of what's being edited (QA #6). */}

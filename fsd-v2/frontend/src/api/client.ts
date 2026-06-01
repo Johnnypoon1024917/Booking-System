@@ -94,6 +94,10 @@ export const api = {
     http.put(`/api/v1/bookings/${id}/series`, b).then((r) => r.data),
   cancelBooking: (id: string, reason?: string) =>
     http.delete(`/api/v1/bookings/${id}`, { params: { reason } }),
+  // Re-queue a booking whose calendar (Outlook/Google) push permanently failed.
+  // Returns { id, syncStatus: 'pending' } so the card can flip optimistically.
+  retryBookingSync: (id: string) =>
+    http.post(`/api/v1/bookings/${id}/retry-sync`).then((r) => r.data),
 
   // Recurring bookings — POST returns { recurrenceId, bookingIds[], skipped[] }
   createRecurringBooking: (b: any) =>
@@ -222,6 +226,13 @@ export const api = {
   setRolePermissions: (role: string, permissions: string[], expectedVersion?: string) =>
     http.put(`/api/v1/admin/permissions/${encodeURIComponent(role)}`, { permissions, expectedVersion })
       .then((r) => r.data),
+  // Custom roles. createRole adds an empty role the admin then permissions in
+  // the matrix; deleteRole removes a custom role (built-in / in-use roles are
+  // rejected server-side).
+  createRole: (role: string) =>
+    http.post('/api/v1/admin/permissions', { role }).then((r) => r.data),
+  deleteRole: (role: string) =>
+    http.delete(`/api/v1/admin/permissions/${encodeURIComponent(role)}`),
 
   // Broadcasts (R13 banner)
   activeBroadcasts: () => http.get('/api/v1/broadcasts').then((r) => r.data),

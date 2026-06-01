@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { Booking } from './booking.entity';
@@ -9,6 +9,7 @@ import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SyncOutboxService } from '../sync-outbox/sync-outbox.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CustomizationService } from '../customization/customization.service';
+import { ApprovalsService } from '../approvals/approvals.service';
 import { BookingValidatorService } from './booking-validator.service';
 import { utcToZonedWallClock, zonedTimeToUtc, hhmmToMinutes } from '../../common/tz';
 import { windowForWeekday, weekdayName } from '../../common/operating-hours';
@@ -67,6 +68,12 @@ export class BookingsService {
     private readonly syncOutbox: SyncOutboxService,
     private readonly notifications: NotificationsService,
     private readonly customization: CustomizationService,
+    // forwardRef: ApprovalsModule imports BookingsModule, so the two modules
+    // reference each other. The chain is materialized from the booking write
+    // path (so an approval-requiring booking gets its configured steps), and
+    // the create response carries the first pending approver back to the SPA.
+    @Inject(forwardRef(() => ApprovalsService))
+    private readonly approvals: ApprovalsService,
     private readonly validator: BookingValidatorService,
   ) {}
 
@@ -215,7 +222,39 @@ export class BookingsService {
     if (!opts.suppressNotification) {
       void this.notifications.enqueue(tenantId, 'BOOKING_CREATED', saved);
     }
-    return saved;
+
+    // Materialize the approval chain for a booking that needs approval, then
+    // hand the requester the first pending step so the SPA can answer "who is
+    // my approver?" right after booking (instead of a bare "Pending"). Only
+    // runs for Pending-Approval bookings: a Confirmed booking never grows a
+    // chain. Best-effort — a chain/lookup failure must not fail the create
+    // (the booking is already committed; it just falls back to the legacy
+    // single-level approval path with no surfaced approver).
+    const result = saved as Booking & {
+      requiresApproval?: boolean; approvalChain?: unknown[]; firstApprover?: unknown;
+    };
+    if (saved.status === 'Pending Approval') {
+      result.requiresApproval = true;
+      try {
+        await this.approvals.materialize(saved);
+        result.approvalChain = await this.approvals.listChain(tenantId, saved.id);
+        result.firstApprover = await this.approvals.firstPendingApprover(tenantId, saved.id);
+      } catch (e) {
+        this.log.warn(`approval chain setup failed for booking ${saved.id}: ${(e as Error).message}`);
+      }
+    }
+    return result;
+  }
+
+  // Re-queue a booking whose calendar push permanently failed (MyBookings
+  // "retry to Outlook"). Owner or admin only. Returns the new sync state so the
+  // SPA can optimistically flip the badge to 'pending'.
+  async retrySync(tenantId: string, userId: string, role: string, id: string) {
+    const b = await this.get(tenantId, id);
+    if (b.userId !== userId && !this.isAdmin(role)) throw new ForbiddenException();
+    const event = b.status === 'Cancelled' ? 'BOOKING_CANCELLED' : 'BOOKING_UPDATED';
+    await this.syncOutbox.retry(tenantId, id, event);
+    return { id, syncStatus: 'pending' as const };
   }
 
   async update(tenantId: string, userId: string, role: string, id: string, dto: UpdateBookingDto) {

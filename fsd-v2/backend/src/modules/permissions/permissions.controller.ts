@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Get, Param, Put, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsArray, IsOptional, IsString } from 'class-validator';
@@ -17,6 +17,9 @@ class SetPermissionsDto {
   // service rejects the write (409) if the role changed in the meantime.
   @IsOptional() @IsString() expectedVersion?: string;
 }
+class CreateRoleDto {
+  @IsString() role!: string;
+}
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -29,6 +32,34 @@ export class PermissionsController {
   @Get()
   get(@CurrentUser() u: AuthUser) {
     return this.svc.get(u.tenantId);
+  }
+
+  // Create a custom role (e.g. "Catering Staff"). Same permission gate as
+  // editing the matrix — defining a new role is an authorization-model change.
+  @Post()
+  @RequirePermission(Perm.PermissionManage)
+  async create(@CurrentUser() u: AuthUser, @Body() body: CreateRoleDto) {
+    const created = await this.svc.createRole(u.tenantId, body.role);
+    await this.audit.record(u, {
+      action: 'PERMISSION_CHANGED', severity: 'warning',
+      targetEntity: 'role', targetId: created.role,
+      next: { created: true },
+    });
+    return created;
+  }
+
+  // Delete a custom role. Built-in roles and roles still in use are rejected
+  // by the service (403 / 409 respectively).
+  @Delete(':role')
+  @RequirePermission(Perm.PermissionManage)
+  @HttpCode(204)
+  async remove(@CurrentUser() u: AuthUser, @Param('role') role: string) {
+    await this.svc.deleteRole(u.tenantId, role);
+    await this.audit.record(u, {
+      action: 'PERMISSION_CHANGED', severity: 'warning',
+      targetEntity: 'role', targetId: role,
+      next: { deleted: true },
+    });
   }
 
   // Editing the matrix itself is the most sensitive action — gate it on

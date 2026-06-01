@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { api } from '../api/client';
 import { ResourceEditor } from '../components/ResourceEditor';
@@ -20,8 +21,26 @@ export function AdminResources() {
   const [items, setItems] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(0);
+
+  // Persist the filter + page in the URL query string (?q=Hong+Kong&page=2) so
+  // editing a room and saving — or a full refresh, or a shared link — keeps the
+  // admin's workspace context instead of resetting to page 1 / no filter
+  // (QoL: filter persistence). Internal page index is 0-based; the URL is
+  // 1-based for human-friendliness. replace:true keeps each keystroke out of
+  // the browser history.
+  const [sp, setSp] = useSearchParams();
+  const query = sp.get('q') ?? '';
+  const pageParam = parseInt(sp.get('page') ?? '1', 10);
+  const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam - 1 : 0;
+  function updateParams(next: { q?: string; page?: number }) {
+    const n = new URLSearchParams(sp);
+    if (next.q !== undefined) { next.q ? n.set('q', next.q) : n.delete('q'); }
+    if (next.page !== undefined) { next.page > 0 ? n.set('page', String(next.page + 1)) : n.delete('page'); }
+    setSp(n, { replace: true });
+  }
+  // Changing the filter resets to the first page (the old in-state behaviour).
+  function setQuery(v: string) { updateParams({ q: v, page: 0 }); }
+  function setPage(p: number) { updateParams({ page: p }); }
 
   useEffect(() => {
     load();
@@ -63,7 +82,7 @@ export function AdminResources() {
       <div className="row" style={{ marginBottom: 12, gap: 8 }}>
         <div className="row" style={{ position: 'relative', flex: '0 0 320px', maxWidth: '100%' }}>
           <Search size={15} style={{ position: 'absolute', left: 10, color: 'var(--text-muted)' }} />
-          <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+          <input value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder={t('adminResources.searchPlaceholder')} style={{ paddingLeft: 30, width: '100%' }} />
         </div>
         <span className="muted small">{t('adminResources.countLabel', { shown: pageItems.length, total: filtered.length })}</span>

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { FileJson } from 'lucide-react';
 import { api } from '../api/client';
 import { useT } from '../hooks/useT';
+import { Modal } from '../components/Modal';
 import { confirmDialog, alertDialog } from '../stores/confirm';
 
 // AdminWebhooks — registers outbound webhook subscriptions and shows the
@@ -24,6 +26,10 @@ type Delivery = {
   attemptCount: number;
   lastStatus: number | null;
   lastError: string;
+  // The exact JSON body POSTed to the target URL — surfaced in the inspector
+  // modal so the client's developers can debug their integration (Stripe /
+  // GitHub-style delivery logs).
+  payload: unknown;
   createdAt: string;
   deliveredAt: string | null;
 };
@@ -41,6 +47,8 @@ export function AdminWebhooks() {
   // newSecret holds the one-time secret returned by POST so the operator
   // can copy it. Cleared on the next page action.
   const [newSecret, setNewSecret] = useState<{ id: string; secret: string } | null>(null);
+  // The delivery currently open in the payload inspector modal.
+  const [inspecting, setInspecting] = useState<Delivery | null>(null);
 
   useEffect(() => { reload(); }, []);
   function reload() {
@@ -145,7 +153,7 @@ export function AdminWebhooks() {
         <h2>{t('webhooks.deliveries')}</h2>
         <table className="data">
           <thead>
-            <tr><th>{t('webhooks.event')}</th><th>{t('webhooks.status')}</th><th>{t('webhooks.attempts')}</th><th>{t('webhooks.http')}</th><th>{t('webhooks.errorCol')}</th><th>{t('webhooks.when')}</th></tr>
+            <tr><th>{t('webhooks.event')}</th><th>{t('webhooks.status')}</th><th>{t('webhooks.attempts')}</th><th>{t('webhooks.http')}</th><th>{t('webhooks.errorCol')}</th><th>{t('webhooks.when')}</th><th></th></tr>
           </thead>
           <tbody>
             {deliveries.slice(0, 100).map((d) => (
@@ -156,14 +164,53 @@ export function AdminWebhooks() {
                 <td>{d.lastStatus ?? '—'}</td>
                 <td className="muted" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.lastError || '—'}</td>
                 <td>{new Date(d.createdAt).toLocaleString()}</td>
+                <td>
+                  <button className="btn ghost" onClick={() => setInspecting(d)}
+                          title={t('webhooks.inspect', { defaultValue: 'View payload' })}>
+                    <FileJson size={14} /> {t('webhooks.inspect', { defaultValue: 'View payload' })}
+                  </button>
+                </td>
               </tr>
             ))}
             {deliveries.length === 0 && (
-              <tr><td colSpan={6} className="muted">{t('webhooks.noDeliveries')}</td></tr>
+              <tr><td colSpan={7} className="muted">{t('webhooks.noDeliveries')}</td></tr>
             )}
           </tbody>
         </table>
       </section>
+
+      {/* Delivery inspector — the exact request we sent, so the client's
+          developers can debug their endpoint (HTTP status, error, and the raw
+          JSON body). Mirrors Stripe / GitHub webhook delivery logs. */}
+      {inspecting && (
+        <Modal
+          title={t('webhooks.deliveryDetail', { defaultValue: 'Webhook delivery' })}
+          onClose={() => setInspecting(null)}
+          footer={<button className="btn primary" onClick={() => setInspecting(null)}>{t('common.close')}</button>}
+        >
+          <div className="grid-2" style={{ gap: 8, marginBottom: 12 }}>
+            <div><small className="muted">{t('webhooks.event')}</small><div><code>{inspecting.event}</code></div></div>
+            <div><small className="muted">{t('webhooks.status')}</small><div>
+              <span className={`tag ${inspecting.status === 'sent' ? 'ok' : inspecting.status === 'failed' ? 'bad' : ''}`}>{inspecting.status}</span>
+            </div></div>
+            <div><small className="muted">{t('webhooks.http')}</small><div>{inspecting.lastStatus ?? '—'}</div></div>
+            <div><small className="muted">{t('webhooks.attempts')}</small><div>{inspecting.attemptCount}</div></div>
+            <div><small className="muted">{t('webhooks.when')}</small><div>{new Date(inspecting.createdAt).toLocaleString()}</div></div>
+            {inspecting.deliveredAt && (
+              <div><small className="muted">{t('webhooks.deliveredAt', { defaultValue: 'Delivered' })}</small><div>{new Date(inspecting.deliveredAt).toLocaleString()}</div></div>
+            )}
+          </div>
+          {inspecting.lastError && (
+            <div className="banner warning" style={{ marginBottom: 12 }}>
+              <strong>{t('webhooks.errorCol')}:</strong> {inspecting.lastError}
+            </div>
+          )}
+          <small className="muted">{t('webhooks.payloadLabel', { defaultValue: 'Request body (JSON)' })}</small>
+          <pre style={{ maxHeight: 360, overflow: 'auto', background: 'var(--surface-2, #1115)', padding: 12, borderRadius: 6 }}>
+            <code>{JSON.stringify(inspecting.payload ?? {}, null, 2)}</code>
+          </pre>
+        </Modal>
+      )}
     </div>
   );
 }

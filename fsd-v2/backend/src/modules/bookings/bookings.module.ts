@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Booking } from './booking.entity';
 import { Recurrence } from './recurrence.entity';
@@ -18,6 +18,7 @@ import { AuditModule } from '../audit/audit.module';
 import { SyncOutboxModule } from '../sync-outbox/sync-outbox.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CustomizationModule } from '../customization/customization.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 // Direct entity imports for the ICS feed (needs to read tenant + user
 // outside the usual per-module repo wiring).
 import { Tenant } from '../tenants/tenant.entity';
@@ -38,6 +39,9 @@ import { User } from '../users/user.entity';
     // Tenant timezone for projecting booking instants back to local wall-clock
     // when enforcing per-resource operating hours.
     CustomizationModule,
+    // Approval chain materialization on the booking write path. forwardRef
+    // because ApprovalsModule already depends on BookingsModule.
+    forwardRef(() => ApprovalsModule),
   ],
   controllers: [BookingsController, AdminBookingsController, CheckinPublicController, IcsController],
   providers: [

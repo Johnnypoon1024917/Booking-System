@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { useT } from '../hooks/useT';
@@ -88,16 +88,23 @@ export function AdminUsers() {
   const [search, setSearch] = useState('');
   const [depts, setDepts] = useState<any[]>([]);
   const [regions, setRegions] = useState<string[]>([]);
+  // Assignable roles — fetched from the permissions matrix so a custom role
+  // ("Catering Staff", "IT Support") an admin defines in AdminPermissions is
+  // immediately selectable here, instead of a hardcoded built-in list.
+  const [roles, setRoles] = useState<string[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Reference data — departments and the canonical region list (derived
-  // from configured locations so admins pick from real values instead of
-  // free-typing comma-separated strings that silently break RLS).
+  // Reference data — departments, the canonical region list (derived from
+  // configured locations so admins pick from real values instead of free-typing
+  // comma-separated strings that silently break RLS), and the role catalogue.
   useEffect(() => {
     api.departments().then(setDepts).catch(() => {});
     api.locations()
       .then((locs: any[]) => setRegions([...new Set((locs || []).map((l) => l.region).filter(Boolean))].sort()))
+      .catch(() => {});
+    api.getPermissions()
+      .then((d: any) => setRoles(Object.keys(d?.roles ?? {}).sort()))
       .catch(() => {});
   }, []);
 
@@ -177,6 +184,13 @@ export function AdminUsers() {
     ? [...new Set([...regions, ...(editing.regionAccess || [])])].sort()
     : [];
 
+  // Always include the user's current role even if it's not in the fetched
+  // list (e.g. a legacy role, or the matrix failed to load) so editing never
+  // silently changes a user's role to the first option.
+  const roleOptions = editing
+    ? [...new Set([...roles, editing.role].filter(Boolean))]
+    : roles;
+
   return (
     <div>
       <header className="page-head">
@@ -234,15 +248,16 @@ export function AdminUsers() {
             {editing.id && <button className="btn danger" disabled={busy} onClick={deactivate}>{t('adminUsers.deactivate')}</button>}
             <span className="spacer" />
             <button className="btn ghost" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
-            <button className="btn primary" disabled={busy} onClick={save}>{t('common.save')}</button>
+            <button className="btn primary" disabled={busy} onClick={save}>
+              {busy && <Loader2 size={13} className="spin" />} {t('common.save')}
+            </button>
           </>}
         >
           <div className="grid-2">
             <label>{t('adminUsers.username')}<input value={editing.username || ''} onChange={(e) => setEditing({ ...editing, username: e.target.value })} /></label>
             <label>{t('adminUsers.role')}
               <select value={editing.role || ''} onChange={(e) => setEditing({ ...editing, role: e.target.value })}>
-                <option>System Admin</option><option>Security Admin</option><option>Room Admin</option>
-                <option>Secretary</option><option>General User</option>
+                {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </label>
             <label>{editing.id ? t('adminUsers.password') : t('adminUsers.initialPassword')} {editing.id && <span className="muted">{t('adminUsers.passwordKeepHint')}</span>}

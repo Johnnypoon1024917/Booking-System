@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Repository } from 'typeorm';
 import { SyncOutbox } from './sync-outbox.entity';
+import { Booking } from '../bookings/booking.entity';
 import { OutlookSyncService } from '../outlook-sync/outlook-sync.service';
 import { GoogleSyncService } from '../google-sync/google-sync.service';
 
@@ -23,9 +24,31 @@ export class SyncOutboxService {
 
   constructor(
     @InjectRepository(SyncOutbox) private readonly outbox: Repository<SyncOutbox>,
+    @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
     private readonly outlookSync: OutlookSyncService,
     private readonly googleSync: GoogleSyncService,
   ) {}
+
+  // Reflect the outbox outcome onto the booking so MyBookings can surface a
+  // failed calendar push. Never throws into the drain — a status write failure
+  // must not stall or crash the outbox worker.
+  private async markBookingSync(tenantId: string, bookingId: string, status: 'synced' | 'failed' | 'pending') {
+    try {
+      await this.bookings.update({ id: bookingId, tenantId }, { syncStatus: status });
+    } catch (e) {
+      this.log.warn(`could not set syncStatus=${status} on booking ${bookingId}: ${(e as Error).message}`);
+    }
+  }
+
+  // Re-queue a booking for calendar sync after a permanent failure (the
+  // MyBookings "retry" action). Flips the booking back to 'pending' and writes a
+  // fresh outbox row; the idempotent adapters upsert the remote event on the
+  // next drain. The event mirrors the booking's current lifecycle so a retry on
+  // a cancelled booking removes the remote event rather than re-creating it.
+  async retry(tenantId: string, bookingId: string, event: string): Promise<void> {
+    await this.markBookingSync(tenantId, bookingId, 'pending');
+    await this.enqueue(event, tenantId, bookingId);
+  }
 
   // enqueue writes one durable pending row. Called from the booking write path
   // after commit; never throws into the caller (a queue write failure must not
@@ -94,12 +117,14 @@ export class SyncOutboxService {
       row.status = 'sent';
       row.sentAt = new Date();
       row.lastError = undefined;
+      await this.markBookingSync(row.tenantId, row.bookingId, 'synced');
     } else {
       row.attemptCount += 1;
       row.lastError = errors.join('; ').slice(0, 1024);
       if (row.attemptCount >= MAX_ATTEMPTS) {
         row.status = 'failed';
         this.log.warn(`calendar sync ${row.id} (${row.event} ${row.bookingId}) failed permanently: ${row.lastError}`);
+        await this.markBookingSync(row.tenantId, row.bookingId, 'failed');
       } else {
         // Hand the claimed row back to the pool for a future tick.
         row.status = 'pending';

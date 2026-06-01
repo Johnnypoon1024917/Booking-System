@@ -67,6 +67,14 @@ export function catalog(): PermissionGroup[] {
   ];
 }
 
+// The built-in roles every tenant ships with. These can be re-permissioned in
+// the matrix but never deleted (and their names are reserved for custom roles),
+// so the authorization model always has a known baseline. Any role NOT in this
+// list is a tenant-defined custom role and is freely deletable.
+export function systemRoles(): string[] {
+  return Object.keys(defaultMatrix());
+}
+
 // Default per-role assignments seeded on first read of a tenant's matrix
 // — keeps the legacy roles wired up out of the box.
 export function defaultMatrix(): Record<string, string[]> {

@@ -211,6 +211,19 @@ export class BookingsController {
     });
   }
 
+  // POST /api/v1/bookings/:id/retry-sync — re-queue a booking whose calendar
+  // push permanently failed (the MyBookings "retry to Outlook" action). Owner
+  // or admin only; returns the new sync state for an optimistic badge flip.
+  @Post(':id/retry-sync')
+  async retrySync(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    const out = await this.svc.retrySync(u.tenantId, u.id, u.role, id);
+    await this.audit.record(u, {
+      action: 'BOOKING_MODIFIED', severity: 'info',
+      targetEntity: 'booking', targetId: id, next: { syncRetry: true },
+    });
+    return out;
+  }
+
   // --- Check-in ---------------------------------------------------
 
   // POST /api/v1/bookings/:id/checkin — owner or admin flips Confirmed

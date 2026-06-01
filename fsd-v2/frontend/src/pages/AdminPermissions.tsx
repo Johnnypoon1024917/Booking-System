@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCcw, Save, Lock } from 'lucide-react';
+import { RefreshCcw, Save, Lock, Plus, Trash2, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
 import { useT } from '../hooks/useT';
-import { alertDialog } from '../stores/confirm';
+import { alertDialog, confirmDialog, promptDialog } from '../stores/confirm';
 
 // Friendly labels for the built-in keys — kept in sync with backend
 // modules/permissions/permission-catalog.ts.
@@ -43,6 +43,14 @@ const LABELS: Record<string, string> = {
 // (an admin who unticks "Edit this matrix" believes they locked themselves
 // out). We render it read-only; the backend also rejects writes to it.
 const ROOT_ROLE = 'System Admin';
+
+// Built-in roles every tenant ships with — re-permissionable but not deletable
+// (the backend enforces the same set via permission-catalog.systemRoles()).
+// Any role outside this set is a tenant-defined custom role and shows a delete
+// control in its matrix column header.
+const SYSTEM_ROLES = new Set([
+  'System Admin', 'Security Admin', 'Room Admin', 'Secretary', 'General User',
+]);
 
 export function AdminPermissions() {
   const { t } = useT();
@@ -128,6 +136,45 @@ export function AdminPermissions() {
     finally { setBusy(false); }
   }
 
+  // Add a tenant-defined custom role (e.g. "Catering Staff"). It lands in the
+  // matrix with no permissions ticked; the admin then grants what it needs and
+  // saves. Names are validated/deduped server-side.
+  async function addRole() {
+    const name = await promptDialog({
+      title: t('permissions.addRoleTitle', { defaultValue: 'Add custom role' }),
+      message: t('permissions.addRoleHint', { defaultValue: 'Create a new role, then tick the permissions it should have and Save.' }),
+      inputLabel: t('permissions.roleName', { defaultValue: 'Role name' }),
+      placeholder: 'e.g. Catering Staff',
+      required: true,
+      confirmText: t('common.add', { defaultValue: 'Add' }),
+      cancelText: t('common.cancel'),
+    });
+    if (!name || !name.trim()) return;
+    setBusy(true);
+    try {
+      await api.createRole(name.trim());
+      await load();
+    } catch (e: any) {
+      await alertDialog({ title: t('common.error'), message: e.displayMessage || e.message, tone: 'danger' });
+    } finally { setBusy(false); }
+  }
+
+  // Delete a custom role. Built-in / in-use roles are rejected server-side and
+  // surfaced as an alert (e.g. "3 users still have this role").
+  async function removeRole(role: string) {
+    if (!(await confirmDialog({
+      title: t('permissions.deleteRoleConfirm', { role, defaultValue: `Delete the "${role}" role?` }),
+      tone: 'danger', confirmText: t('common.delete'), cancelText: t('common.cancel'),
+    }))) return;
+    setBusy(true);
+    try {
+      await api.deleteRole(role);
+      await load();
+    } catch (e: any) {
+      await alertDialog({ title: t('common.error'), message: e.displayMessage || e.message, tone: 'danger' });
+    } finally { setBusy(false); }
+  }
+
   return (
     <div>
       <header className="page-head">
@@ -137,7 +184,12 @@ export function AdminPermissions() {
         </div>
         <div className="row gap-sm">
           <button className="btn ghost" onClick={load} disabled={loading}><RefreshCcw size={14}/> {t('common.refresh')}</button>
-          <button className="btn primary" onClick={saveAll} disabled={busy || !dirty}><Save size={14}/> {t('common.save')}</button>
+          <button className="btn ghost" onClick={addRole} disabled={busy || loading}>
+            <Plus size={14}/> {t('permissions.addRole', { defaultValue: 'Add custom role' })}
+          </button>
+          <button className="btn primary" onClick={saveAll} disabled={busy || !dirty}>
+            {busy ? <Loader2 size={14} className="spin"/> : <Save size={14}/>} {t('common.save')}
+          </button>
         </div>
       </header>
 
@@ -159,6 +211,19 @@ export function AdminPermissions() {
                     <th key={r} className="role">
                       {r}
                       {r === ROOT_ROLE && <Lock size={11} style={{ marginLeft: 4, verticalAlign: 'middle' }} aria-label={t('permissions.rootLocked')} />}
+                      {!SYSTEM_ROLES.has(r) && (
+                        <button
+                          type="button"
+                          className="btn ghost xs"
+                          style={{ marginLeft: 4, padding: '0 4px', verticalAlign: 'middle' }}
+                          onClick={() => removeRole(r)}
+                          disabled={busy}
+                          title={t('permissions.deleteRole', { role: r, defaultValue: `Delete the "${r}" role` })}
+                          aria-label={t('permissions.deleteRole', { role: r, defaultValue: `Delete the "${r}" role` })}
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
                     </th>
                   ))}
                 </tr>
