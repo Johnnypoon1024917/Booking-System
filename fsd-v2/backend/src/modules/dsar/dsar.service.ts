@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as bcrypt from 'bcrypt';
 import { User } from '../users/user.entity';
 import { Booking } from '../bookings/booking.entity';
 import { AuditEntry } from '../audit/audit.entity';
@@ -23,7 +24,20 @@ export class DsarService {
   // data from the user row and from their bookings, deactivate the account,
   // and cancel any still-upcoming reservations so the rooms are freed. The
   // account can no longer authenticate (password/MFA/SSO/feed token all wiped).
-  async eraseSelf(tenantId: string, userId: string): Promise<{ bookingsRedacted: number; upcomingCancelled: number }> {
+  async eraseSelf(tenantId: string, userId: string, currentPassword: string): Promise<{ bookingsRedacted: number; upcomingCancelled: number }> {
+    // Re-authentication (AUD-023): destructive, irreversible erasure must not be
+    // triggerable with only a (possibly stolen) bearer token. Require the user's
+    // current password and verify it before proceeding. SSO-only accounts have
+    // no usable local password — they must use the queued erasure-request flow
+    // so an administrator actions it.
+    const user = await this.users.findOne({ where: { id: userId, tenantId } });
+    if (!user) throw new UnauthorizedException('account not found');
+    const hash = user.passwordHash || '';
+    const usableHash = hash.startsWith('$2') && (await bcrypt.compare(currentPassword || '', hash));
+    if (!usableHash) {
+      throw new UnauthorizedException('password confirmation required to erase your account');
+    }
+
     const anon = `erased-${userId.slice(0, 8)}`;
 
     // Redact PII on the user row + sever every credential path.

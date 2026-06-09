@@ -1,0 +1,78 @@
+# CI gates for the fsd-v2 stack (AUD-016).
+#
+# fsd-v2 is not an npm workspace root — scripts live under backend/ and
+# frontend/ — so each job sets its own working-directory.
+name: fsd-v2 CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['fsd-v2/**']
+  pull_request:
+    paths: ['fsd-v2/**']
+
+defaults:
+  run:
+    working-directory: fsd-v2
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fsd-v2/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: fsd-v2/backend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test -- --runInBand
+      # Production dependency audit — fail the build on high/critical (AUD-001).
+      - run: npm audit --omit=dev --audit-level=high
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fsd-v2/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: fsd-v2/frontend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm run build
+      # Moderate React Router findings tracked separately (AUD-033); gate on high.
+      - run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t fsd-v2-api:ci ./backend
+        working-directory: fsd-v2
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile.prod -t fsd-v2-frontend:ci ./frontend
+        working-directory: fsd-v2
+      # Image vulnerability scan with a critical/high policy (AUD-030).
+      - name: Trivy scan (api)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: fsd-v2-api:ci
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0' # report-only until base images are remediated; flip to '1' to enforce
+      - name: Trivy scan (frontend)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: fsd-v2-frontend:ci
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'

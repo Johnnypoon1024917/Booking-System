@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 import { Broadcast } from './broadcast.entity';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { RedisService } from '../../common/redis/redis.service';
 
 export interface BroadcastInput {
   title: string;
@@ -31,6 +32,7 @@ export class BroadcastsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectRepository(Broadcast) private readonly repo: Repository<Broadcast>,
     private readonly realtime: RealtimeGateway,
+    private readonly redis: RedisService,
   ) {}
 
   // On boot, re-arm timers for every broadcast that is still live or yet to
@@ -109,12 +111,12 @@ export class BroadcastsService implements OnModuleInit, OnModuleDestroy {
     const timers: NodeJS.Timeout[] = [];
     if (startsAt <= now) {
       // Live right now: announce immediately to every connected client.
-      this.announce(b);
+      void this.announce(b);
     } else {
-      timers.push(this.armAt(startsAt - now, () => this.announce(b)));
+      timers.push(this.armAt(startsAt - now, () => void this.announce(b)));
     }
     // Expiry nudge so the banner clears promptly when the window closes.
-    timers.push(this.armAt(endsAt - now, () => this.announce(b)));
+    timers.push(this.armAt(endsAt - now, () => void this.announce(b)));
     this.timers.set(b.id, timers);
   }
 
@@ -125,7 +127,27 @@ export class BroadcastsService implements OnModuleInit, OnModuleDestroy {
     return setTimeout(() => this.armAt(delay - HORIZON_MS, fn), HORIZON_MS);
   }
 
-  private announce(b: Broadcast) {
+  // Every pod arms its own copy of each broadcast's start/end timers, so in a
+  // multi-instance deployment they all fire at ~the same wall-clock instant. The
+  // realtime emit now fans out across all nodes via Redis, so N pods announcing
+  // = N duplicate banners per client. Gate the emit behind a short-lived NX lock
+  // keyed on the broadcast + a coarse 10s time bucket: the first pod to fire a
+  // given edge wins and emits, the rest no-op. Start and end edges fall in
+  // different buckets (hours apart) so they never collide. Single-node (no
+  // Redis) skips the lock — there's only one announcer.
+  private async announce(b: Broadcast) {
+    if (this.redis.enabled && this.redis.cmd) {
+      const bucket = Math.floor(Date.now() / 10_000);
+      const lockKey = `bcast:announce:${b.id}:${bucket}`;
+      try {
+        const won = await this.redis.cmd.set(lockKey, '1', 'PX', 10_000, 'NX');
+        if (won !== 'OK') return; // another node already announced this edge
+      } catch (e) {
+        // If the dedup lock is unreachable, prefer announcing (a possible
+        // duplicate banner) over silently dropping the announcement.
+        this.log.warn(`broadcast dedup lock unavailable, announcing anyway: ${(e as Error).message}`);
+      }
+    }
     this.realtime.emit({
       type: 'broadcast.published',
       tenantId: b.tenantId,

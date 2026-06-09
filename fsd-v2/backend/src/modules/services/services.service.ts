@@ -1,14 +1,27 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Service, BookingService } from './service.entity';
+import { Booking } from '../bookings/booking.entity';
+import { AdminRoles, Role } from '../../common/decorators/roles.decorator';
 
 @Injectable()
 export class ServicesService {
   constructor(
     @InjectRepository(Service) private readonly repo: Repository<Service>,
     @InjectRepository(BookingService) private readonly bsRepo: Repository<BookingService>,
+    @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
   ) {}
+
+  // Authorization gate (AUD-031): booking add-ons (catering, IT, billing
+  // line-items) are booking-adjacent state, so only the booking owner or an
+  // admin may read or mutate them. Returns the booking so callers can reuse it.
+  private async assertBookingAccess(tenantId: string, bookingId: string, userId: string, role: string): Promise<Booking> {
+    const b = await this.bookings.findOne({ where: { id: bookingId, tenantId } });
+    if (!b) throw new NotFoundException('booking not found');
+    if (b.userId !== userId && !AdminRoles.includes(role as Role)) throw new ForbiddenException();
+    return b;
+  }
 
   list(tenantId: string) {
     return this.repo.find({ where: { tenantId }, order: { name: 'ASC' } });
@@ -33,17 +46,20 @@ export class ServicesService {
 
   // Attach a service to a booking. Snapshots unit price so later catalog
   // edits don't restate historical invoices.
-  async attachToBooking(tenantId: string, bookingId: string, serviceId: string, quantity = 1, note = '') {
+  async attachToBooking(tenantId: string, userId: string, role: string, bookingId: string, serviceId: string, quantity = 1, note = '') {
+    await this.assertBookingAccess(tenantId, bookingId, userId, role);
     const svc = await this.get(tenantId, serviceId);
     return this.bsRepo.save(this.bsRepo.create({
       tenantId, bookingId, serviceId, quantity, note,
       unitPriceCents: svc.priceCents,
     }));
   }
-  listForBooking(tenantId: string, bookingId: string) {
+  async listForBooking(tenantId: string, userId: string, role: string, bookingId: string) {
+    await this.assertBookingAccess(tenantId, bookingId, userId, role);
     return this.bsRepo.find({ where: { tenantId, bookingId } });
   }
-  async detachFromBooking(tenantId: string, bookingId: string, id: string) {
+  async detachFromBooking(tenantId: string, userId: string, role: string, bookingId: string, id: string) {
+    await this.assertBookingAccess(tenantId, bookingId, userId, role);
     const r = await this.bsRepo.delete({ id, tenantId, bookingId });
     if (!r.affected) throw new NotFoundException('booking service not found');
   }

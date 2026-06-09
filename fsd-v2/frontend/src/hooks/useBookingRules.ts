@@ -22,6 +22,11 @@ interface ValidateArgs {
   end?: string;      // HH:MM
   startDate?: Date;
   endDate?: Date;
+  // All-day bookings reserve the room for its whole open window, so their span
+  // legitimately exceeds the per-booking min/max duration caps. When set, those
+  // two duration checks are skipped — matching the server, which waives them for
+  // all-day bookings too (QA #15).
+  allDay?: boolean;
 }
 
 export function useBookingRules() {
@@ -48,16 +53,21 @@ export function useBookingRules() {
   // Returns a human-readable reason the booking is rejected, or '' when
   // it satisfies every rule. Accepts either a YYYY-MM-DD + HH:MM pair or
   // pre-built Date objects.
-  function validate({ date, start, end, startDate, endDate }: ValidateArgs): string {
+  function validate({ date, start, end, startDate, endDate, allDay }: ValidateArgs): string {
     const s = startDate || (date && start ? new Date(`${date}T${start}`) : null);
     const e = endDate   || (date && end   ? new Date(`${date}T${end}`)   : null);
     if (!s || !e || isNaN(+s) || isNaN(+e)) return 'Invalid date or time.';
     if (e <= s) return 'End time must be after start time.';
 
-    const mins = (+e - +s) / 60000;
-    if (mins < rules.minMinutes) return `Minimum booking duration is ${rules.minMinutes} minutes.`;
-    if (mins > rules.maxMinutes) {
-      return `Maximum booking duration is ${Math.round(rules.maxMinutes / 60 * 10) / 10} hours.`;
+    // All-day bookings span the room's full open window — skip the duration caps
+    // (the server does the same), otherwise a whole-day reservation always trips
+    // "Maximum booking duration is N hours" and can never be submitted (QA #15).
+    if (!allDay) {
+      const mins = (+e - +s) / 60000;
+      if (mins < rules.minMinutes) return `Minimum booking duration is ${rules.minMinutes} minutes.`;
+      if (mins > rules.maxMinutes) {
+        return `Maximum booking duration is ${Math.round(rules.maxMinutes / 60 * 10) / 10} hours.`;
+      }
     }
 
     const now = new Date();

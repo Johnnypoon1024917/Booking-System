@@ -278,6 +278,14 @@ export function AdminUsers() {
             <label>{editing.id ? t('adminUsers.password') : t('adminUsers.initialPassword')} {editing.id && <span className="muted">{t('adminUsers.passwordKeepHint')}</span>}
               <input type="password" value={editing.password || ''} autoComplete="new-password"
                 onChange={(e) => setEditing({ ...editing, password: e.target.value })} />
+              {/* State the policy up front so an admin doesn't discover the
+                  8-char minimum only when the save 400s (QA #6). For an existing
+                  user the rule applies only when a new password is actually typed. */}
+              {(!editing.id || (editing.password || '').length > 0) && (
+                <small className={`muted${(editing.password || '').length >= 8 ? ' pw-ok' : ''}`}>
+                  {(editing.password || '').length >= 8 ? '✓ ' : ''}{t('login.passwordRuleMinLength', { count: 8 })}
+                </small>
+              )}
             </label>
             <label>{t('adminUsers.grade')}<input value={editing.grade || ''} onChange={(e) => setEditing({ ...editing, grade: e.target.value })} placeholder="SDO / DGFS / …" /></label>
             {/* Line manager — used by approval rules with approver_type 'manager'

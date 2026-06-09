@@ -30,9 +30,14 @@ export class CheckinService {
   // the token directly on the booking row keeps the schema small —
   // v1 used a separate checkin_tokens table for revocation history,
   // but v2 can add that later without breaking the wire format.
-  async issueToken(tenantId: string, bookingId: string): Promise<{ token: string; expiresAt: Date }> {
+  async issueToken(tenantId: string, userId: string, isAdmin: boolean, bookingId: string): Promise<{ token: string; expiresAt: Date }> {
     const b = await this.bookings.findOne({ where: { id: bookingId, tenantId } });
     if (!b) throw new NotFoundException('booking not found');
+    // Authorization: a check-in token is a redeemable credential for the
+    // booking, so only the owner or an admin may mint one. Without this gate
+    // any tenant user who knows a booking id could issue a QR that checks the
+    // meeting in (mirrors the owner/admin gate on checkinByBooking).
+    if (b.userId !== userId && !isAdmin) throw new ForbiddenException();
     const token = randomBytes(18).toString('base64url');
     const expiresAt = new Date(Date.now() + DEFAULT_TOKEN_TTL_MS);
     b.checkinToken = token;

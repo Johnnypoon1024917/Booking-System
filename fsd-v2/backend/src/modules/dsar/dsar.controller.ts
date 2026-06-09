@@ -11,6 +11,11 @@ class ErasureRequestDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
+class EraseMeDto {
+  // Current password — required to re-authenticate before irreversible erasure.
+  @IsString() currentPassword!: string;
+}
+
 // Self-service data subject access (GDPR Art. 15 / 20, HK PDPO DPP6).
 // Authentication is required — JwtAuthGuard is global. The caller can
 // only export their OWN bundle; admin-initiated DSAR on behalf of
@@ -71,7 +76,10 @@ export class DsarController {
   // its session afterwards — the account can no longer authenticate.
   @Delete('me')
   @ApiOperation({ summary: 'Erase (anonymise + deactivate) the calling user\'s own account' })
-  async eraseMe(@CurrentUser() u: AuthUser) {
+  async eraseMe(@CurrentUser() u: AuthUser, @Body() body: EraseMeDto) {
+    // Verify the password BEFORE writing the audit row / redacting, so a failed
+    // re-auth doesn't leave a misleading DSAR_ERASED trail.
+    const result = await this.svc.eraseSelf(u.tenantId, u.id, body.currentPassword);
     await this.audit.record(u, {
       action: 'DSAR_ERASED',
       severity: 'critical',
@@ -79,7 +87,6 @@ export class DsarController {
       targetId: u.id,
       previous: { username: u.username },
     });
-    const result = await this.svc.eraseSelf(u.tenantId, u.id);
     return { status: 'erased', ...result };
   }
 }

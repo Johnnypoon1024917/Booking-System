@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsOptional, IsString, IsUUID, ValidateIf } from 'class-validator';
 import { DepartmentsService } from './departments.service';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
@@ -11,8 +11,8 @@ class DepartmentDto {
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsUUID() parentId?: string;
   // Department head for dynamic approval routing. '' clears it (normalised
-  // server-side); a non-empty value must be a real user id.
-  @IsOptional() @IsString() headUserId?: string;
+  // server-side); a non-empty value must be a real user id (AUD-013).
+  @IsOptional() @ValidateIf((o) => o.headUserId !== '' && o.headUserId != null) @IsUUID() headUserId?: string;
 }
 
 @ApiTags('admin / departments')

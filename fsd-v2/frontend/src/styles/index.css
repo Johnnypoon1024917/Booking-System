@@ -1183,6 +1183,12 @@ h1.page-title::after { content: ' »'; color: var(--fsd-muted); font-weight: 400
 .login-page { display: grid; place-items: center; min-height: 100vh; padding: 16px; background: linear-gradient(180deg, #e2e8f0, #f1f5f9); }
 .login-card { width: min(360px, 100%); background: var(--surface); padding: 28px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 10px; }
 .login-card label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+/* Live password-policy checklist on the forced-reset screen (QA #6). Each rule
+   greys out until satisfied, then turns success-green with its tick. */
+.pw-rules { list-style: none; margin: -2px 0 2px; padding: 0; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.pw-rules li { color: var(--text-muted); }
+.pw-rules li.ok { color: var(--fsd-success, #1e8a4d); font-weight: 600; }
+small.pw-ok { color: var(--fsd-success, #1e8a4d); font-weight: 600; }
 
 /* Broadcast banner (R13) -------------------------------------------- */
 .bc-banner {
@@ -2289,6 +2295,14 @@ input.invalid, select.invalid, textarea.invalid { border-color: var(--danger) !i
 .modal section .bm-timerow-edit .bm-when input[type=time] { width: 96px; }
 .modal section .bm-timerow-edit .bm-when input[type=date] { width: 158px; }
 .modal section .bm-timerow-edit .bm-dash { color: var(--text-muted); }
+/* All-day reservations lock the time fields; this read-only chip stands in for
+   the start/end inputs so the row still reads as a time slot (QA #15). */
+.modal section .bm-timerow-edit .bm-allday-tag {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0;
+  font-weight: 600; color: var(--text);
+  padding: 7px 12px; border-radius: 6px;
+  background: var(--surface-2, #f1f3f5); border: 1px solid var(--border, #e3e6ea);
+}
 
 /* ============================================================================
    FSD V2: Modern Calendar Event Cards (matches the Tenant Studio Live Preview)
@@ -2308,6 +2322,22 @@ input.invalid, select.invalid, textarea.invalid { border-color: var(--danger) !i
   border-radius: var(--radius-sm) !important;
   padding: 3px 6px !important;
   box-shadow: var(--shadow-xs) !important;
+  /* Clip the card's own content so a long subject or a short-duration slot can
+     never spill its text past the event box into neighbouring cells (QA #2). */
+  overflow: hidden !important;
+}
+/* Compact month-grid pill: time + subject on one ellipsised line so the event
+   shows its info without the 3-line day/week body blowing out the row (QA #4). */
+.fc .fc-modern-event .evt-month {
+  display: flex; align-items: baseline; gap: 5px; min-width: 0;
+}
+.fc .fc-modern-event .evt-month .fc-event-time {
+  flex: 0 0 auto; margin: 0;
+}
+.fc .fc-modern-event .evt-month .fc-event-title {
+  margin: 0; min-width: 0; flex: 1 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block; -webkit-line-clamp: unset;
 }
 .fc .fc-modern-event .fc-event-time {
   color: var(--text-muted);
@@ -2340,6 +2370,19 @@ input.invalid, select.invalid, textarea.invalid { border-color: var(--danger) !i
   text-overflow: ellipsis;
 }
 .fc .fc-modern-event .evt-inner { overflow: hidden; }
+/* Duration-driven density so short bookings still show the meeting-room line
+   instead of clipping it: shrink the fonts and tighten line-height as the slot
+   gets shorter (QA #2). evt-sm ≈ 31–45 min, evt-xs ≤ 30 min. */
+.fc .fc-modern-event .evt-inner.evt-sm { line-height: 1.2; }
+.fc .fc-modern-event .evt-inner.evt-sm .fc-event-time { font-size: 10px; }
+.fc .fc-modern-event .evt-inner.evt-sm .fc-event-title { font-size: 11px; margin-top: 1px; -webkit-line-clamp: 1; }
+.fc .fc-modern-event .evt-inner.evt-sm .evt-room { font-size: 10px; margin-top: 1px; }
+.fc .fc-modern-event .evt-inner.evt-xs { line-height: 1.1; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 5px; }
+.fc .fc-modern-event .evt-inner.evt-xs .fc-event-time { font-size: 9px; margin: 0; flex: 0 0 auto; }
+.fc .fc-modern-event .evt-inner.evt-xs .fc-event-title { font-size: 10px; margin: 0; -webkit-line-clamp: 1; flex: 1 1 auto; min-width: 0; white-space: nowrap; text-overflow: ellipsis; }
+.fc .fc-modern-event .evt-inner.evt-xs .evt-room { font-size: 9px; margin: 0; flex: 1 0 100%; }
+/* Reclaim vertical padding on the very short cards so the third line fits. */
+.fc .fc-modern-event:has(.evt-xs) { padding: 1px 5px !important; }
 .fc .fc-modern-event:hover {
   box-shadow: var(--shadow-sm) !important;
   transform: translateY(-1px);

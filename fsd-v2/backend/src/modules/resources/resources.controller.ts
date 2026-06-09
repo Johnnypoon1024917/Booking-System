@@ -5,10 +5,10 @@ import {
   Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { OperatingHours } from '../../common/operating-hours';
+import { OperatingHours, windowForWeekday, hhmmToMin } from '../../common/operating-hours';
 import { ResourcesService } from './resources.service';
 import { CustomizationService } from '../customization/customization.service';
-import { zonedTimeToUtc } from '../../common/tz';
+import { zonedTimeToUtc, utcToZonedWallClock } from '../../common/tz';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -96,6 +96,26 @@ class SearchQuery {
   @IsOptional() @Type(() => Number) @IsNumber() capacity?: number;
 }
 
+type LocalWall = { weekday: number; minutes: number; dateStr: string };
+
+// Whether a room is open for a requested slot, given its operating hours and the
+// slot's local wall-clock bounds. Mirrors BookingsService.assertWithinOperatingHours
+// (and the all-day → open-window mapping) so search hides a room exactly when a
+// booking for that slot would be rejected. A null schedule = open 24h.
+function openForSlot(
+  oh: OperatingHours | null | undefined, s: LocalWall, e: LocalWall, isAllDay: boolean,
+): boolean {
+  if (!oh) return true;
+  const win = windowForWeekday(oh, s.weekday);
+  if (!win) return false; // closed that weekday
+  const open = hhmmToMin(win.open);
+  const close = hhmmToMin(win.close);
+  if (open == null || close == null || close <= open) return true; // misconfigured — don't hide
+  if (isAllDay) return true; // all-day books the room's whole open window
+  if (e.dateStr !== s.dateStr) return false; // crosses the daily close into the next day
+  return s.minutes >= open && e.minutes <= close;
+}
+
 @ApiTags('resources')
 @ApiBearerAuth()
 @Controller('resources')
@@ -119,10 +139,24 @@ export class ResourcesPublicController {
     const tz = (cust as { timezone?: string }).timezone;
     const start = zonedTimeToUtc(q.date, q.startTime, tz);
     const end = zonedTimeToUtc(q.date, q.endTime, tz);
-    return this.svc.findAvailable({
+    const rooms = await this.svc.findAvailable({
       tenantId: u.tenantId, location: q.location, assetType: q.assetType,
       capacity: q.capacity, start, end,
+      // Drives the restricted-room visibility filter (QA #9).
+      userId: u.id, isAdmin: AdminRoles.includes(u.role),
     });
+    // Operating-hours filter. findAvailable only subtracts rooms with a clashing
+    // booking — it does NOT know a room is closed at the requested time, so a
+    // room shut at 18:00 still showed as available for a 19:00 search and the
+    // booking only failed on submit (QA #16). Drop rooms that are closed that
+    // weekday or whose open window doesn't cover the requested slot. An all-day
+    // search needs only that the room be open at all that day (the booking maps
+    // to the room's open window server-side).
+    const s = utcToZonedWallClock(start, tz);
+    const e = utcToZonedWallClock(end, tz);
+    const isAllDay = s.minutes === 0 &&
+      (e.minutes >= 23 * 60 + 59 || (e.dateStr !== s.dateStr && e.minutes === 0));
+    return rooms.filter((r) => openForSlot(r.operatingHours, s, e, isAllDay));
   }
 }
 

@@ -1,3 +1,9 @@
+# ⚠️ LOCAL DEVELOPMENT ONLY (AUD-004).
+# This file ships insecure defaults — weak DB password, a default JWT secret,
+# ALLOW_DEV_LOGIN=true, and demo seeding. Do NOT reuse it for any shared,
+# staging, or production-like environment. Use docker-compose.prod.yml (which
+# requires real secrets via .env and hard-offs every dev flag) for anything
+# beyond a developer laptop.
 services:
   postgres_db:
     image: postgres:16-alpine
@@ -15,6 +21,18 @@ services:
     # Bumped to 5434 — 5432 is v1's port and 5433 is occupied on this host.
     ports: ["5434:5432"]
 
+  # Optional locally: the app falls back to in-memory state when REDIS_URL is
+  # unset, so a single dev api doesn't need Redis. It's wired here so you can
+  # exercise the multi-instance code paths (realtime pub/sub, global rate-limit,
+  # broadcast dedup, permission-cache invalidation) on a laptop.
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   api:
     build:
       context: ./backend
@@ -24,6 +42,8 @@ services:
       DB_USER: ${POSTGRES_USER:-mrbs_admin}
       DB_PASS: ${POSTGRES_PASSWORD:-changeme}
       DB_NAME: ${POSTGRES_DB:-mrbs_db_v2}
+      # Point at the redis service above. Unset it to test the in-memory fallback.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-change-me-32-bytes-min}
       JWT_TTL: ${JWT_TTL:-12h}
       NODE_ENV: ${NODE_ENV:-development}
@@ -50,8 +70,16 @@ services:
       SMTP_FROM: ${SMTP_FROM:-no-reply@fsd-mrbs.local}
       SMTP_TLS: ${SMTP_TLS:-false}
     ports: ["3000:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres_db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   frontend:
@@ -60,6 +88,12 @@ services:
     environment:
       VITE_API_URL: http://localhost:3000
     ports: ["5173:5173"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5173/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       - api
 

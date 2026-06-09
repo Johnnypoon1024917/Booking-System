@@ -16,11 +16,17 @@ import { BookingModal } from '../components/BookingModal';
 // with cross-lock "blocked via" indicators), and the BookingModal confirm
 // flow. The "next available slots" suggestion strip from v1 is omitted —
 // v2 has no slot-suggestion endpoint yet.
-const STEP = 30;
+//
+// The time-slot granularity is no longer a hard-coded 30 minutes: it tracks the
+// tenant's configured minimum booking duration so the dropdowns can actually
+// offer the interval the Settings screen promises. A room set to a 15-minute
+// minimum used to be un-bookable at 15-minute marks because the picker only
+// stepped in 30s — the config and the form silently disagreed (QA #14).
+function clampStep(min: number) { return Math.min(60, Math.max(5, Math.round(min) || 30)); }
 
-function initialStart() {
+function initialStart(step: number) {
   const d = new Date();
-  d.setMinutes(d.getMinutes() + ((30 - (d.getMinutes() % 30)) % 30), 0, 0);
+  d.setMinutes(d.getMinutes() + ((step - (d.getMinutes() % step)) % step), 0, 0);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 function addMinutes(hhmm: string, mins: number) {
@@ -38,10 +44,14 @@ export function Search() {
   const toast = useToast();
   const tenant = useTenant((s) => s.customization);
   const user = useAuth((s) => s.user);
-  const { allowsPattern } = useBookingRules();
+  const { allowsPattern, rules } = useBookingRules();
+
+  // Slot granularity = the tenant's minimum booking duration (clamped to a sane
+  // 5–60 min), so the picker honours the configured minimum (QA #14).
+  const STEP = clampStep(rules.minMinutes);
 
   const today = new Date().toISOString().slice(0, 10);
-  const start0 = initialStart();
+  const start0 = initialStart(STEP);
   const [form, setForm] = useState({
     region: '', date: today, capacity: 4,
     start: start0, end: addMinutes(start0, 60),
@@ -85,7 +95,7 @@ export function Search() {
       out.push({ value: minToHHMM(m), past: isToday && m < nowMin });
     }
     return out;
-  }, [hours]);
+  }, [hours, STEP]);
 
   // End slots are generated from the chosen start (start+30 … closing) so the
   // dropdown can never settle on a value absent from its own list. The old
@@ -98,7 +108,7 @@ export function Search() {
       out.push({ value: minToHHMM(m), past: isToday && m < nowMin });
     }
     return out;
-  }, [hours, form.start]);
+  }, [hours, form.start, STEP]);
 
   // Keep start/end inside the working-hours window. Tenant config loads async
   // (and "now" may already be past closing), so a default like 21:30 can land
@@ -114,7 +124,7 @@ export function Search() {
       const sv = minToHHMM(s), ev = minToHHMM(e);
       return sv === f.start && ev === f.end ? f : { ...f, start: sv, end: ev };
     });
-  }, [hours]);
+  }, [hours, STEP]);
 
   const locations = useMemo(() => {
     const ls = [...new Set(allResources.map((r) => r.location).filter(Boolean))];
@@ -422,6 +432,7 @@ export function Search() {
           // user book 09:00–10:00 while believing they'd reserved the whole day.
           start={form.allDay ? '00:00' : form.start}
           end={form.allDay ? '23:59' : form.end}
+          allDay={form.allDay}
           // Carry the user's recurring-schedule choices into the dialog instead
           // of dropping them on open.
           initialRecur={form.recur}

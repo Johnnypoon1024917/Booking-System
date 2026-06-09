@@ -5,11 +5,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
 import { randomBytes, createHash } from 'crypto';
 import { AuthorizationCode } from 'simple-oauth2';
-// passport-saml exports SAML for response validation; we use it directly
-// rather than wiring a full passport pipeline because the flow here is
-// purely controller-driven.
+// @node-saml/passport-saml exports SAML for response validation; we use it
+// directly rather than wiring a full passport pipeline because the flow here is
+// purely controller-driven. Migrated off the unmaintained `passport-saml`
+// (critical CVE-2025-54419 in its xml-crypto chain) to the maintained
+// `@node-saml/passport-saml` — its API is promise-based and `cert` is `idpCert`.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { SAML } = require('passport-saml');
+const { SAML } = require('@node-saml/passport-saml');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ldap = require('ldapjs');
 import { IdentityProvider, ProviderKind, SsoState } from './identity-provider.entity';
@@ -46,13 +48,8 @@ export class SsoService {
     const { tenant, provider } = await this.resolve(tenantSlug, providerSlug, 'saml');
     const saml = this.samlClient(provider, tenant.id);
     const relay = randomBytes(16).toString('hex');
-    const url: string = await new Promise((resolve, reject) =>
-      saml.getAuthorizeUrl(
-        { RelayState: relay } as any,
-        {},
-        (err: any, u: string) => (err ? reject(err) : resolve(u)),
-      ),
-    );
+    // @node-saml is promise-based: getAuthorizeUrl(RelayState, host, options).
+    const url: string = await saml.getAuthorizeUrl(relay, undefined, {});
     await this.persistState({
       state: relay, tenantId: tenant.id, providerId: provider.id, kind: 'saml',
       redirectAfter: this.safeRedirect(redirect),
@@ -74,12 +71,9 @@ export class SsoService {
     const provider = await this.providers.findOne({ where: { id: state.providerId } });
     if (!provider) throw new NotFoundException('provider missing');
     const saml = this.samlClient(provider, state.tenantId);
-    const result: any = await new Promise((resolve, reject) =>
-      saml.validatePostResponse(
-        { SAMLResponse: samlResponseB64 },
-        (err: any, profile: any) => (err ? reject(err) : resolve(profile)),
-      ),
-    );
+    // @node-saml validatePostResponse is promise-based and returns { profile }.
+    const { profile } = await saml.validatePostResponse({ SAMLResponse: samlResponseB64 });
+    const result: any = profile || {};
     await this.states.delete({ id: state.id });
     const email = result.email || result.nameID;
     const subject = result.nameID || email;
@@ -156,7 +150,12 @@ export class SsoService {
       await new Promise<void>((resolve, reject) =>
         client.bind(cfg.bindDN, cfg.bindPassword, (err: any) => (err ? reject(err) : resolve())),
       );
-      const filter = (cfg.searchFilter || '(uid={username})').replace('{username}', username);
+      // Escape the raw username per RFC 4515 before interpolating it into the
+      // search filter (AUD-019). Without this a username like `*)(uid=*` would
+      // alter the filter's logic (LDAP injection → user enumeration / auth
+      // bypass). Replace \\ first so we don't double-escape the escapes we add.
+      const safeUsername = escapeLdapFilter(username);
+      const filter = (cfg.searchFilter || '(uid={username})').replace('{username}', safeUsername);
       const entry: any = await new Promise((resolve, reject) => {
         const result: any[] = [];
         client.search(cfg.searchBase, { filter, scope: 'sub' }, (err: any, res: any) => {
@@ -206,10 +205,16 @@ export class SsoService {
     return new SAML({
       entryPoint: cfg.entryPoint,
       issuer: cfg.issuer,
-      cert: cfg.cert,
+      // `cert` was renamed to `idpCert` in @node-saml/passport-saml v5.
+      idpCert: cfg.cert,
       callbackUrl: cfg.callbackUrl,
       identifierFormat: cfg.identifierFormat || null,
       signatureAlgorithm: 'sha256',
+      // The library now requires an explicit audience setting; disable strict
+      // audience validation unless the provider config supplies one (parity with
+      // the previous passport-saml behaviour which didn't enforce it).
+      audience: cfg.audience || false,
+      wantAssertionsSigned: cfg.wantAssertionsSigned ?? true,
     });
   }
 
@@ -305,4 +310,19 @@ export class SsoService {
     await this.states.delete({ createdAt: LessThan(new Date(Date.now() - 10 * 60_000)) });
     await this.states.save(this.states.create(p));
   }
+}
+
+// RFC 4515 LDAP search-filter escaping. Each special character is replaced with
+// a backslash followed by its two-digit hex code. Backslash is handled first so
+// the escapes we introduce aren't themselves re-escaped.
+export function escapeLdapFilter(input: string): string {
+  return String(input).replace(/[\\*()]/g, (c) => {
+    switch (c) {
+      case '\\': return '\\5c';
+      case '*': return '\\2a';
+      case '(': return '\\28';
+      case ')': return '\\29';
+      default: return c;
+    }
+  });
 }

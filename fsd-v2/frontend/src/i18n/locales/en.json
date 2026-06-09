@@ -81,6 +81,7 @@
     "bookings": "Bookings",
     "mins": "mins",
     "avgMeetingDuration": "Avg. Meeting Duration",
+    "active": "Active",
     "checkIn": "Check-in",
     "cancelled": "Cancelled",
     "noShow": "No Show",
@@ -264,6 +265,7 @@
     "cancelFailed": "Cancel failed",
     "schedulingAssistant": "Scheduling assistant",
     "yourSlot": "Your slot",
+    "allDay": "All day",
     "noBookingsThatDay": "{{room}} has no other bookings that day.",
     "editScopeLabel": "Apply changes to",
     "editScopeThis": "This event",
@@ -1112,6 +1114,8 @@
     "mustChangeHelp": "Your administrator issued a temporary password. Choose a new one to continue.",
     "newPassword": "New password",
     "confirmPassword": "Confirm password",
+    "passwordRuleMinLength": "At least {{count}} characters",
+    "passwordRuleMatch": "Both passwords match",
     "setPasswordContinue": "Set password & continue",
     "passwordsMismatch": "Passwords do not match",
     "changeFailed": "Could not set password",
@@ -1427,7 +1431,8 @@
     "request": "Request",
     "device": "Device",
     "before": "Before",
-    "after": "After"
+    "after": "After",
+    "field": "Field"
   },
   "adminBookings": {
     "title": "All Bookings",

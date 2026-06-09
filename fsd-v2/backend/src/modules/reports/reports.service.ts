@@ -36,6 +36,24 @@ const fmtTime = (col: string) =>
 const dateInTZ = (col: string) =>
   `(${col} AT TIME ZONE 'UTC' AT TIME ZONE '${reportTZ()}')::date`;
 
+// formatChanges renders the per-field before/after diff (AuditSubscriber's
+// `previous` / `next` JSONB) into one human-readable cell for the audit report
+// and its CSV/XLSX export, e.g. "capacity: 8 → 12; location: A1 → B2". Creates
+// show "field: → value", deletes show "field: value → ", so the column reads as
+// a plain-language account of exactly what each entry touched.
+function formatChanges(prev?: Record<string, any> | null, next?: Record<string, any> | null): string {
+  if (!prev && !next) return '';
+  const keys = Array.from(new Set([...Object.keys(prev ?? {}), ...Object.keys(next ?? {})]));
+  const fmt = (v: any): string => {
+    if (v === undefined || v === null) return '';
+    if (typeof v === 'object') { try { return JSON.stringify(v); } catch { return String(v); } }
+    return String(v);
+  };
+  return keys
+    .map((k) => `${k}: ${fmt(prev?.[k])} → ${fmt(next?.[k])}`)
+    .join('; ');
+}
+
 export type DashboardScope = 'all' | 'region' | 'mine';
 
 export interface DashboardFilter {
@@ -135,15 +153,21 @@ export class ReportsService {
     const checkedIn = Number(statsRaw.checked_in ?? 0);
     const cancelled = Number(statsRaw.cancelled ?? 0);
     const noShow = Number(statsRaw.no_show ?? 0);
-    // Check-in / Cancelled / No-Show are the three terminal OUTCOMES of a
-    // booking, so the segmented bar normalises them against each other to a
-    // true 100% breakdown (they previously each divided by the period total —
-    // which also counts upcoming/confirmed bookings — so they never summed to
-    // 100%). The remainder is folded into No-Show so rounding still totals 100.
-    const outcomeTotal = checkedIn + cancelled + noShow;
-    const checkInPct = outcomeTotal ? Math.round((checkedIn / outcomeTotal) * 100) : 0;
-    const cancelPct = outcomeTotal ? Math.round((cancelled / outcomeTotal) * 100) : 0;
-    const noShowPct = outcomeTotal ? Math.max(0, 100 - checkInPct - cancelPct) : 0;
+    // Percentages are shares of EVERY booking in the period, not of the
+    // terminal-outcome subset. Normalising against (checkedIn+cancelled+noShow)
+    // produced a wildly misleading headline: a period with 5 bookings of which
+    // a single one was cancelled rendered as "100% Cancelled" because the lone
+    // cancellation was the only terminal outcome (QA #13). Dividing by `total`
+    // gives the intuitive 20% Cancelled, and the bookings that are still
+    // active/upcoming surface as their own "Active" segment so the bar fills to
+    // 100% honestly instead of overstating any one outcome.
+    const active = Math.max(0, total - checkedIn - cancelled - noShow);
+    const checkInPct = total ? Math.round((checkedIn / total) * 100) : 0;
+    const cancelPct = total ? Math.round((cancelled / total) * 100) : 0;
+    const noShowPct = total ? Math.round((noShow / total) * 100) : 0;
+    // Active absorbs the rounding remainder so the four segments always total
+    // exactly 100%.
+    const activePct = total ? Math.max(0, 100 - checkInPct - cancelPct - noShowPct) : 0;
 
     // 4) No-show recent table.
     const nsRows = await applyScope(
@@ -174,8 +198,9 @@ export class ReportsService {
         checkInPct,
         cancelPct,
         noShowPct,
+        activePct,
         // Counts behind the percentages, in case the SPA wants tooltips.
-        checkedIn, cancelled, noShow, outcomeTotal,
+        checkedIn, cancelled, noShow, active,
       },
       noShow: nsRows.map((r: any) => ({
         name: r.name, dept: r.dept, room: r.room, when: r.when,
@@ -198,7 +223,10 @@ export class ReportsService {
 
     switch (type) {
       case 'audit': {
-        const headers = ['Date', 'User', 'Action', 'Target', 'Target ID'];
+        // Field-level "Changes" column makes this report the government-facing
+        // record of WHAT changed, not just that something did. previous/next are
+        // the per-field before/after diffs written by AuditSubscriber.
+        const headers = ['Date', 'User', 'Action', 'Target', 'Target ID', 'Changes'];
         const rows = await this.audits.createQueryBuilder('a')
           .leftJoin('users', 'u', 'u.id = a.user_id')
           .select(fmtDateTime('a.created_at'), 'd')
@@ -206,12 +234,17 @@ export class ReportsService {
           .addSelect('a.action', 'action')
           .addSelect(`COALESCE(a.target_entity,'')`, 'tgt')
           .addSelect(`COALESCE(a.target_id,'')`, 'tid')
+          .addSelect('a.previous', 'prev')
+          .addSelect('a.next', 'nxt')
           .where('a.tenant_id = :t', { t: tenantId })
           .andWhere(`${dateInTZ('a.created_at')} >= :s::date AND ${dateInTZ('a.created_at')} <= :e::date`, { s: start, e: end })
           .orderBy('a.created_at', 'DESC')
           .limit(1000)
           .getRawMany();
-        return { ...base, headers, rows: rows.map((r: any) => [r.d, r.user, r.action, r.tgt, r.tid]) };
+        return {
+          ...base, headers,
+          rows: rows.map((r: any) => [r.d, r.user, r.action, r.tgt, r.tid, formatChanges(r.prev, r.nxt)]),
+        };
       }
 
       case 'staff': {

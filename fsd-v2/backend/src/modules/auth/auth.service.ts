@@ -114,6 +114,17 @@ export class AuthService {
     }
     const tenant = await this.tenants.findOne({ where: { id: claims.tid, isActive: true } });
     if (!tenant) throw new UnauthorizedException('invalid reset token');
+
+    // One-time / stale-token rejection (AUD-032): re-load the account and reject
+    // the token unless the user still exists, is active, and is genuinely still
+    // in the must-change-password state. Because setPassword() clears
+    // mustChangePassword, a second use of the same (still-unexpired) token now
+    // fails here — closing the replay window without needing a token-version
+    // column.
+    const current = await this.users.findByUsername(claims.tid, claims.username);
+    if (!current || current.id !== claims.sub || !current.isActive || !current.mustChangePassword) {
+      throw new UnauthorizedException('reset token already used or no longer valid — sign in again');
+    }
     const user = await this.users.setPassword(claims.tid, claims.sub, newPassword);
     return { accessToken: this.issueAccessToken(user, tenant.id, tenant.slug, false), user: this.profile(user, tenant) };
   }

@@ -159,15 +159,32 @@ export function CalendarView() {
   }
 
   // Teams/Outlook-style card: stack the time, the subject, and the meeting room
-  // on their own lines. Only enrich the timeGrid (day/week) cards — the month
-  // grid renders compact pills where a 3-line body would break the layout, so
-  // there we fall back to FullCalendar's default by returning undefined.
+  // on their own lines for the day/week (timeGrid) cards. The month grid gets a
+  // COMPACT one-line "time · subject" pill — previously month returned undefined
+  // and FullCalendar's default rendering, fighting the .fc-modern-event styling,
+  // produced empty bars with no visible title or time at all (QA #4).
   function renderEventContent(arg: any) {
-    if (!arg.view.type.startsWith('timeGrid')) return undefined;
     const hidden = arg.event.extendedProps?.subjectHidden;
     const room = arg.event.extendedProps?.roomName;
+    if (arg.view.type.startsWith('dayGrid')) {
+      return (
+        <div className="evt-inner evt-month">
+          {arg.timeText && <span className="fc-event-time">{arg.timeText}</span>}
+          <span className="fc-event-title">{arg.event.title}</span>
+        </div>
+      );
+    }
+    // Dynamic density: a 30-minute slot is too short for three full-size lines,
+    // so the meeting-room line used to get clipped off entirely (QA #2 follow-up).
+    // Bucket the card by duration and shrink the fonts/line-height for short
+    // bookings so time + subject + room all stay visible. Sub-30-min slots also
+    // drop the time onto the subject's line to reclaim a row.
+    const startMs = arg.event.start ? +arg.event.start : 0;
+    const endMs = arg.event.end ? +arg.event.end : startMs;
+    const mins = startMs && endMs > startMs ? (endMs - startMs) / 60000 : 60;
+    const density = mins <= 30 ? ' evt-xs' : mins <= 45 ? ' evt-sm' : '';
     return (
-      <div className="evt-inner">
+      <div className={`evt-inner${density}`}>
         {arg.timeText && <div className="fc-event-time">{arg.timeText}</div>}
         <div className="fc-event-title">{arg.event.title}</div>
         {!hidden && room && <div className="evt-room">{room}</div>}
@@ -464,6 +481,11 @@ export function CalendarView() {
             slotEventOverlap={false}
             eventMaxStack={3}
             moreLinkClick="popover"
+            // Render month-grid events as solid blocks (not the default tiny dot
+            // rows), so the time + subject pill is actually visible (QA #4).
+            eventDisplay="block"
+            // Always show the start time on month pills, paired with the subject.
+            displayEventTime
             headerToolbar={isMobile
               ? { left: 'prev,next', center: 'title', right: 'timeGridDay,dayGridMonth' }
               : { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' }}

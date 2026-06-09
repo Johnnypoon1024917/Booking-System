@@ -7,6 +7,7 @@ import {
 } from 'botframework-connector';
 import { Activity } from 'botframework-schema';
 import { BotConversationRef } from './teams.entity';
+import { allowInsecureLocal } from '../../common/env';
 
 // TeamsService — Bot Framework auth + proactive message dispatch.
 //
@@ -40,8 +41,14 @@ export class TeamsService {
   // mismatch (signature, audience, issuer, expiry).
   async validateInbound(authHeader: string, activity: Partial<Activity>): Promise<void> {
     if (!this.appId) {
-      this.log.warn('BOT_APP_ID not set — accepting inbound activity without JWT validation');
-      return;
+      // Fail CLOSED (AUD-020): accepting unauthenticated inbound activity is
+      // tolerable ONLY for local emulator testing. In any real deployment a
+      // missing BOT_APP_ID must reject inbound activity rather than trust it.
+      if (allowInsecureLocal()) {
+        this.log.warn('BOT_APP_ID not set — accepting inbound activity without JWT validation (local insecure mode)');
+        return;
+      }
+      throw new UnauthorizedException('teams bot credentials are not configured');
     }
     try {
       // v4.x positional args:

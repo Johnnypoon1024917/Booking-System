@@ -1,10 +1,15 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RolePermission } from './role-permission.entity';
 import { User } from '../users/user.entity';
 import { catalog, defaultMatrix, systemRoles, PermissionGroup } from './permission-catalog';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RedisService } from '../../common/redis/redis.service';
+
+// Channel for cross-pod permission-cache invalidation. Payload is the tenantId
+// whose entries must be dropped (or '*' to clear everything).
+const PERMS_INVALIDATE_CHANNEL = 'perms:invalidate';
 
 export interface RoleMatrix {
   tenantId: string;
@@ -17,18 +22,32 @@ export interface RoleMatrix {
 }
 
 @Injectable()
-export class PermissionsService {
+export class PermissionsService implements OnModuleInit {
   // Per-(tenant,role) permission cache for the hot enforcement path
-  // (PermissionsGuard runs on every guarded request). Short TTL so an
-  // admin's matrix edit takes effect quickly; setRole() also invalidates
-  // the tenant's entries immediately.
+  // (PermissionsGuard runs on every guarded request). Kept LOCAL on purpose —
+  // a per-request Redis round-trip would be slower than this in-process Set
+  // lookup. Short TTL so an admin's matrix edit takes effect quickly; a write
+  // also invalidates the tenant's entries immediately.
+  //
+  // Multi-instance: invalidate() clears only the local pod. Behind a load
+  // balancer that would leave other pods serving stale permission decisions for
+  // up to the TTL after a matrix edit. So a write now also PUBLISHES the tenant
+  // to PERMS_INVALIDATE_CHANNEL and every pod drops its matching entries the
+  // instant it receives the message — local-cache speed with cross-pod
+  // consistency. (TTL remains as a backstop if a message is ever missed.)
   private readonly cache = new Map<string, { perms: Set<string>; expiresAt: number }>();
   private static readonly CACHE_TTL_MS = 30_000;
 
   constructor(
     @InjectRepository(RolePermission) private readonly repo: Repository<RolePermission>,
     @InjectRepository(User) private readonly users: Repository<User>,
+    private readonly redis: RedisService,
   ) {}
+
+  onModuleInit() {
+    // Drop local entries when ANY pod (including this one) reports a matrix edit.
+    this.redis.subscribe(PERMS_INVALIDATE_CHANNEL, (tenantId) => this.dropLocal(tenantId));
+  }
 
   // hasPermission resolves whether a role holds a permission in the tenant's
   // matrix, consulting (and populating) the cache. A role with no stored row
@@ -53,7 +72,17 @@ export class PermissionsService {
     return perms;
   }
 
+  // Clear this tenant's entries locally AND tell every other pod to do the same.
+  // The local clear is immediate (this request's own follow-up reads are correct
+  // without a pub/sub round-trip); the publish fans the invalidation out. When
+  // Redis is disabled, publish() is a no-op and this is just the local clear.
   private invalidate(tenantId: string) {
+    this.dropLocal(tenantId);
+    void this.redis.publish(PERMS_INVALIDATE_CHANNEL, tenantId);
+  }
+
+  private dropLocal(tenantId: string) {
+    if (tenantId === '*') { this.cache.clear(); return; }
     for (const k of this.cache.keys()) {
       if (k.startsWith(`${tenantId}::`)) this.cache.delete(k);
     }

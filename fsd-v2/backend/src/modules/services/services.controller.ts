@@ -36,21 +36,21 @@ export class BookingServicesController {
   constructor(private readonly svc: ServicesService) {}
 
   @Get() list(@CurrentUser() u: AuthUser, @Param('bookingId') bookingId: string) {
-    return this.svc.listForBooking(u.tenantId, bookingId);
+    return this.svc.listForBooking(u.tenantId, u.id, u.role, bookingId);
   }
   @Post() attach(
     @CurrentUser() u: AuthUser,
     @Param('bookingId') bookingId: string,
     @Body() dto: AttachServiceDto,
   ) {
-    return this.svc.attachToBooking(u.tenantId, bookingId, dto.serviceId, dto.quantity ?? 1, dto.note ?? '');
+    return this.svc.attachToBooking(u.tenantId, u.id, u.role, bookingId, dto.serviceId, dto.quantity ?? 1, dto.note ?? '');
   }
   @Delete(':id') detach(
     @CurrentUser() u: AuthUser,
     @Param('bookingId') bookingId: string,
     @Param('id') id: string,
   ) {
-    return this.svc.detachFromBooking(u.tenantId, bookingId, id);
+    return this.svc.detachFromBooking(u.tenantId, u.id, u.role, bookingId, id);
   }
 }
 

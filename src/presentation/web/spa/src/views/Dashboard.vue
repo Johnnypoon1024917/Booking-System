@@ -54,9 +54,7 @@
                left edge. -->
           <rect :x="dynamicBarX(i)" :y="200 - barH(b.count)"
                 :width="dynamicBarWidth" :height="barH(b.count)" class="bar"
-                rx="3" ry="3">
-            <title>{{ b.name }} — {{ b.count }} booking(s)</title>
-          </rect>
+                rx="3" ry="3" />
           <!-- Count label INSIDE the bar (above its top edge) so the
                actual value is visible even if the Y-axis somehow scales
                wrong. Falls back to ABOVE the bar for tiny bars where

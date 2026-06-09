@@ -12,9 +12,11 @@ interface Props {
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// Accessible overlay modal: labelled dialog with a focus trap. Escape and
-// backdrop-click close; content clicks are swallowed so a click inside a form
-// doesn't dismiss it. On open we move focus into the dialog and trap Tab
+// Accessible overlay modal: labelled dialog with a focus trap. The form is
+// locked: only the X button (or Escape, a deliberate keypress) closes it.
+// Backdrop clicks are intentionally ignored — these dialogs carry unsaved
+// form input and a stray misclick on the greyed area used to wipe everything
+// the user had typed. On open we move focus into the dialog and trap Tab
 // inside it; on close we restore focus to whatever was focused before, so
 // keyboard and screen-reader users never end up stranded behind the modal
 // (previously Tab walked straight out into the page underneath).
@@ -65,7 +67,7 @@ export function Modal({ title, onClose, children, footer }: Props) {
   }, []);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop">
       <div
         className="modal"
         ref={dialogRef}
@@ -73,7 +75,6 @@ export function Modal({ title, onClose, children, footer }: Props) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
       >
         <header>
           <h3 id={titleId}>{title}</h3>

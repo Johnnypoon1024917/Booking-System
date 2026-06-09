@@ -136,6 +136,16 @@ export function Login() {
           <p className="muted">{t('login.mustChangeHelp')}</p>
           <label>{t('login.newPassword')}<input type="password" value={newPassword} autoFocus
             onChange={(e) => setNewPassword(e.target.value)} /></label>
+          {/* Spell out the password policy up front and tick it live, instead of
+              only rejecting a too-short password after submit (QA #6). */}
+          <ul className="pw-rules">
+            <li className={newPassword.length >= 8 ? 'ok' : ''}>
+              {newPassword.length >= 8 ? '✓' : '•'} {t('login.passwordRuleMinLength', { count: 8 })}
+            </li>
+            <li className={confirmPassword.length > 0 && newPassword === confirmPassword ? 'ok' : ''}>
+              {confirmPassword.length > 0 && newPassword === confirmPassword ? '✓' : '•'} {t('login.passwordRuleMatch')}
+            </li>
+          </ul>
           <label>{t('login.confirmPassword')}<input type="password" value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)} /></label>
           {err && <div className="err">{err}</div>}

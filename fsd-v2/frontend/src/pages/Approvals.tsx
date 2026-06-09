@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch, Search, CalendarClock, AlertTriangle } from 'lucide-react';
+import { RefreshCcw, Check, X, Clock, CalendarDays, User, UserCog, GitBranch, Search, CalendarClock, AlertTriangle, Building2 } from 'lucide-react';
 import { api } from '../api/client';
 import { Modal } from '../components/Modal';
 import { ApprovalTimeline } from '../components/ApprovalTimeline';
@@ -509,7 +509,11 @@ export function Approvals() {
             <div className="thumb"><Clock size={18} color="white"/></div>
             <div className="approval-info">
               <div className="row gap-sm" style={{ alignItems: 'baseline' }}>
-                <h3 className="truncate">{r?.name || b.resourceId}</h3>
+                {/* The booking request title is the headline — an approver judges
+                    "what is this meeting", not just which room. The room name moves
+                    into the meta row below (it was the only thing shown before, so
+                    the title was missing entirely — QA #12). */}
+                <h3 className="truncate">{b.title || r?.name || b.resourceId}</h3>
                 <span className="tag warning">{b.status}</span>
                 {steps.length > 0 && (
                   <span className="tag info">
@@ -518,6 +522,7 @@ export function Approvals() {
                 )}
               </div>
               <div className="muted text-sm row gap-sm" style={{ flexWrap: 'wrap' }}>
+                <span><Building2 size={11}/> {r?.name || b.resourceId}</span>
                 <span><CalendarDays size={11}/> {new Date(b.startTime).toLocaleDateString()}</span>
                 <span><Clock size={11}/> {new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 <span><User size={11}/> {b.userName || b.userId}</span>

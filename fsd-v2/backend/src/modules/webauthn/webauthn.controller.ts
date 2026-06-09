@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WebauthnService } from './webauthn.service';
 import { Public } from '../../common/decorators/public.decorator';
+import { RateLimit } from '../../common/guards/rate-limit.guard';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { Tenant } from '../tenants/tenant.entity';
 
@@ -57,6 +58,7 @@ export class WebauthnController {
   // Login flow is unauthenticated — caller supplies tenant + username,
   // and after a successful assertion gets a session JWT back.
   @Public()
+  @RateLimit({ limit: 10, windowMs: 5 * 60_000 })
   @Post('login-start')
   @HttpCode(200)
   async loginStart(@Body() body: LoginStartDto) {
@@ -66,6 +68,7 @@ export class WebauthnController {
   }
 
   @Public()
+  @RateLimit({ limit: 10, windowMs: 5 * 60_000 })
   @Post('login-finish')
   @HttpCode(200)
   async loginFinish(@Body() body: LoginFinishDto) {

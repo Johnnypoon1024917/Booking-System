@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { GraphSubscription } from './graph-subscription.entity';
 import { CredentialService } from '../integrations/credential.service';
+import { RedisService } from '../../common/redis/redis.service';
 
 // Microsoft Graph OAuth + change-notification glue.
 //
@@ -37,14 +38,39 @@ export class GraphService {
     @InjectRepository(GraphSubscription)
     private readonly subs: Repository<GraphSubscription>,
     private readonly creds: CredentialService,
+    private readonly redis: RedisService,
   ) {}
 
   // --- OAuth --------------------------------------------------------------
 
+  // Acquire (and cache) an app-only Graph token. Two cache layers:
+  //   - local Map: avoids any network on the hot path within a pod;
+  //   - Redis (when enabled): SHARED across pods so a fleet of api instances
+  //     reuses one token per (tenant,client) instead of each minting its own —
+  //     fewer calls to the Azure token endpoint, which is throttled. The token
+  //     is a bearer secret; it lives only in the internal Redis, TTL'd to its
+  //     own expiry so it can't outlive validity.
   async token(azureTenant: string, clientId: string, clientSecret: string): Promise<string> {
     const key = `${azureTenant}/${clientId}`;
-    const cached = this.tokenCache.get(key);
-    if (cached && cached.expiresAt - Date.now() > 60_000) return cached.value;
+    const now = Date.now();
+
+    const local = this.tokenCache.get(key);
+    if (local && local.expiresAt - now > 60_000) return local.value;
+
+    if (this.redis.enabled && this.redis.cmd) {
+      try {
+        const raw = await this.redis.cmd.get(`graph:token:${key}`);
+        if (raw) {
+          const shared = JSON.parse(raw) as TokenCacheEntry;
+          if (shared.expiresAt - now > 60_000) {
+            this.tokenCache.set(key, shared); // warm the local layer
+            return shared.value;
+          }
+        }
+      } catch (e) {
+        this.log.warn(`graph token shared-cache read failed, fetching fresh: ${(e as Error).message}`);
+      }
+    }
 
     const body = new URLSearchParams({
       grant_type: 'client_credentials',
@@ -64,9 +90,17 @@ export class GraphService {
     if (j.error) throw new Error(`${j.error}: ${j.error_description}`);
     const entry: TokenCacheEntry = {
       value: j.access_token,
-      expiresAt: Date.now() + (j.expires_in - 30) * 1000,
+      expiresAt: now + (j.expires_in - 30) * 1000,
     };
     this.tokenCache.set(key, entry);
+    if (this.redis.enabled && this.redis.cmd) {
+      try {
+        const ttlMs = Math.max(1, entry.expiresAt - now);
+        await this.redis.cmd.set(`graph:token:${key}`, JSON.stringify(entry), 'PX', ttlMs);
+      } catch (e) {
+        this.log.warn(`graph token shared-cache write failed: ${(e as Error).message}`);
+      }
+    }
     return entry.value;
   }
 

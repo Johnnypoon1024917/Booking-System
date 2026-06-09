@@ -5,6 +5,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 
 import { databaseConfig } from './config/database.config';
+import { RedisModule } from './common/redis/redis.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -58,6 +59,10 @@ import { DemoSeederService } from './common/demo-seeder.service';
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRoot(databaseConfig()),
     ScheduleModule.forRoot(),
+    // Shared-state backplane (Redis) for multi-instance HA: realtime pub/sub,
+    // global rate-limit window, broadcast announcement dedup. No-op fallback to
+    // in-memory when REDIS_URL is unset. @Global — exported for all modules.
+    RedisModule,
     // Audit is loaded early because most other modules inject it.
     AuditModule,
     AuthModule,

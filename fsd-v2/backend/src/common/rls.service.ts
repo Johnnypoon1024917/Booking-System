@@ -29,6 +29,19 @@ export class RlsService implements OnApplicationBootstrap {
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
+  // Fail-closed by default in production (AUD-003). When fail-closed, an unset
+  // tenant GUC matches NO rows instead of all rows. System/non-request contexts
+  // (crons, seeders, login) that legitimately need cross-tenant access must set
+  // the bypass GUC `app.rls_bypass='on'` on their connection (see withBypass),
+  // or run under a role granted BYPASSRLS. Set RLS_FAIL_CLOSED=false only for
+  // local development where the convenience of allow-all outweighs isolation.
+  private get failClosed(): boolean {
+    const v = process.env.RLS_FAIL_CLOSED;
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    return process.env.NODE_ENV === 'production';
+  }
+
   async onApplicationBootstrap() {
     this.patchCreateQueryRunner();
     if (process.env.RLS_ENABLED === 'false') {
@@ -59,6 +72,21 @@ export class RlsService implements OnApplicationBootstrap {
       FROM information_schema.columns
       WHERE table_schema = 'public' AND column_name = 'tenant_id'
     `);
+    const failClosed = this.failClosed;
+    // The predicate shared by USING and WITH CHECK. Fail-closed: rows match only
+    // when the tenant GUC equals the row's tenant_id, OR an explicit bypass GUC
+    // is set for system contexts. Fail-open (legacy/dev): also match when the GUC
+    // is unset/empty.
+    const predicate = failClosed
+      ? `(
+            current_setting('app.rls_bypass', true) = 'on'
+            OR tenant_id::text = current_setting('app.current_tenant_id', true)
+          )`
+      : `(
+            current_setting('app.current_tenant_id', true) IS NULL
+            OR current_setting('app.current_tenant_id', true) = ''
+            OR tenant_id::text = current_setting('app.current_tenant_id', true)
+          )`;
     let ok = 0;
     for (const { table_name } of rows) {
       try {
@@ -69,22 +97,42 @@ export class RlsService implements OnApplicationBootstrap {
         await this.dataSource.query(`DROP POLICY IF EXISTS tenant_isolation ON "${table_name}"`);
         await this.dataSource.query(`
           CREATE POLICY tenant_isolation ON "${table_name}"
-          USING (
-            current_setting('app.current_tenant_id', true) IS NULL
-            OR current_setting('app.current_tenant_id', true) = ''
-            OR tenant_id::text = current_setting('app.current_tenant_id', true)
-          )
-          WITH CHECK (
-            current_setting('app.current_tenant_id', true) IS NULL
-            OR current_setting('app.current_tenant_id', true) = ''
-            OR tenant_id::text = current_setting('app.current_tenant_id', true)
-          )
+          USING ${predicate}
+          WITH CHECK ${predicate}
         `);
         ok++;
       } catch (e) {
         this.log.warn(`RLS policy on "${table_name}" skipped: ${(e as Error).message}`);
       }
     }
-    this.log.log(`RLS tenant-isolation policies ensured on ${ok}/${rows.length} tenant tables (fail-open)`);
+    this.log.log(
+      `RLS tenant-isolation policies ensured on ${ok}/${rows.length} tenant tables (${failClosed ? 'fail-closed' : 'fail-open'})`,
+    );
+    if (failClosed) {
+      this.log.warn(
+        'RLS is FAIL-CLOSED: ensure the app connects as a non-superuser role and that cron/seeder/system DB work sets app.rls_bypass=\'on\' (RlsService.withBypass) or runs under a BYPASSRLS role.',
+      );
+    }
+  }
+
+  // Run a system/non-request unit of work with RLS bypass enabled on a dedicated
+  // connection. Use for crons, seeders and other legitimately cross-tenant paths
+  // when RLS is fail-closed. The bypass is scoped to this transaction via
+  // SET LOCAL, so it never leaks back to the pool.
+  async withBypass<T>(work: (qr: QueryRunner) => Promise<T>): Promise<T> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await qr.query(`SELECT set_config('app.rls_bypass', 'on', true)`);
+      const out = await work(qr);
+      await qr.commitTransaction();
+      return out;
+    } catch (e) {
+      try { await qr.rollbackTransaction(); } catch { /* already rolled back */ }
+      throw e;
+    } finally {
+      try { await qr.release(); } catch { /* already gone */ }
+    }
   }
 }

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Resource } from '../resources/resource.entity';
 import { Booking } from '../bookings/booking.entity';
+import { allowInsecureLocal } from '../../common/env';
 
 @Injectable()
 export class KioskService {
@@ -15,7 +16,13 @@ export class KioskService {
   // each kiosk device gets its own header value via reverse proxy.
   assertToken(token?: string) {
     const expected = process.env.KIOSK_TOKEN || '';
-    if (!expected) return;            // unset disables the gate (dev mode)
+    if (!expected) {
+      // Fail CLOSED (AUD-005): an unset KIOSK_TOKEN previously disabled the
+      // gate entirely, exposing kiosk state and quick-book to anyone. Tolerate
+      // a missing token ONLY in explicit local development.
+      if (allowInsecureLocal()) return;
+      throw new UnauthorizedException('kiosk access is not configured');
+    }
     if (token !== expected) throw new UnauthorizedException('bad kiosk token');
   }
 

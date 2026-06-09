@@ -81,6 +81,7 @@
     "bookings": "預訂數",
     "mins": "分鐘",
     "avgMeetingDuration": "平均會議時長",
+    "active": "進行中",
     "checkIn": "簽到",
     "cancelled": "已取消",
     "noShow": "未到場",
@@ -264,6 +265,7 @@
     "cancelFailed": "取消失敗",
     "schedulingAssistant": "日程助理",
     "yourSlot": "您的時段",
+    "allDay": "全天",
     "noBookingsThatDay": "{{room}} 當天沒有其他預訂。",
     "editScopeLabel": "變更套用於",
     "editScopeThis": "此預訂",
@@ -1094,6 +1096,8 @@
     "mustChangeHelp": "管理員為您設定了臨時密碼。請設定新密碼以繼續。",
     "newPassword": "新密碼",
     "confirmPassword": "確認密碼",
+    "passwordRuleMinLength": "至少 {{count}} 個字元",
+    "passwordRuleMatch": "兩次輸入的密碼一致",
     "setPasswordContinue": "設定密碼並繼續",
     "passwordsMismatch": "兩次輸入的密碼不一致",
     "changeFailed": "無法設定密碼",
@@ -1409,7 +1413,8 @@
     "request": "請求",
     "device": "裝置",
     "before": "變更前",
-    "after": "變更後"
+    "after": "變更後",
+    "field": "欄位"
   },
   "adminBookings": {
     "title": "所有預訂",

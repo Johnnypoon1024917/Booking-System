@@ -155,10 +155,9 @@ export function AdminAudit() {
                           {r.userAgent && (
                             <div className="small muted"><b>{t('adminAudit.device')}:</b> {r.userAgent}</div>
                           )}
-                          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                            {r.previous && <JsonBlock label={t('adminAudit.before')} value={r.previous} />}
-                            {r.next && <JsonBlock label={t('adminAudit.after')} value={r.next} />}
-                          </div>
+                          {(r.previous || r.next) && (
+                            <ChangeTable previous={r.previous} next={r.next} t={t} />
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -188,16 +187,52 @@ function OutcomeBadge({ outcome, t }: { outcome: string; t: (k: string) => strin
   );
 }
 
-function JsonBlock({ label, value }: { label: string; value: Record<string, any> }) {
+// Field-level change view: one row per column that moved, showing the exact
+// before → after value. This is the government-facing "what changed" detail —
+// the per-field diff written by the backend AuditSubscriber. Falls back to a
+// single before/after pair for non-field payloads (e.g. an export descriptor).
+function ChangeTable(
+  { previous, next, t }:
+  { previous?: Record<string, any>; next?: Record<string, any>; t: (k: string) => string },
+) {
+  const keys = Array.from(new Set([
+    ...Object.keys(previous ?? {}),
+    ...Object.keys(next ?? {}),
+  ]));
+  if (!keys.length) return null;
   return (
-    <div style={{ minWidth: 220 }}>
-      <div className="small muted" style={{ marginBottom: 2 }}>{label}</div>
-      <pre className="small" style={{
-        margin: 0, padding: 8, borderRadius: 6, background: 'var(--surface-2, rgba(0,0,0,.04))',
-        maxWidth: 420, overflow: 'auto',
-      }}>{JSON.stringify(value, null, 2)}</pre>
+    <div style={{ overflowX: 'auto' }}>
+      <table className="data small" style={{ width: 'auto', minWidth: 320 }}>
+        <thead>
+          <tr>
+            <th>{t('adminAudit.field') || 'Field'}</th>
+            <th>{t('adminAudit.before')}</th>
+            <th>{t('adminAudit.after')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {keys.map((k) => {
+            const before = fmtVal(previous?.[k]);
+            const after = fmtVal(next?.[k]);
+            const changed = before !== after;
+            return (
+              <tr key={k}>
+                <td><code className="small">{k}</code></td>
+                <td className="small" style={{ color: changed ? '#c0392b' : undefined, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{before || <span className="muted">—</span>}</td>
+                <td className="small" style={{ color: changed ? '#1c8a4d' : undefined, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{after || <span className="muted">—</span>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
+}
+
+function fmtVal(v: any): string {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'object') { try { return JSON.stringify(v); } catch { return String(v); } }
+  return String(v);
 }
 
 function shortId(id: string): string {

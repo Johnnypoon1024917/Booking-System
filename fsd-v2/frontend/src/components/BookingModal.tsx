@@ -12,7 +12,7 @@ import { useTenant } from '../stores/tenant';
 import { useBookingRules } from '../hooks/useBookingRules';
 import { useTimezone } from '../hooks/useTimezone';
 import { useT } from '../hooks/useT';
-import { promptDialog } from '../stores/confirm';
+import { promptDialog, confirmDialog } from '../stores/confirm';
 import { useBookingDraft } from '../stores/bookingDraft';
 
 interface CustomField {
@@ -22,6 +22,9 @@ interface CustomField {
   required?: boolean;
   options?: string[];
 }
+
+interface DayWindow { open: string; close: string }
+interface OperatingHours { days?: Record<string, DayWindow | null>; open?: string; close?: string }
 
 interface Resource {
   id?: string;
@@ -35,6 +38,21 @@ interface Resource {
   requiresApproval?: boolean;
   RequiresApproval?: boolean;
   customFields?: CustomField[];
+  operatingHours?: OperatingHours | null;
+}
+
+// The open/close window a room keeps on `weekday` (0=Sun..6=Sat), or null when
+// it's closed that day. Mirrors the backend windowForWeekday so the recurrence
+// preview can flag dates the room isn't open — the old preview only checked
+// booking clashes, so it cheerfully reported a closed room as "free" (QA #16).
+function windowForWeekday(oh: OperatingHours | null | undefined, weekday: number): DayWindow | null {
+  if (!oh) return null;
+  if (oh.days) {
+    const key = String(weekday);
+    return Object.prototype.hasOwnProperty.call(oh.days, key) ? (oh.days[key] ?? null) : null;
+  }
+  if (oh.open && oh.close) return { open: oh.open, close: oh.close };
+  return null;
 }
 
 interface Props {
@@ -49,6 +67,10 @@ interface Props {
   date: string;          // YYYY-MM-DD  (initial; editable in the dialog)
   start: string;         // HH:MM       (initial; editable in the dialog)
   end: string;           // HH:MM       (initial; editable in the dialog)
+  // All-day reservation: the slot covers the room's whole open window. The time
+  // fields are locked, the duration caps are waived, and the booking is sent as
+  // a full local-day span the server clamps to operating hours (QA #15).
+  allDay?: boolean;
   // Recurrence seeds from a caller that already collected the pattern (e.g. the
   // Search page's "Repeating Schedule" panel). Without these the dialog opened
   // with recur=false and silently discarded the user's choices. Ignored in edit
@@ -98,22 +120,60 @@ function FreeBusyTimeline({ winStart, winEnd, busy, slotStart, slotEnd, conflict
   );
 }
 
-// The nth occurrence date (YYYY-MM-DD) of a recurrence starting at `dateStr`.
-// Mirrors the backend's stepping so the modal can preview conflicts before the
-// series is submitted. n=0 is the first booking. Monthly snaps the day-of-month
-// down to the days the target month actually has (Jan 31 → Feb 28, not a
-// rolled-over Mar 3), matching RecurrenceService; the server is still the
-// source of truth for the materialised dates.
 function pad2(n: number) { return String(n).padStart(2, '0'); }
-function occurrenceDate(dateStr: string, pattern: string, n: number): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  if (pattern === 'monthly') {
-    const maxDom = new Date(y, m - 1 + n + 1, 0).getDate(); // day 0 of next month
-    const base = new Date(y, m - 1 + n, Math.min(d, maxDom));
-    return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function fmtDate(d: Date): string { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+
+// Materialise the occurrence dates (YYYY-MM-DD) of a recurrence for the modal's
+// conflict preview, honouring the repeat INTERVAL and (for weekly) the selected
+// weekdays — so the preview matches what RecurrenceService.expand will actually
+// book (QA #1). The server stays the source of truth; this just lets the user
+// see the dates and any clashes before submitting. Bounded by `count` or the
+// `until` date, capped at 100.
+function seriesDates(
+  startStr: string, pattern: string, interval: number, byday: number[],
+  count: number, until: string,
+): string[] {
+  const step = Math.max(1, interval || 1);
+  const [y, m, d] = startStr.split('-').map(Number);
+  const start = new Date(y, m - 1, d);
+  const CAP = 100;
+  const out: string[] = [];
+  const within = (ds: string) => (until ? ds <= until : true);
+  const wantCount = until ? CAP : Math.max(1, Math.min(count || 1, CAP));
+
+  if (pattern === 'weekly') {
+    const days = byday.length ? [...byday].sort() : [start.getDay()];
+    // Walk week-by-week (interval weeks), emitting each selected weekday.
+    let weekStart = new Date(start); weekStart.setDate(start.getDate() - start.getDay());
+    for (let guard = 0; out.length < wantCount && guard < 600; guard++) {
+      for (const wd of days) {
+        const cand = new Date(weekStart); cand.setDate(weekStart.getDate() + wd);
+        if (cand < start) continue;
+        const ds = fmtDate(cand);
+        if (until && ds > until) return out;
+        out.push(ds);
+        if (out.length >= wantCount) return out;
+      }
+      weekStart.setDate(weekStart.getDate() + 7 * step);
+    }
+    return out;
   }
-  const base = new Date(y, m - 1, d + n * (pattern === 'daily' ? 1 : pattern === 'bi-weekly' ? 14 : 7));
-  return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
+
+  for (let i = 0; out.length < wantCount && i < CAP; i++) {
+    let cand: Date;
+    if (pattern === 'monthly') {
+      const maxDom = new Date(y, m - 1 + i * step + 1, 0).getDate();
+      cand = new Date(y, m - 1 + i * step, Math.min(d, maxDom));
+    } else {
+      const days = pattern === 'daily' ? 1 : 14; // bi-weekly = 14d base
+      cand = new Date(y, m - 1, d + i * step * days);
+    }
+    const ds = fmtDate(cand);
+    if (!within(ds)) break;
+    out.push(ds);
+  }
+  return out;
 }
 
 // Dedicated booking dialog — replaces the inline calendar prompt.
@@ -123,7 +183,7 @@ function occurrenceDate(dateStr: string, pattern: string, n: number): string {
 // matches the server-side guard. When no room is pre-selected the dialog
 // shows a resource picker so the user can drag any open slot and choose
 // the room here (Teams-style), rather than filtering first.
-export function BookingModal({ resource, resources, bookings, existingBooking, date, start, end, initialRecur, initialPattern, initialUntil, onClose, onBooked }: Props) {
+export function BookingModal({ resource, resources, bookings, existingBooking, date, start, end, allDay, initialRecur, initialPattern, initialUntil, onClose, onBooked }: Props) {
   const toast = useToast();
   const { validate, allowsPattern } = useBookingRules();
   const tz = useTimezone();
@@ -165,6 +225,14 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   const [pattern, setPattern] = useState<'daily' | 'weekly' | 'bi-weekly' | 'monthly'>(draft0?.pattern || initialPattern || 'weekly');
   const [count, setCount] = useState(draft0?.count ?? 4);
   const [until, setUntil] = useState(draft0?.until ?? (initialUntil || ''));   // optional end-date for the series (QA #7)
+  // Outlook-style recurrence conditionals the backend already accepts but the
+  // dialog never exposed: the repeat INTERVAL ("every N days/weeks/months") and,
+  // for weekly, WHICH weekdays the meeting lands on (QA #1).
+  const [recurInterval, setRecurInterval] = useState<number>(draft0?.interval ?? 1);
+  const [byday, setByday] = useState<number[]>(draft0?.byday ?? []);
+  function toggleByday(wd: number) {
+    setByday((cur) => cur.includes(wd) ? cur.filter((d) => d !== wd) : [...cur, wd].sort());
+  }
   // Seed from the booking in edit mode so existing add-ons show pre-ticked and
   // can be changed (services are now editable post-creation); otherwise from the
   // saved draft so add-ons survive a room switch.
@@ -191,7 +259,10 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   const customization = useTenant((s) => s.customization);
   const costCenters: string[] = Array.isArray(customization?.cost_centers) ? customization!.cost_centers : [];
 
-  const ruleError = useMemo(() => validate({ date: bDate, start: bStart, end: bEnd }), [bDate, bStart, bEnd, validate]);
+  // All-day applies only to a fresh booking (the search page's toggle); editing
+  // an existing booking keeps the normal duration rules.
+  const isAllDay = !isEdit && !!allDay;
+  const ruleError = useMemo(() => validate({ date: bDate, start: bStart, end: bEnd, allDay: isAllDay }), [bDate, bStart, bEnd, isAllDay, validate]);
 
   const selected = useMemo(
     () => choices.find((r) => rId(r) === selResId),
@@ -257,31 +328,46 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
 
   // Recurrence conflict preview (Outlook-style): expand the series client-side
   // and flag which occurrences land on a slot the chosen room is already booked
-  // for. The backend still skips/handles conflicts on submit — this only warns
-  // the user up front ("free for 3 of 4 dates") so they can adjust first.
+  // for OR a day/time the room is closed. The backend still skips/handles these
+  // on submit — this only warns the user up front ("free for 3 of 4 dates") so
+  // they can adjust first. Flagging closed days here keeps the preview honest:
+  // it used to report a shut room as free (QA #16).
   const recurPreview = useMemo(() => {
-    if (!recur || !selResId) return [] as { date: string; conflict: boolean }[];
-    const dates: string[] = [];
-    const cap = 100;
-    for (let i = 0; i < cap; i++) {
-      const ds = occurrenceDate(bDate, pattern, i);
-      if (until) { if (ds > until) break; } else if (i >= count) break;
-      dates.push(ds);
-    }
-    return dates.map((ds) => {
+    type Occ = { date: string; conflict: boolean; closed: boolean };
+    if (!recur || !selResId) return [] as Occ[];
+    const oh = selected?.operatingHours;
+    const slotS = hmToMin(bStart);
+    const slotE = hmToMin(bEnd);
+    const dates = seriesDates(bDate, pattern, recurInterval, pattern === 'weekly' ? byday : [], count, until);
+    return dates.map((ds): Occ => {
+      // Operating-hours check, evaluated in the tenant's local wall clock (the
+      // same clock bStart/bEnd are in). A closed weekday, or a slot poking
+      // outside the day's open window, means the room can't host this date.
+      let closed = false;
+      if (oh) {
+        const [yy, mm, dd] = ds.split('-').map(Number);
+        const weekday = new Date(yy, mm - 1, dd).getDay();
+        const win = windowForWeekday(oh, weekday);
+        if (!win) closed = true;
+        else if (!isAllDay) {
+          const open = hmToMin(win.open), close = hmToMin(win.close);
+          if (close > open && (slotS < open || slotE > close)) closed = true;
+        }
+      }
       let sMs: number, eMs: number;
       try { sMs = new Date(tz.toUtcIso(ds, bStart)).getTime(); eMs = new Date(tz.toUtcIso(ds, bEnd)).getTime(); }
-      catch { return { date: ds, conflict: false }; }
-      if (!(eMs > sMs)) return { date: ds, conflict: false };
+      catch { return { date: ds, conflict: false, closed }; }
+      if (!(eMs > sMs)) return { date: ds, conflict: false, closed };
       const conflict = (bookings || []).some((b) =>
         b.resourceId === selResId &&
         b.status !== 'Cancelled' &&
         new Date(b.startTime).getTime() < eMs &&
         new Date(b.endTime).getTime() > sMs);
-      return { date: ds, conflict };
+      return { date: ds, conflict, closed };
     });
-  }, [recur, selResId, bDate, pattern, count, until, tz, bStart, bEnd, bookings]);
-  const recurConflicts = recurPreview.filter((o) => o.conflict).length;
+  }, [recur, selResId, selected, isAllDay, bDate, pattern, recurInterval, byday, count, until, tz, bStart, bEnd, bookings]);
+  // An occurrence the room can't host — either already booked or closed.
+  const recurConflicts = recurPreview.filter((o) => o.conflict || o.closed).length;
 
   const resName  = selected ? rName(selected) : '';
   const resLoc   = selected ? (selected.location || selected.Location || '') : '';
@@ -324,9 +410,9 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   useEffect(() => {
     if (isEdit) return;
     useBookingDraft.getState().save({
-      title, meetingUrl, isPrivate, recur, pattern, count, until, services, costCenter, cfValues,
+      title, meetingUrl, isPrivate, recur, pattern, interval: recurInterval, byday, count, until, services, costCenter, cfValues,
     });
-  }, [isEdit, title, meetingUrl, isPrivate, recur, pattern, count, until, services, costCenter, cfValues]);
+  }, [isEdit, title, meetingUrl, isPrivate, recur, pattern, recurInterval, byday, count, until, services, costCenter, cfValues]);
 
   // Pre-defined service add-ons — admins can override these via the
   // tenant studio later; for now this matches v1's hard-coded list.
@@ -454,6 +540,33 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
       Object.entries(cfValues).filter(([k]) => definedKeys.has(k)),
     );
     const customFieldValues = Object.keys(scopedCf).length ? scopedCf : undefined;
+
+    // Recurring series that hit unavailable dates: alert and make the user
+    // decide — skip those dates and book the rest, or cancel the whole series —
+    // rather than silently materialising a partial series (QA #3). Only the
+    // bookable occurrences would be created; the flagged ones are dropped.
+    if (recur) {
+      const blocked = recurPreview.filter((o) => o.conflict || o.closed).length;
+      const bookable = recurPreview.length - blocked;
+      if (blocked > 0) {
+        if (bookable === 0) {
+          toast.error(t('bookingModal.cannotBook'),
+            t('bookingModal.recurNoneBookable', { defaultValue: 'None of the selected dates are available for this room.' }));
+          return;
+        }
+        const go = await confirmDialog({
+          title: t('bookingModal.recurSkipTitle', { defaultValue: 'Some dates are unavailable' }),
+          message: t('bookingModal.recurSkipConfirm', {
+            blocked, bookable, total: recurPreview.length,
+            defaultValue: `${blocked} of ${recurPreview.length} dates are unavailable (already booked or the room is closed). Book the remaining ${bookable} and skip the rest?`,
+          }),
+          confirmText: t('bookingModal.recurSkipConfirmBtn', { defaultValue: 'Book available dates' }),
+          cancelText: t('bookingModal.recurSkipCancelBtn', { defaultValue: 'Cancel series' }),
+        });
+        if (!go) return;
+      }
+    }
+
     setBusy(true);
     try {
       // Lock the wall-clock slot to the tenant zone (not the browser's) so a
@@ -471,6 +584,10 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           firstStart: startIso,
           firstEnd: endIso,
           pattern,
+          // Outlook-style conditionals: repeat interval and, for weekly, the
+          // chosen weekdays (QA #1). bi-weekly fixes its own 2-week cadence.
+          interval: pattern === 'bi-weekly' ? 1 : recurInterval,
+          byday: pattern === 'weekly' && byday.length ? byday : undefined,
           // End the series either by a fixed occurrence count or by an
           // explicit until-date — mirrors the NewBooking wizard (QA #7).
           count: until ? undefined : count,
@@ -604,14 +721,20 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           <Calendar size={14} />
           <input type="date" value={bDate} onChange={(e) => setBDate(e.target.value)} />
         </label>
-        <label className="bm-when">
-          <Clock size={14} />
-          <input type="time" step={300} value={bStart} aria-label={t('bookingModal.startLabel')}
-                 onChange={(e) => setBStart(e.target.value)} />
-          <span className="bm-dash">–</span>
-          <input type="time" step={300} value={bEnd} aria-label={t('bookingModal.endLabel')}
-                 onChange={(e) => setBEnd(e.target.value)} />
-        </label>
+        {isAllDay ? (
+          <span className="bm-when bm-allday-tag">
+            <Clock size={14} /> {t('bookingModal.allDay', { defaultValue: 'All day' })}
+          </span>
+        ) : (
+          <label className="bm-when">
+            <Clock size={14} />
+            <input type="time" step={300} value={bStart} aria-label={t('bookingModal.startLabel')}
+                   onChange={(e) => setBStart(e.target.value)} />
+            <span className="bm-dash">–</span>
+            <input type="time" step={300} value={bEnd} aria-label={t('bookingModal.endLabel')}
+                   onChange={(e) => setBEnd(e.target.value)} />
+          </label>
+        )}
         <span className={`tag ${needsApproval ? 'warning' : 'ok'}`}>
           {needsApproval ? t('bookingModal.requiresApproval') : t('bookingModal.autoApproved')}
         </span>
@@ -752,6 +875,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           <span><Repeat size={13} /> {t('bookingModal.makeRecurring')}</span>
         </div>
         {recur && (
+          <>
           <div className="grid-2 mt">
             <label>{t('bookingModal.pattern')}
               <select value={pattern} onChange={(e) => setPattern(e.target.value as any)}>
@@ -761,6 +885,22 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
                 {allowsPattern('monthly') && <option value="monthly">{t('bookingModal.monthly')}</option>}
               </select>
             </label>
+            {/* Repeat interval — "every N days/weeks/months" (Outlook parity).
+                Hidden for bi-weekly, which already fixes the cadence at 2 weeks. */}
+            {pattern !== 'bi-weekly' && (
+              <label>{t('booking.every')}
+                <div className="row gap-sm" style={{ alignItems: 'center' }}>
+                  <input type="number" min={1} max={12} value={recurInterval}
+                         onChange={(e) => setRecurInterval(Math.max(1, +e.target.value || 1))}
+                         style={{ width: 64 }} />
+                  <span className="muted">{pattern === 'daily'
+                    ? t('booking.unitDays')
+                    : pattern === 'monthly'
+                      ? t('booking.unitMonths')
+                      : t('booking.unitWeeks')}</span>
+                </div>
+              </label>
+            )}
             <label>{t('bookingModal.occurrences')}
               <input type="number" min={1} max={100} value={count}
                      onChange={(e) => setCount(+e.target.value || 1)} disabled={!!until} />
@@ -770,6 +910,24 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
                      onChange={(e) => setUntil(e.target.value)} />
             </label>
           </div>
+          {/* Weekly: which weekdays the meeting repeats on (Outlook parity). */}
+          {pattern === 'weekly' && (
+            <div className="mt">
+              <span className="muted text-sm">{t('booking.on')}</span>
+              <div className="row gap-sm" style={{ flexWrap: 'wrap', marginTop: 4 }}>
+                {WEEKDAY_SHORT.map((w, i) => (
+                  <label key={w} className={`dep-chip${byday.includes(i) ? ' active' : ''}`}>
+                    <input type="checkbox" checked={byday.includes(i)} onChange={() => toggleByday(i)} />
+                    {t(`booking.weekdayShort.${i}`)}
+                  </label>
+                ))}
+              </div>
+              <small className="muted" style={{ display: 'block', marginTop: 4 }}>
+                {t('bookingModal.bydayHint', { defaultValue: 'Leave all unchecked to repeat on the start day’s weekday.' })}
+              </small>
+            </div>
+          )}
+          </>
         )}
         {recur && selResId && recurPreview.length > 0 && (
           <div className="mt">
@@ -780,12 +938,17 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
                 : t('bookingModal.recurAllClear', { room: resName, total: recurPreview.length })}
             </small>
             <div className="chip-grid">
-              {recurPreview.map((o) => (
-                <span key={o.date} className={`tag ${o.conflict ? 'warning' : 'ok'}`}
-                      title={o.conflict ? t('bookingModal.roomBusyConflict', { room: resName }) : ''}>
-                  {o.date}{o.conflict ? ' ⚠' : ''}
-                </span>
-              ))}
+              {recurPreview.map((o) => {
+                const bad = o.conflict || o.closed;
+                const title = o.closed
+                  ? t('bookingModal.recurClosed', { room: resName, defaultValue: `${resName} is closed then` })
+                  : o.conflict ? t('bookingModal.roomBusyConflict', { room: resName }) : '';
+                return (
+                  <span key={o.date} className={`tag ${bad ? 'warning' : 'ok'}`} title={title}>
+                    {o.date}{bad ? ' ⚠' : ''}
+                  </span>
+                );
+              })}
             </div>
             {recurConflicts > 0 && (
               <small className="muted" style={{ display: 'block', marginTop: 6 }}>

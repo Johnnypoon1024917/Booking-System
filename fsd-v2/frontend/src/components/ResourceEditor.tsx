@@ -5,6 +5,8 @@ import { Switch } from './Switch';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useTenant } from '../stores/tenant';
+import { useAssetTypes } from '../hooks/useAssetTypes';
+import { useRegions } from '../hooks/useRegions';
 import { confirmDialog, alertDialog } from '../stores/confirm';
 
 interface Resource {
@@ -110,8 +112,6 @@ interface Props {
 // hierarchy and a custom-fields editor so admins can tailor the booking
 // flow per room. Port of v1's ResourceEditor.vue, simplified to drop
 // the floor-plan position editor (still owned by the floor-plan view).
-const REGIONS = ['Hong Kong', 'Kowloon', 'New Territories'];
-const ASSET_TYPES = ['Meeting Room', 'Conference', 'Top Management', 'Equipment', 'Vehicle'];
 const FIELD_TYPES: CustomField['type'][] = ['text', 'number', 'select', 'date', 'checkbox'];
 
 export function ResourceEditor({ resource, departments = [], onClose, onSaved }: Props) {
@@ -126,6 +126,14 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
     ...resource,
   }));
   const [busy, setBusy] = useState(false);
+  // Asset-type options come from the shared catalog hook so this list and the
+  // approval-rule scope picker can't drift (QA #11). Pass the current value so a
+  // legacy/custom type already on the room stays selectable.
+  const assetTypes = useAssetTypes([form.assetType || ''].filter(Boolean));
+  // Region options come from the shared catalog (the tenant's Locations) so the
+  // room editor and the user editor offer the same admin-managed list (QA #7).
+  // The room's current region is passed so a legacy value never disappears.
+  const regions = useRegions([form.region || ''].filter(Boolean));
 
   // Sub-resource hierarchy mode: whole (standalone), splittable (parent
   // with N child rooms), or pods (one resource bookable by N people).
@@ -264,6 +272,10 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
 
   async function save() {
     if (!form.name?.trim()) { toast.warning('Name is required'); return; }
+    // Region is mandatory: an unregioned room can't be region-scoped for
+    // dashboards, approvals or user region-access, and used to be silently
+    // saveable as null (QA #8). Force a choice from the managed region list.
+    if (!form.region?.trim()) { toast.warning('Region is required'); return; }
     // Custom-field keys are the JSONB object keys stored on every booking of
     // this resource, so a duplicate key silently clobbers a sibling field's
     // answer ({ cc: "A", cc: "B" } collapses to { cc: "B" }) before it reaches
@@ -365,14 +377,15 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
         </label>
         <label>Asset type
           <select value={form.assetType || 'Meeting Room'} onChange={(e) => patch({ assetType: e.target.value })}>
-            {ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
+            {assetTypes.map((t) => <option key={t}>{t}</option>)}
           </select>
         </label>
-        <label>Region
+        <label>Region*
           <select value={form.region || ''} onChange={(e) => patch({ region: e.target.value })}>
             <option value="">—</option>
-            {REGIONS.map((r) => <option key={r}>{r}</option>)}
+            {regions.map((r) => <option key={r}>{r}</option>)}
           </select>
+          <small className="muted">Required · managed under Admin → Locations.</small>
         </label>
         <label>Location
           <input value={form.location || ''} onChange={(e) => patch({ location: e.target.value })}
@@ -458,6 +471,19 @@ export function ResourceEditor({ resource, departments = [], onClose, onSaved }:
         <label className="row"><input type="checkbox" checked={!!form.isActive}
           onChange={(e) => patch({ isActive: e.target.checked })} /> Active</label>
       </div>
+      {/* Spell out who a restricted room is actually bookable by, and let the
+          admin control it via the Department selector above — previously
+          "Restricted" was an opaque checkbox with no way to say WHO it was
+          restricted to, and the room was still hidden from / rejected for the
+          wrong people (QA #9). Restricted + a department = that department's
+          members (plus admins); restricted with no department = admins only. */}
+      {form.isRestricted && (
+        <p className="muted small" style={{ marginTop: 6 }}>
+          {form.departmentId
+            ? <>🔒 Bookable only by <b>{departments.find((d) => d.id === form.departmentId)?.name || 'the selected department'}</b> members and administrators. Restricted rooms are hidden from everyone else in search.</>
+            : <>🔒 Bookable by <b>administrators only</b>. Pick a <b>Department</b> above to also let that group book it. Restricted rooms are hidden from everyone else in search.</>}
+        </p>
+      )}
 
       <div className="bm-box mt">
         <h4 style={{ margin: '0 0 4px' }}>Booking rule overrides</h4>

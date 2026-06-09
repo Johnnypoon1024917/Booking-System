@@ -72,7 +72,7 @@ export class CredentialService implements OnModuleInit {
   obfuscate(plaintext: string): string {
     if (!plaintext) return '';
     const nonce = crypto.randomBytes(NONCE_LEN);
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.key, nonce);
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.key, nonce, { authTagLength: TAG_LEN });
     const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     const sealed = Buffer.concat([nonce, encrypted, tag]);
@@ -97,7 +97,11 @@ export class CredentialService implements OnModuleInit {
       const nonce = raw.subarray(0, NONCE_LEN);
       const tag = raw.subarray(raw.length - TAG_LEN);
       const ct = raw.subarray(NONCE_LEN, raw.length - TAG_LEN);
-      const decipher = crypto.createDecipheriv('aes-256-gcm', this.key, nonce);
+      // Enforce the expected 16-byte GCM tag length (AUD-029): without an
+      // explicit authTagLength Node accepts shorter forged tags, weakening the
+      // integrity guarantee. Reject anything that isn't exactly TAG_LEN.
+      if (tag.length !== TAG_LEN) throw new Error('invalid auth tag length');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', this.key, nonce, { authTagLength: TAG_LEN });
       decipher.setAuthTag(tag);
       const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
       return pt.toString('utf8');

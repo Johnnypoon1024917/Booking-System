@@ -81,6 +81,7 @@
     "bookings": "预订数",
     "mins": "分钟",
     "avgMeetingDuration": "平均会议时长",
+    "active": "进行中",
     "checkIn": "签到",
     "cancelled": "已取消",
     "noShow": "未到场",
@@ -264,6 +265,7 @@
     "cancelFailed": "取消失败",
     "schedulingAssistant": "日程助手",
     "yourSlot": "您的时段",
+    "allDay": "全天",
     "noBookingsThatDay": "{{room}} 当天没有其他预订。",
     "editScopeLabel": "更改应用于",
     "editScopeThis": "此预订",
@@ -1094,6 +1096,8 @@
     "mustChangeHelp": "管理员为您设置了临时密码。请设置新密码以继续。",
     "newPassword": "新密码",
     "confirmPassword": "确认密码",
+    "passwordRuleMinLength": "至少 {{count}} 个字符",
+    "passwordRuleMatch": "两次输入的密码一致",
     "setPasswordContinue": "设置密码并继续",
     "passwordsMismatch": "两次输入的密码不一致",
     "changeFailed": "无法设置密码",
@@ -1409,7 +1413,8 @@
     "request": "请求",
     "device": "设备",
     "before": "变更前",
-    "after": "变更后"
+    "after": "变更后",
+    "field": "字段"
   },
   "adminBookings": {
     "title": "所有预订",

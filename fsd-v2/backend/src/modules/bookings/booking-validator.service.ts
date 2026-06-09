@@ -50,6 +50,13 @@ export class BookingValidatorService {
     // null/undefined for a resource with no region — only tenant-wide
     // closures apply then.
     resourceRegion?: string | null,
+    // All-day bookings reserve the room for the whole day (or its full
+    // operating-hours window). Their span legitimately exceeds the per-booking
+    // min/max duration caps — a room open 09:00–18:00 is a 9-hour all-day
+    // booking, past the 8-hour default — so those two duration rules are
+    // skipped for them (QA #15). Every other rule (past-date, horizon,
+    // blackout, holiday) still applies.
+    isAllDay = false,
   ): Promise<void> {
     if (!(end > start)) throw new BadRequestException('end must be after start');
 
@@ -69,13 +76,16 @@ export class BookingValidatorService {
       throw new BadRequestException(`bookings can only be made up to ${horizonDays} days in advance`);
     }
 
-    // Duration.
-    const mins = (+end - +start) / 60000;
-    if (mins < minMinutes) {
-      throw new BadRequestException(`minimum booking duration is ${minMinutes} minutes`);
-    }
-    if (mins > maxMinutes) {
-      throw new BadRequestException(`maximum booking duration is ${Math.round(maxMinutes / 6) / 10} hours`);
+    // Duration — skipped entirely for all-day bookings (they span the room's
+    // whole open window by design, see isAllDay above).
+    if (!isAllDay) {
+      const mins = (+end - +start) / 60000;
+      if (mins < minMinutes) {
+        throw new BadRequestException(`minimum booking duration is ${minMinutes} minutes`);
+      }
+      if (mins > maxMinutes) {
+        throw new BadRequestException(`maximum booking duration is ${Math.round(maxMinutes / 6) / 10} hours`);
+      }
     }
 
     // Blackout + holiday: evaluated against EVERY local calendar date the

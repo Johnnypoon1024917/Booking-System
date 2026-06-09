@@ -24,6 +24,10 @@ export interface BookingDraft {
   isPrivate: boolean;
   recur: boolean;
   pattern: 'daily' | 'weekly' | 'bi-weekly' | 'monthly';
+  // Outlook-style recurrence conditionals: repeat interval and (weekly) the
+  // selected weekdays (0=Sun..6=Sat), so they survive a conflict-and-retry too.
+  interval: number;
+  byday: number[];
   count: number;
   until: string;
   services: string[];
@@ -42,7 +46,7 @@ interface BookingDraftState {
 
 const EMPTY: BookingDraft = {
   title: '', meetingUrl: '', isPrivate: false,
-  recur: false, pattern: 'weekly', count: 4, until: '',
+  recur: false, pattern: 'weekly', interval: 1, byday: [], count: 4, until: '',
   services: [], costCenter: '', cfValues: {},
 };
 

@@ -167,7 +167,7 @@ export class BookingsController {
   // DELETE /api/v1/bookings/recurring/:id — cancel the whole series.
   @Delete('recurring/:id') @HttpCode(204)
   async cancelSeries(@CurrentUser() u: AuthUser, @Param('id') id: string, @Query('reason') reason?: string) {
-    await this.recurrence.cancelSeries(u.tenantId, id, reason || '');
+    await this.recurrence.cancelSeries(u.tenantId, u.id, u.role, id, reason || '');
     await this.audit.record(u, {
       action: 'BOOKING_SERIES_CANCELLED', severity: 'info',
       targetEntity: 'recurrence', targetId: id, next: { reason },
@@ -253,9 +253,11 @@ export class BookingsController {
   }
 
   // POST /api/v1/bookings/:id/checkin-token — issue a fresh QR token.
+  // Owner or admin only — the token is a redeemable check-in credential.
   @Post(':id/checkin-token')
   issueCheckinToken(@CurrentUser() u: AuthUser, @Param('id') id: string) {
-    return this.checkin.issueToken(u.tenantId, id);
+    const isAdmin = AdminRoles.includes(u.role);
+    return this.checkin.issueToken(u.tenantId, u.id, isAdmin, id);
   }
 }
 

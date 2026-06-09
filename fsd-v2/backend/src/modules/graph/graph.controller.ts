@@ -1,10 +1,12 @@
 import {
-  Body, Controller, Get, Header, HttpCode, Logger, Post, Query, Req, Res,
+  Body, Controller, Get, Header, HttpCode, Logger, Post, Query, Req, Res, UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { Public } from '../../common/decorators/public.decorator';
+import { AdminRoles, RequireRoles } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { GraphService } from './graph.service';
 
 // GraphNotificationsController — receives Microsoft Graph change-
@@ -69,7 +71,11 @@ export class GraphController {
 
   // Manual "reconcile now" — surfaced as an admin action in the UI for
   // operators who want to force a renewal pass instead of waiting an hour.
+  // Admin-gated (AUD-018): triggers tenant-wide Graph subscription renewal,
+  // so a plain authenticated user must not be able to invoke it.
   @Post('sync') @HttpCode(202)
+  @UseGuards(RolesGuard)
+  @RequireRoles(...AdminRoles)
   async manualSync() {
     await this.graph.renewExpiring();
     return { status: 'reconcile-triggered' };

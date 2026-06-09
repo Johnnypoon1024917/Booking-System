@@ -6,17 +6,14 @@ import { useT } from '../hooks/useT';
 import { useToast } from '../stores/toast';
 import { confirmDialog } from '../stores/confirm';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
+// Shared built-in asset-type list — the single source the resource editor also
+// uses, so the scope dropdown here can't drift from it (the local copy used to
+// omit "Conference", so a rule could never target a Conference room — QA #11).
+import { BUILTIN_ASSET_TYPES } from '../hooks/useAssetTypes';
 
 // Kept aligned with backend modules/approvals/grade.ts so admins can't
 // pick a min_grade that silently fails server-side.
 const GRADES = ['SO', 'SSO', 'ADO', 'DO', 'SDO', 'ADD', 'DDGFS', 'DGFS'];
-
-// Built-in asset types ship in code (backend ResourceType comment: "Built-ins
-// remain present in code as a floor"), so they may not appear in the
-// resource-types table. We seed the scope dropdown with these and merge in the
-// live catalog + any types actually in use, so custom types like "Hot Desk"
-// are always selectable.
-const BUILTIN_ASSET_TYPES = ['Meeting Room', 'Vehicle', 'Equipment', 'Top Management'];
 
 type Scope = 'asset_type' | 'resource' | 'department' | 'tenant';
 type ApproverType = 'user' | 'role' | 'manager' | 'department_head';

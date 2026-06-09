@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Resource } from './resource.entity';
 import { Booking } from '../bookings/booking.entity';
+import { User } from '../users/user.entity';
 import { normalizeOperatingHours } from '../../common/operating-hours';
 
 export interface SearchCriteria {
@@ -12,6 +13,11 @@ export interface SearchCriteria {
   capacity?: number;
   start: Date;
   end: Date;
+  // The searching user, so restricted rooms they can't book are hidden from
+  // results instead of shown-then-rejected on submit (QA #9). Omit to skip the
+  // access filter (e.g. internal callers).
+  userId?: string;
+  isAdmin?: boolean;
 }
 
 // Write shape accepted by create/update: the entity columns plus the
@@ -35,6 +41,7 @@ export class ResourcesService {
   constructor(
     @InjectRepository(Resource) private readonly repo: Repository<Resource>,
     @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
+    @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
 
   list(tenantId: string) {
@@ -49,6 +56,12 @@ export class ResourcesService {
 
   async create(tenantId: string, dto: ResourceWriteDto) {
     const { subResources, ...fields } = dto;
+    // Region is mandatory (QA #8): an unregioned room escapes every region-scoped
+    // path — dashboards, region-scoped approvals, user region-access — so reject
+    // it at creation rather than letting a null region persist silently.
+    if (!fields.region || !String(fields.region).trim()) {
+      throw new BadRequestException('region is required');
+    }
     if ('operatingHours' in fields) {
       fields.operatingHours = normalizeOperatingHours(fields.operatingHours);
     }
@@ -247,7 +260,30 @@ export class ResourcesService {
     if (c.location) qb.andWhere('r.location = :location', { location: c.location });
     if (c.assetType) qb.andWhere('r.asset_type = :at', { at: c.assetType });
     if (c.capacity && c.capacity > 0) qb.andWhere('r.capacity >= :cap', { cap: c.capacity });
-    return qb.orderBy('r.name', 'ASC').getMany();
+    const rooms = await qb.orderBy('r.name', 'ASC').getMany();
+    return this.filterRestricted(rooms, c);
+  }
+
+  // Hide restricted rooms the searcher can't actually book, so the result list
+  // matches what BookingsService.assertCanBook will allow on submit — otherwise
+  // a general user saw a restricted room as "available" and only learned it was
+  // off-limits when the booking 403'd (QA #9). Rules mirror assertCanBook: any
+  // admin may book any restricted room; a non-admin may book a restricted room
+  // only when it's scoped to a department they belong to. A restricted room with
+  // no department is admin-only.
+  private async filterRestricted(rooms: Resource[], c: SearchCriteria): Promise<Resource[]> {
+    if (c.isAdmin) return rooms;                       // admins see everything
+    if (!rooms.some((r) => r.isRestricted)) return rooms; // nothing to filter
+    let myDepts = new Set<string>();
+    if (c.userId) {
+      const user = await this.users.findOne({
+        where: { id: c.userId, tenantId: c.tenantId },
+        relations: { departments: true },
+      });
+      myDepts = new Set((user?.departments || []).map((d) => d.id));
+    }
+    return rooms.filter((r) =>
+      !r.isRestricted || (r.departmentId ? myDepts.has(r.departmentId) : false));
   }
 
   byIds(tenantId: string, ids: string[]) {

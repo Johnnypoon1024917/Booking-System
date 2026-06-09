@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Booking } from './booking.entity';
@@ -6,6 +6,7 @@ import { Resource } from '../resources/resource.entity';
 import { Recurrence, RecurrencePattern } from './recurrence.entity';
 import { BookingsService } from './bookings.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AdminRoles, Role } from '../../common/decorators/roles.decorator';
 
 // Caller-facing DTO for creating a recurring booking series. Matches
 // v1's ExpandRecurringBookingRequest field-for-field so older clients
@@ -129,6 +130,18 @@ export class RecurrenceService {
       }
     }
 
+    // Nothing materialised — every occurrence clashed or fell outside the
+    // room's operating hours. Returning a 200 here made the SPA flash
+    // "Recurring booking submitted" while "Booked 0 of N" — a success message
+    // for a series that reserved nothing (QA #16). Delete the now-orphaned
+    // parent row and fail loudly so the user knows no booking was made.
+    if (result.bookingIds.length === 0) {
+      await this.recurrences.delete({ id: rec.id, tenantId });
+      throw new ConflictException(
+        `none of the ${occurrences.length} occurrence(s) could be booked — each one conflicts with an existing booking or falls outside the room's operating hours`,
+      );
+    }
+
     // One summary email for the whole series, anchored on the first
     // occurrence. Fire-and-forget like the single-booking path; a mail
     // failure must never roll back the created series.
@@ -138,17 +151,37 @@ export class RecurrenceService {
     return result;
   }
 
-  async cancelSeries(tenantId: string, id: string, reason: string) {
+  // Cancel an entire recurring series.
+  //
+  // Authorization (AUD-008): only the series creator or an admin may cancel it.
+  // The endpoint previously passed no caller identity, so any tenant user could
+  // wipe out anyone's series.
+  //
+  // Side effects (AUD-008): each still-active occurrence is routed through the
+  // normal BookingsService.cancel path instead of a single bulk UPDATE, so the
+  // realtime `booking.cancelled` event, the calendar-sync outbox cancellation
+  // (otherwise Outlook/Graph entries are orphaned), and the notification outbox
+  // all fire per occurrence — exactly what the bulk UPDATE silently skipped.
+  async cancelSeries(tenantId: string, userId: string, role: string, id: string, reason: string) {
     const rec = await this.recurrences.findOne({ where: { id, tenantId } });
     if (!rec) throw new NotFoundException('series not found');
+    if (rec.createdBy !== userId && !AdminRoles.includes(role as Role)) {
+      throw new ForbiddenException('not allowed to cancel this series');
+    }
     rec.status = 'Cancelled';
     await this.recurrences.save(rec);
-    await this.bookings.createQueryBuilder()
-      .update(Booking)
-      .set({ status: 'Cancelled', exceptionNotes: reason || 'series cancelled' })
-      .where('tenant_id = :t AND recurrence_id = :r AND status NOT IN (:...skip)',
-        { t: tenantId, r: id, skip: ['Cancelled', 'Checked In', 'No Show', 'Attended'] })
-      .execute();
+
+    const children = await this.bookings.find({ where: { tenantId, recurrenceId: id } });
+    const settled = ['Cancelled', 'Checked In', 'No Show', 'Attended'];
+    for (const child of children) {
+      if (settled.includes(child.status)) continue;
+      try {
+        await this.bookingsSvc.cancel(tenantId, userId, role, child.id, reason || 'series cancelled');
+      } catch {
+        // Skip occurrences that became uncancellable (settled / changed
+        // concurrently) rather than aborting the rest of the series.
+      }
+    }
     return rec;
   }
 
@@ -164,8 +197,16 @@ export class RecurrenceService {
     }
 
     const interval = dto.interval && dto.interval > 0 ? dto.interval : 1;
-    const count = Math.max(1, Math.min(dto.count ?? 1, MAX_OCCURRENCES));
     const until = dto.until ? new Date(dto.until) : undefined;
+    // When the series is bounded by an end-date (no explicit count), generate
+    // up to the MAX cap and let the `until` check below stop it — the SPA's
+    // "Enable Repeating Schedule Pattern" sends an end-date with no count, and
+    // the old `dto.count ?? 1` collapsed that to a SINGLE occurrence, so a
+    // "weekly until 31 Jul" series silently materialised just the first date
+    // (QA #16). With an explicit count we honour it (clamped to the cap).
+    const count = dto.count
+      ? Math.max(1, Math.min(dto.count, MAX_OCCURRENCES))
+      : until ? MAX_OCCURRENCES : 1;
     const durMs = +firstEnd - +firstStart;
     const out: Array<{ start: Date; end: Date }> = [];
 

@@ -26,8 +26,15 @@ export interface UpsertUserDto {
 // Normalise an optional FK id from a form: '' / whitespace → null (clear),
 // otherwise the trimmed id. Keeps empty-string from being written as a
 // non-null value that violates the uuid column.
-function fkOrNull(v: string | undefined): string | null | undefined {
+//
+// MUST tolerate an explicit `null`: the SPA round-trips the whole user object
+// on edit, so a user with no line manager sends `managerId: null`. @IsOptional()
+// lets that null through to the service, and the old `null.trim()` threw a
+// TypeError that surfaced as a blanket 500 "Internal server error" on every
+// edit of a manager-less user (QA #10).
+function fkOrNull(v: string | null | undefined): string | null | undefined {
   if (v === undefined) return undefined;       // field absent → leave unchanged
+  if (v === null) return null;                 // explicit clear
   const t = v.trim();
   return t === '' ? null : t;
 }

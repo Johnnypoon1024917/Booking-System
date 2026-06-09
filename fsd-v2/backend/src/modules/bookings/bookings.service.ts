@@ -173,14 +173,16 @@ export class BookingsService {
     // room with operating hours that always overruns the close time, so map it
     // onto the day's actual open/close window instead of letting it be rejected
     // (see mapAllDayToOperatingHours).
-    ({ start, end } = await this.mapAllDayToOperatingHours(tenantId, resource, start, end));
+    let wasAllDay = false;
+    ({ start, end, wasAllDay } = await this.mapAllDayToOperatingHours(tenantId, resource, start, end));
 
     await this.assertCanBook(tenantId, userId, resource);
     // Tenant-policy rules (past-date, horizon, duration, blackout, holiday),
     // with the resource's per-resource overrides layered on top (a room may
     // cap duration tighter — or loosen the horizon — vs the tenant default).
-    // Authoritative server-side mirror of the SPA's useBookingRules.
-    await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null);
+    // Authoritative server-side mirror of the SPA's useBookingRules. All-day
+    // bookings waive the duration cap (their window is the room's whole day).
+    await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null, wasAllDay);
     await this.assertWithinOperatingHours(tenantId, resource, start, end);
     const customFieldValues = this.validateCustomFields(resource, dto.customFieldValues);
     const costCenterCode = await this.resolveCostCenter(tenantId, dto.costCenterCode, resource);
@@ -322,8 +324,9 @@ export class BookingsService {
       if (!resource || !resource.isActive) throw new NotFoundException('resource not bookable');
       // Same All-Day → operating-hours mapping create() applies, so editing a
       // booking to span the whole day lands inside the room's window too.
-      ({ start, end } = await this.mapAllDayToOperatingHours(tenantId, resource, start, end));
-      await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null);
+      let editAllDay = false;
+      ({ start, end, wasAllDay: editAllDay } = await this.mapAllDayToOperatingHours(tenantId, resource, start, end));
+      await this.validator.validate(tenantId, start, end, new Date(), resource.ruleOverrides ?? undefined, resource.region ?? null, editAllDay);
       await this.assertWithinOperatingHours(tenantId, resource, start, end);
       const ids = await this.relatedResourceIds(m, tenantId, resource);
       await this.lockResources(m, tenantId, ids);
@@ -594,29 +597,32 @@ export class BookingsService {
   // untouched — the latter is then rejected with a clear "closed" message.
   private async mapAllDayToOperatingHours(
     tenantId: string, resource: Resource, start: Date, end: Date,
-  ): Promise<{ start: Date; end: Date }> {
-    const oh = resource.operatingHours;
-    if (!oh) return { start, end };
-
+  ): Promise<{ start: Date; end: Date; wasAllDay: boolean }> {
     const cust = await this.customization.get(tenantId);
     const tz = (cust as { timezone?: string }).timezone;
     const s = utcToZonedWallClock(start, tz);
     const e = utcToZonedWallClock(end, tz);
 
     // Whole-day = starts at local midnight and runs to the end of that day
-    // (23:59 same day, or rolled to 00:00 the next day).
+    // (23:59 same day, or rolled to 00:00 the next day). Detected regardless of
+    // whether the room has operating hours so the duration cap is waived for
+    // 24-hour rooms too (their all-day span stays 00:00–23:59).
     const startsAtMidnight = s.minutes === 0;
     const endsAtDayEnd =
       (e.dateStr !== s.dateStr && e.minutes === 0) ||
       (e.dateStr === s.dateStr && e.minutes >= 23 * 60 + 59);
-    if (!startsAtMidnight || !endsAtDayEnd) return { start, end };
+    const wasAllDay = startsAtMidnight && endsAtDayEnd;
+
+    const oh = resource.operatingHours;
+    if (!oh || !wasAllDay) return { start, end, wasAllDay };
 
     const win = windowForWeekday(oh, s.weekday);
-    if (!win) return { start, end }; // closed that day — let the hours check reject it clearly
+    if (!win) return { start, end, wasAllDay }; // closed that day — let the hours check reject it clearly
 
     return {
       start: zonedTimeToUtc(s.dateStr, win.open, tz),
       end: zonedTimeToUtc(s.dateStr, win.close, tz),
+      wasAllDay,
     };
   }
 
