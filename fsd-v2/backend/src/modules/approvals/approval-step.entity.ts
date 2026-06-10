@@ -34,5 +34,14 @@ export class ApprovalStep {
   @Column({ name: 'require_all', default: false }) requireAll!: boolean;
   @Column({ name: 'approved_by', type: 'text', array: true, default: () => "'{}'" })
   approvedBy!: string[];
+  // Delegation tracking. When an approver hands a pending step off to someone
+  // else we keep a STRUCTURED record (not just a parsed note in `reason`) so the
+  // approvals UI can show "delegated to X by Y" and admins can track ownership.
+  // The delegate is ALSO added to `approverIds` so they can act; recording it
+  // here is purely for display/audit and lets the original approver keep seeing
+  // the booking (it never silently leaves their inbox).
+  @Column({ name: 'delegated_to', type: 'uuid', nullable: true }) delegatedTo?: string;
+  @Column({ name: 'delegated_by', type: 'uuid', nullable: true }) delegatedBy?: string;
+  @Column({ name: 'delegated_at', type: 'timestamptz', nullable: true }) delegatedAt?: Date;
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;
 }

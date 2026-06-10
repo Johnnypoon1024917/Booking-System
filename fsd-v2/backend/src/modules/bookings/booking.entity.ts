@@ -43,6 +43,13 @@ export class Booking {
   @Column({ name: 'services', type: 'jsonb', nullable: true })
   services?: string[] | null;
 
+  // Invited attendees (email addresses), Teams/Outlook-style. jsonb string-array
+  // — same rationale as `services`: the guest list grows without a migration and
+  // an address can't corrupt the column the way a simple-array delimiter could.
+  // null/absent when the booker invited no one.
+  @Column({ name: 'attendees', type: 'jsonb', nullable: true })
+  attendees?: string[] | null;
+
   // Chargeback / cost-center code this booking is billed against. Resolved
   // at create time from the booker's choice (else the resource default) and
   // validated against the tenant's configured cost_centers list. null when

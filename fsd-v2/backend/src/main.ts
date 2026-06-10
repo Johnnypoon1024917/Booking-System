@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger as PinoLogger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { isProduction } from './common/env';
@@ -17,7 +18,10 @@ async function bootstrap() {
   const corsConfig = isProduction()
     ? { origin: corsOrigins.length ? corsOrigins : false, credentials: true }
     : true;
-  const app = await NestFactory.create(AppModule, { cors: corsConfig });
+  // bufferLogs so early boot logs are held until the pino logger is installed.
+  const app = await NestFactory.create(AppModule, { cors: corsConfig, bufferLogs: true });
+  // Route Nest's logger through pino (structured JSON, request/tenant ids).
+  app.useLogger(app.get(PinoLogger));
 
   // Trust the reverse proxy (nginx) so req.ip / X-Forwarded-For are resolved
   // from the controlled proxy hop rather than spoofable client input — see the
@@ -74,6 +78,7 @@ async function bootstrap() {
       { path: '', method: RequestMethod.ALL },
       { path: 'health', method: RequestMethod.ALL },
       { path: 'health/ready', method: RequestMethod.ALL },
+      { path: 'metrics', method: RequestMethod.ALL },
       { path: 'scim/v2/*', method: RequestMethod.ALL },
     ],
   });

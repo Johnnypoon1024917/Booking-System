@@ -87,7 +87,7 @@ export function defaultMatrix(): Record<string, string[]> {
     'Room Admin': [
       Perm.BookingCreate, Perm.BookingCancel, Perm.BookingCancelOthers, Perm.BookingUpdate, Perm.BookingReadAll,
       Perm.ResourceCreate, Perm.ResourceUpdate, Perm.ResourceDelete, Perm.ResourceSplit,
-      Perm.ApprovalDecide, Perm.ApprovalDelegate, Perm.ReportView,
+      Perm.ApprovalDecide, Perm.ApprovalDelegate, Perm.ReportView, Perm.ReportExport,
     ],
     'Secretary': [
       Perm.BookingCreate, Perm.BookingCancel, Perm.BookingUpdate, Perm.BookingReadAll, Perm.ApprovalDecide,

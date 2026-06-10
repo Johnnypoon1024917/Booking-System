@@ -157,6 +157,23 @@ export class WebhooksService {
       await this.deliveries.save(d);
       return;
     }
+    // Re-validate the target at SEND time, not just at create/update. The
+    // create-time check resolves DNS once; an attacker can register a public
+    // hostname, pass validation, then re-point it at 169.254.169.254 / an
+    // internal host before the cron fires (DNS rebinding). Resolving + checking
+    // every A/AAAA again here shrinks that window to sub-second. (A fully
+    // airtight fix pins the connect to the validated IP via a custom dispatcher
+    // — a follow-up; this closes the practical rebinding vector.)
+    try {
+      await validateWebhookTargetURL(sub.targetURL);
+    } catch (e: any) {
+      d.attemptCount += 1;
+      d.status = d.attemptCount >= MAX_ATTEMPTS ? 'failed' : 'pending';
+      d.lastError = `target failed safety re-validation: ${String(e?.message || e).slice(0, 512)}`;
+      if (d.status === 'pending') d.nextAttemptAt = new Date(Date.now() + 30 * 60_000);
+      await this.deliveries.save(d);
+      return;
+    }
     const body = JSON.stringify({
       id: d.id, event: d.event, tenantId: d.tenantId,
       occurredAt: d.createdAt.toISOString(), data: d.payload,

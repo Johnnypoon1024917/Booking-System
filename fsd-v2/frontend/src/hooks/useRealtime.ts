@@ -14,7 +14,13 @@ import { useRealtimeStore, RealtimeEvent } from '../stores/realtime';
 import { useAuth } from './useAuth';
 
 const ENDPOINT = '/api/v1/realtime';
-const RECONNECT_MS = 3000;
+const RECONNECT_BASE_MS = 3000;
+// Randomized jitter so that when a shared dependency (the LB, the network, a
+// pod) blips and drops every client at once, they don't all reconnect AND
+// refetch on the exact same tick — which would slam the just-recovered backend
+// with a synchronized thundering herd.
+const RECONNECT_JITTER_MS = 2000;
+const reconnectDelay = () => RECONNECT_BASE_MS + Math.floor(Math.random() * RECONNECT_JITTER_MS);
 
 export interface UseRealtimeOptions {
   onEvent?: (ev: RealtimeEvent) => void;
@@ -30,8 +36,13 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
   const lastEvent = useRealtimeStore((s) => s.lastEvent);
   const isConnected = useRealtimeStore((s) => s.connected);
   const setConnected = useRealtimeStore((s) => s.setConnected);
+  const markReconnect = useRealtimeStore((s) => s.markReconnect);
   const token = useAuth((s) => s.token);
   const esRef = useRef<EventSource | null>(null);
+  // Tracks whether the stream has dropped at least once, so onopen can tell a
+  // first connect (no refetch needed — pages load their own data) from a
+  // reconnect (bump the nonce so data views refetch what they missed offline).
+  const droppedRef = useRef(false);
 
   useEffect(() => {
     if (!token) {
@@ -50,7 +61,14 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
       esRef.current = es;
       // Stream is live — clear any offline banner. onopen fires once the
       // server accepts the connection (after a successful reconnect too).
-      es.onopen = () => { if (!cancelled) setConnected(true); };
+      es.onopen = () => {
+        if (cancelled) return;
+        setConnected(true);
+        // Re-established after a drop: tell data views to refetch. The server
+        // also replays missed events via Last-Event-ID, but a refetch is the
+        // robust catch-up for anything outside the replay buffer's window.
+        if (droppedRef.current) { droppedRef.current = false; markReconnect(); }
+      };
       es.onmessage = (msg) => {
         try {
           const parsed: RealtimeEvent = JSON.parse(msg.data);
@@ -65,9 +83,10 @@ export function useRealtime(options: UseRealtimeOptions = {}) {
         esRef.current = null;
         // Surface the drop immediately so the UI can warn the user the data
         // may be stale; onopen flips it back when the retry succeeds.
+        droppedRef.current = true;
         if (!cancelled) setConnected(false);
         if (!cancelled && autoReconnect) {
-          reconnectTimer = setTimeout(open, RECONNECT_MS);
+          reconnectTimer = setTimeout(open, reconnectDelay());
         }
       };
     };

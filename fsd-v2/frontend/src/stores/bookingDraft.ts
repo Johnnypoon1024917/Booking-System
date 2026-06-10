@@ -31,6 +31,9 @@ export interface BookingDraft {
   count: number;
   until: string;
   services: string[];
+  // Invited attendees (email addresses) — retained across a conflict-and-retry
+  // so a laboriously typed guest list survives a room switch.
+  attendees: string[];
   costCenter: string;
   cfValues: Record<string, unknown>;
 }
@@ -47,7 +50,7 @@ interface BookingDraftState {
 const EMPTY: BookingDraft = {
   title: '', meetingUrl: '', isPrivate: false,
   recur: false, pattern: 'weekly', interval: 1, byday: [], count: 4, until: '',
-  services: [], costCenter: '', cfValues: {},
+  services: [], attendees: [], costCenter: '', cfValues: {},
 };
 
 export const useBookingDraft = create<BookingDraftState>((set) => ({

@@ -57,6 +57,14 @@ export class PermissionsService implements OnModuleInit {
     return (await this.permsForRole(tenantId, role)).has(permission);
   }
 
+  // The full effective permission list for a role in a tenant. Backs the
+  // SPA's /auth/me hydration so the client can hide/disable surfaces the user
+  // can't act on (the backend guard remains the real enforcement). Same source
+  // as the hot path, so the UI never disagrees with what the guard grants.
+  async effectivePermissions(tenantId: string, role: string): Promise<string[]> {
+    return [...(await this.permsForRole(tenantId, role))];
+  }
+
   // Resolve (and cache) a role's effective permission set in the tenant, falling
   // back to the catalog defaults for a role with no stored row — the same source
   // the hot enforcement path reads, so an escalation check here can't disagree

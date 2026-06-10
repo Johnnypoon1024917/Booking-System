@@ -6,6 +6,7 @@ import { EmptyState } from '../components/EmptyState';
 import { useTenant } from '../stores/tenant';
 import { useToast } from '../stores/toast';
 import { useRealtime } from '../hooks/useRealtime';
+import { useRealtimeStore } from '../stores/realtime';
 import { useT } from '../hooks/useT';
 
 // Port of v1's Dashboard.vue. Same SVG bar chart, pie chart, stat box,
@@ -73,6 +74,14 @@ export function Dashboard() {
     if (lastEvent?.type?.startsWith('booking.')) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastEvent]);
+
+  // Recompute the aggregates after an SSE reconnect, catching up on bookings
+  // that changed while the stream was down.
+  const reconnectNonce = useRealtimeStore((s) => s.reconnectNonce);
+  useEffect(() => {
+    if (reconnectNonce > 0) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reconnectNonce]);
 
   const scopeTitle = { mine: t('dashboard.scopeTitleMine'), region: t('dashboard.scopeTitleRegion'), all: t('dashboard.scopeTitleAll') }[scope] || t('dashboard.scopeTitleAll');
   const scopeSubtitle = {

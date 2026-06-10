@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { HolidaysService } from './holidays.service';
 import { CustomizationService } from '../customization/customization.service';
+import { RedisService } from '../../common/redis/redis.service';
 
 // Nightly job that refreshes the gov.hk public-holiday feed for every
 // tenant that has opted in via tenant customization
@@ -14,10 +15,14 @@ export class HolidaysCron {
   constructor(
     private readonly holidays: HolidaysService,
     private readonly customization: CustomizationService,
+    private readonly redis: RedisService,
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async nightlySync() {
+    // Run on exactly one instance — otherwise N pods all hammer gov.hk and
+    // upsert the same rows. 10-min lock comfortably covers the run.
+    if (!(await this.redis.tryLock('cron:holidays-nightly', 10 * 60_000))) return;
     const tenantIds = await this.holidays.listTenantIds();
     for (const tenantId of tenantIds) {
       try {

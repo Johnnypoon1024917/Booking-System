@@ -27,6 +27,12 @@ interface JwtPayload {
   role: Role;
   grade?: string;
   regions?: string[];
+  // Intermediate, single-purpose tokens (issued by AuthService before the
+  // second factor / forced password change completes) carry a `purpose` claim.
+  // They are signed with the same secret as full session tokens, so this
+  // strategy MUST reject them — otherwise the pre-MFA mfaToken would itself be a
+  // valid session, bypassing the second factor entirely.
+  purpose?: string;
 }
 
 @Injectable()
@@ -58,6 +64,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   // is the contract every controller depends on.
   validate(payload: JwtPayload): AuthUser {
     if (!payload?.sub || !payload?.tid) throw new UnauthorizedException('malformed token');
+    // Reject single-purpose intermediate tokens (mfa / pwd_change): they are only
+    // valid at their dedicated endpoint, which checks `purpose` explicitly. A
+    // full session token never carries this claim.
+    if (payload.purpose) throw new UnauthorizedException('this token cannot be used for general access');
     return {
       id: payload.sub,
       tenantId: payload.tid,

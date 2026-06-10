@@ -32,6 +32,8 @@ export interface CreateBookingDto {
   customFieldValues?: Record<string, unknown>;
   // Service add-ons (Catering, IT setup, …) requested for the booking.
   services?: string[];
+  // Invited attendees (email addresses), Teams/Outlook-style guest list.
+  attendees?: string[];
   // Chargeback / cost-center code to bill this booking against. Validated
   // against the tenant's configured list (customization.cost_centers).
   costCenterCode?: string;
@@ -52,6 +54,9 @@ export interface UpdateBookingDto {
   // Service add-ons (Catering, IT setup, …) — editable post-creation. An empty
   // array clears them; undefined leaves the stored list untouched.
   services?: string[];
+  // Invited attendees (email addresses) — editable post-creation, same
+  // semantics as services: an empty array clears the list, undefined leaves it.
+  attendees?: string[];
   // Custom-field answers — merged over the stored values and re-validated.
   customFieldValues?: Record<string, unknown>;
 }
@@ -200,11 +205,16 @@ export class BookingsService {
       const b = m.getRepository(Booking).create({
         tenantId, resourceId: resource.id, userId,
         startTime: start, endTime: end,
+        // Persist the effective booking mode from the resource. Exclusive
+        // bookings are covered by the DB EXCLUDE constraint (booking_no_overlap);
+        // pods ('shared') are exempt because they tolerate concurrent bookings.
+        bookingMode: resource.bookingMode === 'shared' ? 'shared' : 'exclusive',
         title: dto.title || '',
         meetingUrl: dto.meetingUrl || '',
         isPrivate: !!dto.isPrivate,
         customFieldValues: Object.keys(customFieldValues).length ? customFieldValues : null,
         services: dto.services && dto.services.length ? dto.services : null,
+        attendees: dto.attendees && dto.attendees.length ? dto.attendees : null,
         costCenterCode,
         // Born linked when expanding a series (see CreateBookingDto.recurrenceId).
         recurrenceId: dto.recurrenceId ?? undefined,
@@ -349,6 +359,12 @@ export class BookingsService {
     if (dto.services !== undefined) {
       b.services = dto.services.length ? dto.services : null;
     }
+    // Attendees are editable after creation (Outlook parity) — adding a guest
+    // later shouldn't force a cancel-and-rebook. An empty array clears the list;
+    // an absent field leaves the stored guests alone.
+    if (dto.attendees !== undefined) {
+      b.attendees = dto.attendees.length ? dto.attendees : null;
+    }
     // Custom-field answers: merge the incoming changes over what's stored,
     // then re-validate against the resource so required fields stay enforced
     // and unknown keys are dropped (mirrors create()). Validated against the
@@ -425,8 +441,9 @@ export class BookingsService {
         if (dto.title !== undefined) patch.title = dto.title;
         if (dto.meetingUrl !== undefined) patch.meetingUrl = dto.meetingUrl;
         if (dto.resourceId) patch.resourceId = dto.resourceId;
-        // Service add-ons and custom-field answers propagate to every occurrence.
+        // Service add-ons, attendees and custom-field answers propagate to every occurrence.
         if (dto.services !== undefined) patch.services = dto.services;
+        if (dto.attendees !== undefined) patch.attendees = dto.attendees;
         if (dto.customFieldValues !== undefined) patch.customFieldValues = dto.customFieldValues;
         if (timeShift) {
           if (startShift) patch.startTime = applyWallShift(s.startTime, startShift, tz);

@@ -11,9 +11,10 @@ class QuickBookDto {
   @IsOptional() @IsString() title?: string;
 }
 
-// Kiosk endpoints bypass JWT — devices authenticate with a shared
-// X-Kiosk-Token header validated against KIOSK_TOKEN env. Tenant
-// scoping is implicit through the resource id (UUID, unguessable).
+// Kiosk endpoints bypass JWT — devices authenticate with an X-Kiosk-Token
+// header. The token is validated against the token configured for the TENANT
+// that owns the target resource (KIOSK_TOKENS), so a device token can only act
+// on its own tenant's resources — never cross-tenant.
 @ApiTags('kiosk')
 @Controller('kiosk')
 export class KioskController {
@@ -25,8 +26,7 @@ export class KioskController {
     @Param('resourceId') resourceId: string,
     @Headers('x-kiosk-token') token?: string,
   ) {
-    this.svc.assertToken(token);
-    return this.svc.state(resourceId);
+    return this.svc.state(resourceId, token);
   }
 
   @Public()
@@ -36,7 +36,6 @@ export class KioskController {
     @Headers('x-kiosk-token') token: string | undefined,
     @Body() dto: QuickBookDto,
   ) {
-    this.svc.assertToken(token);
-    return this.svc.quickBook(resourceId, dto.durationMinutes ?? 30, dto.title ?? 'Walk-in');
+    return this.svc.quickBook(resourceId, dto.durationMinutes ?? 30, dto.title ?? 'Walk-in', token);
   }
 }

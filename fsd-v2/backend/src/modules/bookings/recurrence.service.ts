@@ -28,6 +28,7 @@ export interface CreateRecurringDto {
   rrule?: string;           // RFC 5545 raw string; takes precedence
   customFieldValues?: Record<string, unknown>;
   services?: string[];      // service add-ons applied to every occurrence
+  attendees?: string[];     // invited attendees (emails) applied to every occurrence
   costCenterCode?: string;  // chargeback code applied to every occurrence
 }
 
@@ -118,6 +119,7 @@ export class RecurrenceService {
           isPrivate: dto.isPrivate,
           customFieldValues: dto.customFieldValues,
           services: dto.services,
+          attendees: dto.attendees,
           costCenterCode: dto.costCenterCode,
           recurrenceId: rec.id,
           isRecurring: true,

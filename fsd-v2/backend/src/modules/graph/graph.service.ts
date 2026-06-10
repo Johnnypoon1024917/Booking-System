@@ -235,6 +235,9 @@ export class GraphService {
   // Hourly cron — renews anything inside the 12h danger window.
   @Cron(CronExpression.EVERY_HOUR)
   async renewExpiring(): Promise<void> {
+    // One instance only — otherwise every pod PATCHes the same subscriptions
+    // against the throttled Graph API. 5-min lock covers the renew sweep.
+    if (!(await this.redis.tryLock('cron:graph-renew', 5 * 60_000))) return;
     const cutoff = new Date(Date.now() + 12 * 3600 * 1000);
     const due = await this.subs.find({ where: { expiresAt: LessThan(cutoff) } });
     for (const s of due) {

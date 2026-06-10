@@ -11,6 +11,10 @@ interface Step {
   decisionAt?: string | Date | null;
   dueAt?: string | Date | null;
   reason?: string;
+  // Resolved server-side (listChain): who the step was delegated to / by, so the
+  // timeline can show ownership instead of burying it in the reason text.
+  delegatedToName?: string | null;
+  delegatedByName?: string | null;
 }
 
 interface Props {
@@ -29,6 +33,8 @@ interface Node {
   reason: string;
   slaText: string;
   overdue: boolean;
+  delegatedTo: string;
+  delegatedBy: string;
 }
 
 function human(ms: number): string {
@@ -76,6 +82,8 @@ export function ApprovalTimeline({ steps, submittedAt, compact }: Props) {
         when: st.decisionAt ?? null,
         reason: (cls === 'rejected' || (cls === 'done' && st.reason)) ? (st.reason ?? '') : '',
         slaText, overdue,
+        delegatedTo: st.delegatedToName ?? '',
+        delegatedBy: st.delegatedByName ?? '',
       };
     });
   }, [steps]);
@@ -130,6 +138,11 @@ export function ApprovalTimeline({ steps, submittedAt, compact }: Props) {
               {n.actor && <small>{n.actor}{n.when && ` · ${fmt(n.when)}`}</small>}
               {!n.actor && n.cls === 'current' && (
                 <small className={`atl-sla ${n.overdue ? 'over' : ''}`}>{n.slaText}</small>
+              )}
+              {n.delegatedTo && (
+                <small className="atl-delegated" style={{ color: 'var(--brand-secondary)', fontWeight: 600 }}>
+                  Delegated to {n.delegatedTo}{n.delegatedBy ? ` by ${n.delegatedBy}` : ''}
+                </small>
               )}
               {n.reason && <div className={`atl-reason ${n.cls === 'rejected' ? 'bad' : ''}`}>“{n.reason}”</div>}
             </div>

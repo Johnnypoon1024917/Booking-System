@@ -30,6 +30,8 @@ class CreateBookingDto {
   // Service add-ons (Catering, IT setup, …). Without this decorator the
   // global whitelist validator strips the array even when the SPA sends it.
   @IsOptional() @IsArray() @IsString({ each: true }) services?: string[];
+  // Invited attendees (email addresses), Teams/Outlook-style guest list.
+  @IsOptional() @IsArray() @IsString({ each: true }) attendees?: string[];
   // Chargeback code; validated against the tenant's cost_centers in the service.
   @IsOptional() @IsString() costCenterCode?: string;
 }
@@ -46,6 +48,9 @@ class UpdateBookingDto {
   // (Outlook parity). An empty array clears them. Without this decorator the
   // global whitelist validator strips the field even when the SPA sends it.
   @IsOptional() @IsArray() @IsString({ each: true }) services?: string[];
+  // Invited attendees (email addresses) — editable post-creation; an empty
+  // array clears the guest list.
+  @IsOptional() @IsArray() @IsString({ each: true }) attendees?: string[];
   // Answers to the resource's custom fields. Merged over the stored answers and
   // re-validated against the resource (required fields stay enforced).
   @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
@@ -68,6 +73,8 @@ class CreateRecurringDtoIn {
   @IsOptional() @IsObject() customFieldValues?: Record<string, unknown>;
   // Service add-ons applied to every occurrence in the series.
   @IsOptional() @IsArray() @IsString({ each: true }) services?: string[];
+  // Invited attendees (email addresses) applied to every occurrence in the series.
+  @IsOptional() @IsArray() @IsString({ each: true }) attendees?: string[];
   @IsOptional() @IsString() costCenterCode?: string;
 }
 

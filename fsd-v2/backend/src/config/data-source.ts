@@ -32,4 +32,5 @@ export const AppDataSource = new DataSource({
   synchronize: false,
 });
 
-export default AppDataSource;
+// NB: exactly ONE export of the DataSource instance — the TypeORM migration CLI
+// rejects a file that exports the same instance twice (named + default).

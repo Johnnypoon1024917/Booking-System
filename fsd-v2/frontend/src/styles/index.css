@@ -1308,6 +1308,33 @@ small.pw-ok { color: var(--fsd-success, #1e8a4d); font-weight: 600; }
 }
 .bm-result p { margin: 4px 0 0; color: var(--text-muted); }
 
+/* Attendees — chip input (Teams/Outlook "invite people"). Chips wrap with a
+   borderless growing input so the control reads like one combined field. */
+.bm-attendees {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 6px 8px; margin-top: 4px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.bm-attendees:focus-within { border-color: var(--brand-primary); }
+.bm-attendee-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 4px 2px 8px; font-size: 12px; line-height: 1.6;
+  border-radius: 999px; background: var(--surface-inset);
+  border: 1px solid var(--border); color: var(--text);
+}
+.bm-attendee-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; cursor: pointer; padding: 1px;
+  border-radius: 999px; color: var(--text-muted);
+}
+.bm-attendee-x:hover { background: var(--danger); color: #fff; }
+.bm-attendee-input {
+  flex: 1; min-width: 140px; border: 0 !important; outline: none;
+  background: transparent; padding: 2px 0 !important; margin: 0 !important;
+  box-shadow: none !important; font-size: 13px;
+}
+
 /* Scheduling assistant — single-day free/busy timeline for the chosen room. */
 .bm-fb-legend { font-weight: 400; font-size: 11px; color: var(--text-muted); display: inline-flex; gap: 10px; align-items: center; }
 .bm-fb-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
@@ -2255,6 +2282,13 @@ input.invalid, select.invalid, textarea.invalid { border-color: var(--danger) !i
 .combo-empty { padding: 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
 .cal-room-filter { width: 200px; max-width: 60vw; }
+
+/* Calendar status-filter chips + "My bookings" toggle — make the pill buttons
+   read like interactive controls (the colour/active fill comes from inline
+   style on the element). */
+.cal-status-chip { cursor: pointer; font: inherit; transition: background .12s, border-color .12s; }
+.cal-status-chip.active { font-weight: 600; }
+.cal-mine-btn { cursor: pointer; }
 
 /* ---- Booking modal: collapsible "Add-ons & details" section ---- */
 .modal section .bm-advanced { display: flex; flex-direction: column; gap: 16px; }

@@ -59,6 +59,9 @@ export class IcsService {
         status: b.status,
         // Likewise withhold the join link for private events.
         url: b.isPrivate ? '' : (b.meetingUrl || ''),
+        // Guest list (Outlook parity) — also withheld for private bookings so
+        // the bearer-token feed can't leak who was invited.
+        attendees: b.isPrivate ? [] : (b.attendees || []),
       })));
     return { filename: `${tenant.slug}.ics`, body };
   }
@@ -131,6 +134,7 @@ interface IcsEvent {
   end: Date;
   status: string;
   url: string;
+  attendees: string[];
 }
 
 function encodeFeed(name: string, events: IcsEvent[]): string {
@@ -154,6 +158,11 @@ function encodeFeed(name: string, events: IcsEvent[]): string {
     lines.push(kv('SUMMARY', ev.summary));
     if (ev.location) lines.push(kv('LOCATION', ev.location));
     if (ev.url) lines.push(kv('URL', ev.url));
+    // Invited guests, one ATTENDEE line each (RFC 5545 §3.8.4.1) so the
+    // subscriber's calendar shows the meeting's participant list.
+    for (const email of ev.attendees) {
+      if (email) lines.push(`ATTENDEE;ROLE=REQ-PARTICIPANT;CUTYPE=INDIVIDUAL:mailto:${email}`);
+    }
     lines.push('STATUS:CONFIRMED');
     lines.push('TRANSP:OPAQUE');
     lines.push('END:VEVENT');

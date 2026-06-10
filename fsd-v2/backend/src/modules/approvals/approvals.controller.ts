@@ -63,10 +63,15 @@ export class ApprovalsController {
   }
 
   // Typeahead directory for the delegate picker — avoids shipping the whole
-  // user list to the client. Available to any authenticated approver.
+  // user list to the client. Available to any authenticated approver. Filtered
+  // to users who can actually approve (hold approval.decide) so an ineligible
+  // delegate can't even be selected (QA #1); the search runs a wider page first
+  // since the permission filter thins the results.
   @Get('users/search')
-  searchUsers(@CurrentUser() u: AuthUser, @Query('q') q?: string) {
-    return this.users.search(u.tenantId, q ?? '');
+  async searchUsers(@CurrentUser() u: AuthUser, @Query('q') q?: string) {
+    const list = await this.users.search(u.tenantId, q ?? '', 50);
+    const eligible = await this.svc.filterEligibleApprovers(u.tenantId, list);
+    return eligible.slice(0, 20);
   }
 
   @Get(':bookingId/chain')

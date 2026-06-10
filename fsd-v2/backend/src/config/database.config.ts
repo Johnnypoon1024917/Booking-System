@@ -1,13 +1,16 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { prodSecret } from '../common/env';
 
 // All entities are eagerly loaded at module init via TypeORM's
 // autoLoadEntities — modules just `forFeature([Entity])` and the
-// connection picks them up. Synchronize is true in dev for fast
-// iteration. The project ships no migrations, so for production the
-// schema is created via a controlled first boot: set DB_SYNCHRONIZE=true
-// once to let TypeORM build the schema, then set it back to false (the
-// default under NODE_ENV=production) so steady-state boots never mutate
-// the live schema. DB_SYNCHRONIZE, when set, wins over the NODE_ENV default.
+// connection picks them up. Synchronize is true in dev for fast iteration.
+//
+// PRODUCTION uses MIGRATIONS, not synchronize: a committed baseline (and the
+// booking-overlap constraint) lives under src/migrations and is compiled to
+// dist/migrations. Set DB_MIGRATIONS_RUN=true (the prod compose default) to
+// apply pending migrations on boot. Keep DB_SYNCHRONIZE=false in every shared
+// environment so steady-state boots never mutate the live schema. DB_SYNCHRONIZE,
+// when set, still wins over the NODE_ENV default for the rare break-glass case.
 const resolveSynchronize = (): boolean =>
   process.env.DB_SYNCHRONIZE !== undefined
     ? process.env.DB_SYNCHRONIZE === 'true'
@@ -20,13 +23,26 @@ const int = (v: string | undefined, fallback: number): number => {
 
 const PORT = int(process.env.DB_PORT, 5432);
 const USERNAME = process.env.DB_USER || 'mrbs_admin';
-const PASSWORD = process.env.DB_PASS || 'changeme';
+// In production a missing DB_PASS throws at boot rather than silently connecting
+// (or failing) with the well-known 'changeme' default.
+const PASSWORD = prodSecret('DB_PASS', 'changeme');
 const DATABASE = process.env.DB_NAME || 'mrbs_db_v2';
 
 // Read replicas for the active-active diagram's replicated DB Servers. When
-// DB_REPLICA_HOSTS is set (comma-separated), TypeORM routes writes + explicit
-// transactions to the primary and load-balances SELECTs across the replicas —
-// real read-scaling, and the primary stays free for the write path.
+// DB_REPLICA_HOSTS is set (comma-separated), TypeORM opens a connection pool to
+// each replica in addition to the primary.
+//
+// IMPORTANT — current routing behaviour: every authenticated request runs inside
+// the per-request tenant transaction (TenantTxInterceptor), which is pinned to
+// the PRIMARY because the tenant GUC (SET LOCAL) and read-your-writes
+// consistency must hold within that transaction. So application reads do NOT yet
+// fan out to the replicas — the replica pools are used by the readiness probe
+// (health.controller probes a 'slave' runner) and stand ready as warm
+// standbys/failover targets. True read-scaling would require routing read-only
+// handlers onto a 'slave' runner OUTSIDE the tenant transaction, with care for
+// read-your-writes on post-write confirmation reads — a deliberate follow-up,
+// not wired here. Physical primary failover is handled by the HA layer (see the
+// replication block below + the Patroni/VIP note).
 const replicaHosts = (process.env.DB_REPLICA_HOSTS || '')
   .split(',')
   .map((h) => h.trim())

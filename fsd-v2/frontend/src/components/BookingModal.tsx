@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock, Trash2, CalendarClock, SlidersHorizontal, ChevronRight } from 'lucide-react';
+import { Building2, Calendar, Clock, Check, Loader2, Repeat, Lock, Trash2, CalendarClock, SlidersHorizontal, ChevronRight, Users, X } from 'lucide-react';
 import { Modal } from './Modal';
 import { Switch } from './Switch';
 import { Combobox } from './Combobox';
@@ -237,6 +237,12 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   // can be changed (services are now editable post-creation); otherwise from the
   // saved draft so add-ons survive a room switch.
   const [services, setServices] = useState<string[]>(existingBooking?.services || draft0?.services || []);
+  // Invited attendees (emails). Editable in both create and edit (Outlook
+  // parity); seeded from the booking when editing, else from the saved draft so
+  // the guest list survives a room switch. `attendeeInput` is the in-progress
+  // address the user is typing before committing it to a chip.
+  const [attendees, setAttendees] = useState<string[]>(existingBooking?.attendees || draft0?.attendees || []);
+  const [attendeeInput, setAttendeeInput] = useState('');
   const [cfValues, setCfValues] = useState<Record<string, any>>(draft0?.cfValues || {});
   const [costCenter, setCostCenter] = useState(draft0?.costCenter || '');
   const [busy, setBusy] = useState(false);
@@ -410,9 +416,9 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
   useEffect(() => {
     if (isEdit) return;
     useBookingDraft.getState().save({
-      title, meetingUrl, isPrivate, recur, pattern, interval: recurInterval, byday, count, until, services, costCenter, cfValues,
+      title, meetingUrl, isPrivate, recur, pattern, interval: recurInterval, byday, count, until, services, attendees, costCenter, cfValues,
     });
-  }, [isEdit, title, meetingUrl, isPrivate, recur, pattern, recurInterval, byday, count, until, services, costCenter, cfValues]);
+  }, [isEdit, title, meetingUrl, isPrivate, recur, pattern, recurInterval, byday, count, until, services, attendees, costCenter, cfValues]);
 
   // Pre-defined service add-ons — admins can override these via the
   // tenant studio later; for now this matches v1's hard-coded list.
@@ -420,6 +426,26 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
 
   function toggleService(opt: string) {
     setServices((arr) => (arr.includes(opt) ? arr.filter((x) => x !== opt) : [...arr, opt]));
+  }
+
+  // Attendee chip input (Teams/Outlook "invite people"). A loose RFC-ish email
+  // check keeps obvious typos out of the guest list; the server stores whatever
+  // strings it's handed, so this is the only gate. Commit on Enter, comma, or
+  // blur; dedupe case-insensitively so the same guest can't be added twice.
+  function isEmail(s: string) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s); }
+  function addAttendee(raw: string) {
+    const email = raw.trim().replace(/[,;]+$/, '');
+    if (!email) return;
+    if (!isEmail(email)) { toast.warning(t('bookingModal.attendeeInvalid', { defaultValue: 'Enter a valid email address' })); return; }
+    setAttendees((arr) => (arr.some((a) => a.toLowerCase() === email.toLowerCase()) ? arr : [...arr, email]));
+    setAttendeeInput('');
+  }
+  function removeAttendee(email: string) {
+    setAttendees((arr) => arr.filter((a) => a !== email));
+  }
+  function onAttendeeKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',' || e.key === ';') { e.preventDefault(); addAttendee(attendeeInput); }
+    else if (e.key === 'Backspace' && !attendeeInput && attendees.length) { removeAttendee(attendees[attendees.length - 1]); }
   }
 
   // Teams parity: cancellation lives inside the details dialog (a button in the
@@ -461,6 +487,17 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
     if (!resId) { toast.warning(t('bookingModal.pickResource')); return; }
     if (selectedBusy) { toast.error(t('bookingModal.cannotBook'), t('bookingModal.roomBusyConflict', { room: resName })); return; }
 
+    // Flush a still-being-typed attendee so a guest the user typed but didn't
+    // press Enter on isn't silently dropped on submit. A trailing invalid string
+    // is ignored (it never became a chip).
+    const finalAttendees = (() => {
+      const pending = attendeeInput.trim().replace(/[,;]+$/, '');
+      if (pending && isEmail(pending) && !attendees.some((a) => a.toLowerCase() === pending.toLowerCase())) {
+        return [...attendees, pending];
+      }
+      return attendees;
+    })();
+
     // Title is optional: a blank title auto-generates "[Requester] - [Room]"
     // (e.g. "Johnny Poon - Boardroom A") for a cleaner calendar, instead of the
     // old generic "Booking". Falls back gracefully if either part is unknown.
@@ -480,6 +517,9 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         // Service add-ons are editable post-creation now — send the current
         // selection (an empty array clears them server-side).
         services,
+        // Attendees are editable too — send the current guest list (an empty
+        // array clears it server-side).
+        attendees: finalAttendees,
         // Only send the room when it actually changed, so an unchanged edit
         // doesn't pointlessly re-run the room conflict/approval path.
         ...(selResId !== existingBooking.resourceId ? { resourceId: selResId } : {}),
@@ -599,6 +639,8 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           // Service add-ons must ride along with the series too — omitting them
           // here silently dropped catering/IT setup on every recurring booking.
           services: services.length ? services : undefined,
+          // Attendees apply to every occurrence in the series.
+          attendees: finalAttendees.length ? finalAttendees : undefined,
           costCenterCode: costCenter || undefined,
         });
       } else {
@@ -610,6 +652,7 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
           meetingUrl: meetingUrl.trim() || undefined,
           isPrivate,
           services: services.length ? services : undefined,
+          attendees: finalAttendees.length ? finalAttendees : undefined,
           customFieldValues,
           costCenterCode: costCenter || undefined,
         });
@@ -778,6 +821,41 @@ export function BookingModal({ resource, resources, bookings, existingBooking, d
         <input value={meetingUrl} onChange={(e) => setMeetingUrl(e.target.value)}
                placeholder="https://teams.microsoft.com/…" />
       </label>
+
+      {/* Attendees — Teams/Outlook "invite people". Type an email and press
+          Enter (or comma) to add a chip; the guest list is editable after the
+          booking is made. Stored as a plain email array on the booking. */}
+      <div className="field">
+        <label style={{ margin: 0 }}>
+          <Users size={13} /> {t('bookingModal.attendees', { defaultValue: 'Attendees' })}
+        </label>
+        <div className="bm-attendees">
+          {attendees.map((email) => (
+            <span key={email} className="bm-attendee-chip">
+              {email}
+              <button type="button" className="bm-attendee-x" aria-label={t('common.remove', { defaultValue: 'Remove' })}
+                      onClick={() => removeAttendee(email)}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+          <input
+            className="bm-attendee-input"
+            type="email"
+            value={attendeeInput}
+            onChange={(e) => setAttendeeInput(e.target.value)}
+            onKeyDown={onAttendeeKeyDown}
+            onBlur={() => addAttendee(attendeeInput)}
+            placeholder={attendees.length
+              ? t('bookingModal.attendeeMore', { defaultValue: 'Add another…' })
+              : t('bookingModal.attendeePlaceholder', { defaultValue: 'name@example.com' })}
+            aria-label={t('bookingModal.attendees', { defaultValue: 'Attendees' })}
+          />
+        </div>
+        <small className="muted">
+          {t('bookingModal.attendeeHint', { defaultValue: 'Press Enter or comma to add each guest.' })}
+        </small>
+      </div>
 
       <div className="bm-advanced">
         <button type="button" className="bm-advanced-toggle" aria-expanded={showAdvanced}

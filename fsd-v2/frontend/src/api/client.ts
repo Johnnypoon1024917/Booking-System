@@ -138,8 +138,14 @@ export const api = {
 
   // ICS feed token + URL helper
   icsToken: () => http.get('/api/v1/bookings/ics-token').then((r) => r.data),
-  icsFeedUrl: (tenantSlug: string, token: string) =>
-    `${(import.meta as any).env?.VITE_API_URL || ''}/api/v1/ics/feed/${tenantSlug}.ics?token=${token}`,
+  icsFeedUrl: (tenantSlug: string, token: string) => {
+    // External calendar clients (Apple/Outlook/Google) resolve this URL
+    // outside the SPA, so it must be absolute. VITE_API_URL is empty in the
+    // relative-proxy deploy — fall back to the current origin so the copied
+    // URL carries a host instead of a bare "/api/v1/...".
+    const base = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+    return `${base}/api/v1/ics/feed/${tenantSlug}.ics?token=${token}`;
+  },
 
   // Users / departments
   // Backward-compatible full directory (used by pickers/dropdowns elsewhere).

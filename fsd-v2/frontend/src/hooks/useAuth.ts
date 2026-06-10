@@ -14,9 +14,16 @@ export interface AuthUser {
 interface AuthState {
   user: AuthUser | null;
   token: string | null;
+  // The caller's effective permission keys (e.g. 'report.view'), hydrated from
+  // /auth/me on boot. `null` = not yet loaded (don't enforce permission-gated
+  // routes until known, to avoid a false redirect on first paint). The backend
+  // guards are the real enforcement; this only drives what the UI shows.
+  permissions: string[] | null;
   login: (token: string, user: AuthUser) => void;
   logout: () => void;
   isAdmin: () => boolean;
+  setPermissions: (permissions: string[]) => void;
+  hasPerm: (permission: string) => boolean;
 }
 
 // localStorage-backed so a page refresh doesn't drop the session and
@@ -26,13 +33,23 @@ export const useAuth = create<AuthState>()(
     (set, get) => ({
       user: null,
       token: null,
-      login: (token, user) => set({ token, user }),
-      logout: () => set({ token: null, user: null }),
+      permissions: null,
+      // A fresh login predates the /auth/me hydration, so clear any stale
+      // permission set — App re-fetches it for the new user immediately.
+      login: (token, user) => set({ token, user, permissions: null }),
+      logout: () => set({ token: null, user: null, permissions: null }),
       isAdmin: () =>
         ['System Admin', 'Security Admin', 'Room Admin', 'Secretary']
           .includes(get().user?.role ?? ''),
+      setPermissions: (permissions) => set({ permissions }),
+      hasPerm: (permission) => (get().permissions ?? []).includes(permission),
     }),
-    { name: 'fsd_auth', partialize: (s) => ({ token: s.token, user: s.user }) },
+    {
+      name: 'fsd_auth',
+      // Persist permissions too so a reload gates the UI correctly before the
+      // /auth/me round-trip completes (the value is still re-validated on boot).
+      partialize: (s) => ({ token: s.token, user: s.user, permissions: s.permissions }),
+    },
   ),
 );
 

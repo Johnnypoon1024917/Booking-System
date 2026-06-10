@@ -8,7 +8,9 @@ import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { confirmDialog } from '../stores/confirm';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
+import { useT } from '../hooks/useT';
 import { Switch } from '../components/Switch';
+import { useTenant } from '../stores/tenant';
 
 // Tenant Studio — full port of v1's Admin.vue: 7 tabs (branding, locale,
 // layout, workflow, fields, integrations, holidays) plus a live preview
@@ -61,6 +63,7 @@ function normalizeHex(v: string): string {
 
 export function TenantStudio() {
   const toast = useToast();
+  const { t } = useT();
   const [c, setC] = useState<any | null>(null);
   const [baseline, setBaseline] = useState('');
   const [tab, setTab] = useState<typeof TABS[number]['key']>('branding');
@@ -102,7 +105,7 @@ export function TenantStudio() {
   const dirty = c !== null && baseline !== JSON.stringify(c);
   useUnsavedGuard(dirty, 'You have unsaved tenant settings. Leave without saving?');
 
-  if (!c) return <p className="muted">Loading…</p>;
+  if (!c) return <p className="muted">{t('admin.loading')}</p>;
   const set = (k: string, v: any) => setC({ ...c, [k]: v });
   const arr = (k: string): any[] => c[k] || [];
   const toggleIn = (k: string, v: any) =>
@@ -156,7 +159,12 @@ export function TenantStudio() {
       const saved = await api.saveCustomization(cleaned);
       const wf = withFieldIds(saved);
       setC(wf); setBaseline(JSON.stringify(wf));
-      toast.success('Customization saved');
+      // Repaint the running app immediately so branding (colours, logo, name,
+      // available locales) takes effect without a manual page refresh (QA #5).
+      // reload() re-fetches the tenant doc and pushes the new palette — incl.
+      // accent — into the theme store, and updates the shell chrome.
+      await useTenant.getState().reload();
+      toast.success(t('admin.saved'));
     } catch (e: any) {
       // Optimistic-concurrency clash: another admin saved since we loaded. Don't
       // silently overwrite their work — offer to reload the latest (discarding
@@ -383,15 +391,15 @@ export function TenantStudio() {
     <div>
       <div className="page-header">
         <div>
-          <h1>Tenant Studio</h1>
-          <p className="muted">Branding, locale, layout, workflow, fields, and integrations.</p>
+          <h1>{t('admin.title')}</h1>
+          <p className="muted">{t('admin.studioSubtitle')}</p>
         </div>
         <div className="row gap-sm" style={{ alignItems: 'center' }}>
-          {dirty && <span className="dirty-chip">● Unsaved changes</span>}
+          {dirty && <span className="dirty-chip">● {t('admin.unsaved')}</span>}
           {/* Sync holidays lives inside the Holidays tab (contextual) — having a
               second always-on copy here was a duplicate control. */}
-          <button className="btn-fsd ghost" onClick={reset} disabled={!dirty}><RotateCcw size={14} /> Reset</button>
-          <button className="btn-fsd" onClick={save} disabled={busy || !dirty}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</button>
+          <button className="btn-fsd ghost" onClick={reset} disabled={!dirty}><RotateCcw size={14} /> {t('admin.resetBtn')}</button>
+          <button className="btn-fsd" onClick={save} disabled={busy || !dirty}><Save size={14} /> {busy ? t('admin.saving') : t('admin.save')}</button>
         </div>
       </div>
 
@@ -400,7 +408,7 @@ export function TenantStudio() {
           <nav className="tabs">
             {TABS.map((tb) => (
               <button key={tb.key} className={`tab${tab === tb.key ? ' active' : ''}`} onClick={() => setTab(tb.key)}>
-                <tb.icon size={14} /> {tb.label}
+                <tb.icon size={14} /> {t(`admin.tabs.${tb.key}`)}
               </button>
             ))}
           </nav>
@@ -408,12 +416,12 @@ export function TenantStudio() {
           {tab === 'branding' && (
             <section className="card">
               <div className="grid-2">
-                <label className="field"><span>Brand name</span><input value={c.brand_name || ''} onChange={(e) => set('brand_name', e.target.value)} /></label>
-                <label className="field"><span>Logo URL</span><input value={c.brand_logo_url || ''} placeholder="https://…/logo.svg" onChange={(e) => set('brand_logo_url', e.target.value)} /></label>
+                <label className="field"><span>{t('admin.brandName')}</span><input value={c.brand_name || ''} onChange={(e) => set('brand_name', e.target.value)} /></label>
+                <label className="field"><span>{t('admin.brandLogo')}</span><input value={c.brand_logo_url || ''} placeholder="https://…/logo.svg" onChange={(e) => set('brand_logo_url', e.target.value)} /></label>
               </div>
               <div className="grid-3" style={{ marginTop: 12 }}>
                 {(['brand_primary', 'brand_secondary', 'brand_accent'] as const).map((k, i) => (
-                  <label key={k} className="field"><span>{['Primary', 'Secondary', 'Accent'][i]}</span>
+                  <label key={k} className="field"><span>{[t('admin.brandPrimary'), t('admin.brandSecondary'), t('admin.brandAccent')][i]}</span>
                     <div className="row gap-sm">
                       {/* The native color input silently breaks (and desyncs from
                           the text twin) on any value that isn't a strict 6-digit
@@ -438,19 +446,19 @@ export function TenantStudio() {
           {tab === 'locale' && (
             <section className="card">
               <div className="grid-2">
-                <label className="field"><span>Default locale</span>
+                <label className="field"><span>{t('admin.defaultLocale')}</span>
                   <select value={c.default_locale} onChange={(e) => set('default_locale', e.target.value)}>
                     <option value="en">🇬🇧 English</option><option value="zh-Hant">🇭🇰 繁體中文</option><option value="zh-Hans">🇨🇳 简体中文</option>
                   </select>
                 </label>
-                <label className="field"><span>Timezone</span>
+                <label className="field"><span>{t('admin.timezone')}</span>
                   <select value={c.timezone} onChange={(e) => set('timezone', e.target.value)}>
                     <option>Asia/Hong_Kong</option><option>Asia/Singapore</option><option>Asia/Tokyo</option><option>UTC</option>
                   </select>
                 </label>
               </div>
               <div style={{ marginTop: 16 }}>
-                <label className="field"><span>Available locales</span></label>
+                <label className="field"><span>{t('admin.availableLocales')}</span></label>
                 <div className="chip-list">
                   {['en', 'zh-Hant', 'zh-Hans'].map((l) => (
                     <label key={l} className={`chip${arr('available_locales').includes(l) ? ' active' : ''}`}>
@@ -465,8 +473,8 @@ export function TenantStudio() {
 
           {tab === 'layout' && (
             <section className="card">
-              <label className="field"><span>Dashboard widgets</span></label>
-              <p className="text-sm muted">Which panels appear on the dashboard. Add none to show all (the default); remove every panel to hide them all.</p>
+              <label className="field"><span>{t('admin.dashboardWidgets')}</span></label>
+              <p className="text-sm muted">{t('admin.dashWidgetsHelp')}</p>
               <div className="chip-list">
                 {/* 'none' is an internal sentinel meaning "explicitly hide all" —
                     it must never render as a chip. Remove by value (indices
@@ -489,8 +497,8 @@ export function TenantStudio() {
               </div>
 
               <div style={{ marginTop: 20 }}>
-                <label className="field"><span>Sidebar modules</span></label>
-                <p className="text-sm muted">Which navigation entries are visible.</p>
+                <label className="field"><span>{t('admin.sidebarModules')}</span></label>
+                <p className="text-sm muted">{t('admin.sidebarModulesHelp2')}</p>
                 <div className="chip-list">
                   {ALL_MODULES.map((m) => (
                     <label key={m} className={`chip${arr('sidebar_modules').includes(m) ? ' active' : ''}`}>
@@ -505,14 +513,14 @@ export function TenantStudio() {
           {tab === 'workflow' && (
             <section className="card">
               <div className="grid-3">
-                <label className="field"><span>Booking horizon (days)</span><input type="number" value={c.booking_horizon_days ?? 180} onChange={(e) => set('booking_horizon_days', +e.target.value)} /></label>
-                <label className="field"><span>Min duration (min)</span><input type="number" value={c.min_duration_minutes ?? 15} onChange={(e) => set('min_duration_minutes', +e.target.value)} /></label>
-                <label className="field"><span>Max duration (min)</span><input type="number" value={c.max_duration_minutes ?? 480} onChange={(e) => set('max_duration_minutes', +e.target.value)} /></label>
-                <label className="field"><span>Grace period (min)</span><input type="number" value={c.grace_period_minutes ?? 15} onChange={(e) => set('grace_period_minutes', +e.target.value)} /></label>
-                <label className="field"><span>Approval window (hrs)</span><input type="number" value={c.approval_window_hours ?? 24} onChange={(e) => set('approval_window_hours', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.bookingHorizon')}</span><input type="number" value={c.booking_horizon_days ?? 180} onChange={(e) => set('booking_horizon_days', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.minDuration')}</span><input type="number" value={c.min_duration_minutes ?? 15} onChange={(e) => set('min_duration_minutes', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.maxDuration')}</span><input type="number" value={c.max_duration_minutes ?? 480} onChange={(e) => set('max_duration_minutes', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.gracePeriod')}</span><input type="number" value={c.grace_period_minutes ?? 15} onChange={(e) => set('grace_period_minutes', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.approvalWindow')}</span><input type="number" value={c.approval_window_hours ?? 24} onChange={(e) => set('approval_window_hours', +e.target.value)} /></label>
               </div>
               <div style={{ marginTop: 16 }}>
-                <label className="field"><span>Weekend days</span></label>
+                <label className="field"><span>{t('admin.weekendDays')}</span></label>
                 <div className="chip-list">
                   {WEEKDAYS.map((w, i) => {
                     const d = i + 1;
@@ -521,15 +529,15 @@ export function TenantStudio() {
                 </div>
               </div>
               <div className="row gap" style={{ marginTop: 16, flexWrap: 'wrap' }}>
-                <label className="toggle"><input type="checkbox" checked={!!c.weekend_require_approval} onChange={(e) => set('weekend_require_approval', e.target.checked)} /><span>Weekend bookings require approval</span></label>
-                <label className="toggle"><input type="checkbox" checked={!!c.holiday_blocking} onChange={(e) => set('holiday_blocking', e.target.checked)} /><span>Block bookings on public holidays</span></label>
+                <label className="toggle"><input type="checkbox" checked={!!c.weekend_require_approval} onChange={(e) => set('weekend_require_approval', e.target.checked)} /><span>{t('admin.weekendBookingApproval')}</span></label>
+                <label className="toggle"><input type="checkbox" checked={!!c.holiday_blocking} onChange={(e) => set('holiday_blocking', e.target.checked)} /><span>{t('admin.blockHolidays')}</span></label>
               </div>
               <div className="grid-2" style={{ marginTop: 16 }}>
-                <label className="field"><span>Calendar start hour (0–23)</span><input type="number" min={0} max={23} value={c.calendar_start_hour ?? 8} onChange={(e) => set('calendar_start_hour', +e.target.value)} /></label>
-                <label className="field"><span>Calendar end hour (1–23)</span><input type="number" min={1} max={23} value={c.calendar_end_hour ?? 20} onChange={(e) => set('calendar_end_hour', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.calendarStartHour')}</span><input type="number" min={0} max={23} value={c.calendar_start_hour ?? 8} onChange={(e) => set('calendar_start_hour', +e.target.value)} /></label>
+                <label className="field"><span>{t('admin.calendarEndHour')}</span><input type="number" min={1} max={23} value={c.calendar_end_hour ?? 20} onChange={(e) => set('calendar_end_hour', +e.target.value)} /></label>
               </div>
               <div style={{ marginTop: 16 }}>
-                <label className="field"><span>Report templates</span></label>
+                <label className="field"><span>{t('admin.reportTemplates')}</span></label>
                 <div className="chip-list">
                   {ALL_REPORTS.map((r) => (
                     <label key={r.key} className={`chip${(!arr('report_types').length || arr('report_types').includes(r.key)) ? ' active' : ''}`}>
@@ -552,7 +560,7 @@ export function TenantStudio() {
                 </div>
               </div>
               <div style={{ marginTop: 16 }}>
-                <label className="field"><span>Recurrence patterns</span></label>
+                <label className="field"><span>{t('admin.recurrencePatterns')}</span></label>
                 <div className="chip-list">
                   {ALL_RECURRENCE.map((p) => (
                     <label key={p} className={`chip${arr('recurrence_patterns').includes(p) ? ' active' : ''}`}>
@@ -563,24 +571,22 @@ export function TenantStudio() {
               </div>
 
               <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border, #e5e7eb)' }}>
-                <label className="field"><span>Auto-release no-shows (ghost bookings)</span></label>
+                <label className="field"><span>{t('admin.autoRelease')}</span></label>
                 <p className="text-sm muted">
-                  Release a room automatically when nobody checks in within the grace period after the
-                  start time, and email the booker. A resource can tighten the grace further in its editor.
+                  {t('admin.autoReleaseHelp')}
                 </p>
                 <div className="row gap" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <label className="toggle"><input type="checkbox" checked={!!auto.enabled} onChange={(e) => setAuto('enabled', e.target.checked)} /><span>Enable auto-release</span></label>
-                  <label className="field" style={{ maxWidth: 200 }}><span>Grace period (min)</span>
+                  <label className="toggle"><input type="checkbox" checked={!!auto.enabled} onChange={(e) => setAuto('enabled', e.target.checked)} /><span>{t('admin.enableAutoRelease')}</span></label>
+                  <label className="field" style={{ maxWidth: 200 }}><span>{t('admin.gracePeriod')}</span>
                     <input type="number" min={1} value={auto.grace_minutes ?? 15} onChange={(e) => setAuto('grace_minutes', +e.target.value)} />
                   </label>
                 </div>
               </div>
 
               <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border, #e5e7eb)' }}>
-                <label className="field"><span>Cost centers / chargeback codes</span></label>
+                <label className="field"><span>{t('admin.costCenters')}</span></label>
                 <p className="text-sm muted">
-                  One code per line. When any codes are configured, every booking must be billed to one
-                  of them (chosen at booking time). Leave empty to disable chargeback codes.
+                  {t('admin.costCentersHelp')}
                 </p>
                 <textarea rows={4} value={(c.cost_centers || []).join('\n')}
                   placeholder={'FIN-001\nMKT-204\nOPS-310'}
@@ -594,20 +600,20 @@ export function TenantStudio() {
               {arr('custom_fields').map((f: any, i: number) => (
                 <div key={f._id ?? i} className="card" style={{ background: 'var(--surface-inset)', marginBottom: 12 }}>
                   <div className="row" style={{ justifyContent: 'space-between' }}>
-                    <h4 style={{ margin: 0 }}>{f.label?.en || f.key || 'New field'}</h4>
-                    <button className="btn-fsd ghost danger" onClick={() => removeField(i)}><Trash2 size={13} /> Remove</button>
+                    <h4 style={{ margin: 0 }}>{f.label?.en || f.key || t('admin.newFieldTitle')}</h4>
+                    <button className="btn-fsd ghost danger" onClick={() => removeField(i)}><Trash2 size={13} /> {t('admin.removeField')}</button>
                   </div>
                   <div className="grid-3" style={{ marginTop: 8 }}>
-                    <label className="field"><span>Key</span><input value={f.key} onChange={(e) => patchField(i, { key: e.target.value })} /></label>
-                    <label className="field"><span>Type</span>
+                    <label className="field"><span>{t('admin.fieldKey')}</span><input value={f.key} onChange={(e) => patchField(i, { key: e.target.value })} /></label>
+                    <label className="field"><span>{t('admin.fieldType')}</span>
                       <select value={f.type} onChange={(e) => patchField(i, { type: e.target.value })}>
                         <option>text</option><option>select</option><option>number</option><option>checkbox</option><option>date</option>
                       </select>
                     </label>
-                    <label className="toggle" style={{ marginTop: 22 }}><input type="checkbox" checked={!!f.required} onChange={(e) => patchField(i, { required: e.target.checked })} /><span>Required</span></label>
+                    <label className="toggle" style={{ marginTop: 22 }}><input type="checkbox" checked={!!f.required} onChange={(e) => patchField(i, { required: e.target.checked })} /><span>{t('admin.fieldRequired')}</span></label>
                   </div>
                   <div style={{ marginTop: 8 }}>
-                    <label className="field"><span>Labels</span></label>
+                    <label className="field"><span>{t('admin.fieldLabels')}</span></label>
                     <div className="grid-3">
                       <input value={f.label?.en || ''} placeholder="English" onChange={(e) => patchField(i, { label: { ...f.label, en: e.target.value } })} />
                       <input value={f.label?.['zh-Hant'] || ''} placeholder="繁體中文" onChange={(e) => patchField(i, { label: { ...f.label, 'zh-Hant': e.target.value } })} />
@@ -616,24 +622,24 @@ export function TenantStudio() {
                   </div>
                   {f.type === 'select' && (
                     <div style={{ marginTop: 8 }}>
-                      <label className="field"><span>Options (one per line)</span></label>
+                      <label className="field"><span>{t('admin.fieldOptions')}</span></label>
                       <textarea rows={3} value={(f.options || []).join('\n')} onChange={(e) => patchField(i, { options: e.target.value.split('\n') })} />
                     </div>
                   )}
                 </div>
               ))}
-              <button className="btn-fsd ghost" onClick={addField}><Plus size={14} /> Add field</button>
+              <button className="btn-fsd ghost" onClick={addField}><Plus size={14} /> {t('admin.addField')}</button>
             </section>
           )}
 
           {tab === 'integrations' && (
             <section className="card">
               {[
-                { icon: CloudRain, key: 'hko_weather_enabled', title: 'HKO weather', help: 'Show the live Hong Kong Observatory signal on the dashboard.' },
-                { icon: Calendar, key: 'govhk_holidays_enabled', title: 'gov.hk holidays', help: 'Auto-import Hong Kong public holidays nightly.' },
-                { icon: Mail, key: 'outlook_sync_enabled', title: 'Outlook sync', help: 'Microsoft Graph two-way sync to room mailboxes.' },
-                { icon: MessageSquare, key: 'teams_app_enabled', title: 'Teams app', help: 'Book and manage rooms from inside Microsoft Teams.' },
-                { icon: Video, key: 'zoom_enabled', title: 'Zoom', help: 'Mask Zoom join links through a redirect gateway.' },
+                { icon: CloudRain, key: 'hko_weather_enabled', title: t('admin.intHko'), help: t('admin.intHkoHelp') },
+                { icon: Calendar, key: 'govhk_holidays_enabled', title: t('admin.intGovhk'), help: t('admin.intGovhkHelp') },
+                { icon: Mail, key: 'outlook_sync_enabled', title: t('admin.intOutlook'), help: t('admin.intOutlookHelp') },
+                { icon: MessageSquare, key: 'teams_app_enabled', title: t('admin.intTeams'), help: t('admin.intTeamsHelp') },
+                { icon: Video, key: 'zoom_enabled', title: t('admin.intZoom'), help: t('admin.intZoomHelp') },
               ].map((row) => (
                 <div key={row.key} className="integration-row">
                   <row.icon size={20} className="muted" />
@@ -645,7 +651,7 @@ export function TenantStudio() {
                   the toggle-driven model of the other integrations. */}
               {!!c.zoom_enabled && (
                 <div style={{ marginTop: 16 }}>
-                  <label className="field"><span>Zoom mask base URL</span>
+                  <label className="field"><span>{t('admin.zoomMaskUrl')}</span>
                     <input value={c.zoom_mask_base || ''} placeholder="https://ess.example/redirect" onChange={(e) => set('zoom_mask_base', e.target.value)} />
                   </label>
                 </div>
@@ -655,10 +661,10 @@ export function TenantStudio() {
 
           {tab === 'holidays' && (
             <section className="card">
-              <p className="muted text-sm">Sync from gov.hk or add tenant-specific dates manually.</p>
+              <p className="muted text-sm">{t('admin.holidaysHelp')}</p>
               <div className="row gap-sm">
-                <button className="btn-fsd" onClick={syncHolidays} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} /> Sync holidays</button>
-                <Link className="btn-fsd ghost" to="/admin/holidays"><Plus size={14} /> Add manually</Link>
+                <button className="btn-fsd" onClick={syncHolidays} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} /> {t('admin.syncHolidaysBtn')}</button>
+                <Link className="btn-fsd ghost" to="/admin/holidays"><Plus size={14} /> {t('admin.addManually')}</Link>
               </div>
 
               {/* gov.hk scope. The feed is Hong Kong public holidays; on a
@@ -666,10 +672,10 @@ export function TenantStudio() {
                   regions so it doesn't close offices elsewhere. None selected =
                   tenant-wide. Used by both this Sync button and the nightly cron. */}
               <div style={{ marginTop: 18 }}>
-                <label className="field"><span>gov.hk holiday scope</span></label>
-                <p className="muted text-sm">Regions that Hong Kong public holidays close. None selected applies tenant-wide (every resource).</p>
+                <label className="field"><span>{t('admin.govhkScope')}</span></label>
+                <p className="muted text-sm">{t('admin.govhkScopeHelp')}</p>
                 {regions.length === 0 ? (
-                  <p className="muted text-sm" style={{ marginTop: 6 }}>No resource regions defined yet — holidays apply tenant-wide.</p>
+                  <p className="muted text-sm" style={{ marginTop: 6 }}>{t('admin.noRegions')}</p>
                 ) : (
                   <div className="row gap-sm" style={{ flexWrap: 'wrap', marginTop: 6 }}>
                     {regions.map((r) => (
@@ -681,27 +687,27 @@ export function TenantStudio() {
                     ))}
                   </div>
                 )}
-                <p className="muted text-sm" style={{ marginTop: 6 }}>Save settings before syncing for a changed scope to take effect.</p>
+                <p className="muted text-sm" style={{ marginTop: 6 }}>{t('admin.saveBeforeSync')}</p>
               </div>
 
               {/* The configured holidays, mirrored from the dedicated admin page
                   so this tab shows what's actually in effect — not just the
                   sync controls. Manage (edit/delete) still lives on /admin/holidays. */}
               {holidays === null ? (
-                <p className="muted text-sm" style={{ marginTop: 14 }}>Loading…</p>
+                <p className="muted text-sm" style={{ marginTop: 14 }}>{t('admin.loading')}</p>
               ) : holidays.length === 0 ? (
-                <p className="muted text-sm" style={{ marginTop: 14 }}>No holidays configured yet.</p>
+                <p className="muted text-sm" style={{ marginTop: 14 }}>{t('admin.noHolidays')}</p>
               ) : (
                 <table className="data" style={{ marginTop: 14 }}>
-                  <thead><tr><th>Date</th><th>Name</th><th>Scope</th><th>Applies to</th><th>Blocks bookings?</th></tr></thead>
+                  <thead><tr><th>{t('admin.colDate')}</th><th>{t('admin.colName')}</th><th>{t('admin.colScope')}</th><th>{t('admin.colAppliesTo')}</th><th>{t('admin.colBlocks')}</th></tr></thead>
                   <tbody>
                     {holidays.map((h) => (
                       <tr key={h.id || `${h.holidayDate}-${h.region || ''}`}>
                         <td>{h.holidayDate}</td>
                         <td>{h.name || <span className="muted">—</span>}</td>
                         <td className="small muted">{h.scope || 'manual'}</td>
-                        <td className="small">{h.region || <span className="muted">All regions</span>}</td>
-                        <td>{h.isBlocker ? 'Yes' : 'No'}</td>
+                        <td className="small">{h.region || <span className="muted">{t('admin.allRegionsLabel')}</span>}</td>
+                        <td>{h.isBlocker ? t('common.yes') : t('common.no')}</td>
                       </tr>
                     ))}
                   </tbody>

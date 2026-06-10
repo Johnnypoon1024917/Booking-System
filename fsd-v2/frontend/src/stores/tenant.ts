@@ -25,11 +25,14 @@ async function fetchCustomization(set: (p: Partial<TenantState>) => void) {
     const c = await api.customization();
     set({ customization: c, loading: false });
     // Push brand colours from the tenant doc into the theme store so the
-    // shell repaints immediately after a customization save.
-    if (c?.brandPrimary || c?.brand_primary || c?.brandSecondary || c?.brand_secondary) {
+    // shell repaints immediately after a customization save — including the
+    // accent, which the theme previously ignored (QA #5).
+    if (c?.brandPrimary || c?.brand_primary || c?.brandSecondary || c?.brand_secondary
+        || c?.brandAccent || c?.brand_accent) {
       useTheme.getState().setBrand(
         c.brandPrimary || c.brand_primary,
         c.brandSecondary || c.brand_secondary,
+        c.brandAccent || c.brand_accent,
       );
     }
   } catch (e: any) {

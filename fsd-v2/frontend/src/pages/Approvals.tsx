@@ -526,6 +526,11 @@ export function Approvals() {
                 <span><CalendarDays size={11}/> {new Date(b.startTime).toLocaleDateString()}</span>
                 <span><Clock size={11}/> {new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 <span><User size={11}/> {b.userName || b.userId}</span>
+                {b.delegatedToName && (
+                  <span className="tag info" {...tip(t('approvals.delegatedToHelp', { defaultValue: 'This approval has been delegated.' }))}>
+                    <UserCog size={11}/> {t('approvals.delegatedTo', { name: b.delegatedToName, defaultValue: `Delegated to ${b.delegatedToName}` })}
+                  </span>
+                )}
               </div>
               {steps.length > 0 && <div style={{ marginTop: 8 }}><ApprovalTimeline steps={steps} submittedAt={b.createdAt}/></div>}
             </div>

@@ -14,6 +14,8 @@ import { AuthUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { gradeAtLeast } from './grade';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import { Perm } from '../permissions/permission-catalog';
 
 export interface DecideInput {
   status: 'approved' | 'rejected';
@@ -33,6 +35,7 @@ export class ApprovalsService {
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(Department) private readonly departments: Repository<Department>,
     private readonly notifications: NotificationsService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   // Load the (post-update) booking and enqueue an approval-outcome email.
@@ -163,7 +166,9 @@ export class ApprovalsService {
   // collect the first-actionable per booking, and load the bookings in
   // one round-trip. Each booking is enriched with `userName` (the requester)
   // so the approvals UI can render names without pulling the whole directory.
-  async listPendingForApprover(user: AuthUser): Promise<Array<Booking & { userName: string | null }>> {
+  async listPendingForApprover(
+    user: AuthUser,
+  ): Promise<Array<Booking & { userName: string | null; delegatedToName: string | null }>> {
     const pending = await this.steps.find({
       where: { tenantId: user.tenantId, status: 'pending' },
       order: { createdAt: 'ASC' },
@@ -209,24 +214,61 @@ export class ApprovalsService {
       order: { startTime: 'ASC' },
     });
 
-    // Resolve requester usernames in one batched query and attach them, so the
-    // SPA no longer fetches the entire user directory just to map ids → names.
-    const requesterIds = Array.from(new Set(list.map((b) => b.userId)));
-    const requesters = requesterIds.length
-      ? await this.users.find({
-          where: { id: In(requesterIds), tenantId: user.tenantId },
-          select: { id: true, username: true },
-        })
-      : [];
-    const nameById = new Map(requesters.map((u) => [u.id, u.username]));
-    return list.map((b) => ({ ...b, userName: nameById.get(b.userId) ?? null }));
+    // Per booking, figure out who (if anyone) it is currently delegated to:
+    // the first pending chain step's delegatedTo, or the legacy booking field.
+    // Surfacing this on the inbox is QA #2 — admins can see ownership at a glance
+    // instead of digging into a step's reason text.
+    const delegateIdByBooking = new Map<string, string>();
+    for (const b of list) {
+      const steps = byBooking.get(b.id);
+      const firstPending = steps?.sort((a, c) => a.stepIndex - c.stepIndex).find((s) => s.status === 'pending');
+      const did = firstPending?.delegatedTo ?? b.delegatedTo ?? undefined;
+      if (did) delegateIdByBooking.set(b.id, did);
+    }
+
+    // Resolve requester + delegate usernames in one batched query and attach
+    // them, so the SPA no longer fetches the entire user directory to map ids.
+    const nameById = await this.resolveUserNames(
+      user.tenantId,
+      [...list.map((b) => b.userId), ...delegateIdByBooking.values()],
+    );
+    return list.map((b) => ({
+      ...b,
+      userName: nameById.get(b.userId) ?? null,
+      delegatedToName: delegateIdByBooking.has(b.id)
+        ? nameById.get(delegateIdByBooking.get(b.id)!) ?? null
+        : null,
+    }));
   }
 
-  listChain(tenantId: string, bookingId: string) {
-    return this.steps.find({
+  // The full chain for a booking, each step enriched with the resolved
+  // usernames behind its id references (decidedBy / delegatedTo / delegatedBy)
+  // so the approvals timeline can render names — and explicitly show
+  // "delegated to X by Y" — without the client pulling the user directory.
+  async listChain(tenantId: string, bookingId: string) {
+    const steps = await this.steps.find({
       where: { tenantId, bookingId },
       order: { stepIndex: 'ASC' },
     });
+    const names = await this.resolveUserNames(tenantId, steps.flatMap((s) =>
+      [s.decidedBy, s.delegatedTo, s.delegatedBy].filter((x): x is string => !!x)));
+    return steps.map((s) => ({
+      ...s,
+      decidedByName: s.decidedBy ? names.get(s.decidedBy) ?? null : null,
+      delegatedToName: s.delegatedTo ? names.get(s.delegatedTo) ?? null : null,
+      delegatedByName: s.delegatedBy ? names.get(s.delegatedBy) ?? null : null,
+    }));
+  }
+
+  // Batch-resolve a set of user ids → usernames (deduped, one query).
+  private async resolveUserNames(tenantId: string, ids: string[]): Promise<Map<string, string>> {
+    const unique = Array.from(new Set(ids.filter(Boolean)));
+    if (!unique.length) return new Map();
+    const rows = await this.users.find({
+      where: { id: In(unique), tenantId },
+      select: { id: true, username: true },
+    });
+    return new Map(rows.map((u) => [u.id, u.username]));
   }
 
   // The first step a booking is currently waiting on, resolved for display:
@@ -457,6 +499,13 @@ export class ApprovalsService {
   // timeline surfaces it.
   async delegate(user: AuthUser, bookingId: string, toUserId: string, reason: string) {
     if (!toUserId) throw new BadRequestException('to_user_id required');
+    // Eligibility (QA #1): a delegation is only meaningful if the recipient can
+    // actually act on it. Reject targets who lack approval.decide — otherwise the
+    // booking lands with someone who has no way to review or approve it, and the
+    // request stalls. Resolved against the tenant permission matrix (the same
+    // source the approve/reject guard reads), so the picker filter and this
+    // server check can never disagree.
+    await this.assertEligibleDelegate(user.tenantId, toUserId);
     const steps = await this.steps.find({
       where: { tenantId: user.tenantId, bookingId },
       order: { stepIndex: 'ASC' },
@@ -474,8 +523,18 @@ export class ApprovalsService {
       if (!this.canDecideStep(pending, user) && !this.isAdmin(user)) {
         throw new ForbiddenException('You are not authorized to delegate this step.');
       }
-      pending.approverIds = [toUserId];
-      pending.approverRole = '';
+      // Enterprise behaviour (QA #2/#3): record the delegate as a structured
+      // field and ADD them to the approver set rather than REPLACING it. The
+      // original approver (and any role-based approvers) therefore keep the
+      // booking in view — it never silently vanishes from a multi-step chain —
+      // while the delegate gains the ability to act. Ownership is explicit via
+      // delegatedTo/delegatedBy so the UI can render "delegated to X by Y".
+      pending.delegatedTo = toUserId;
+      pending.delegatedBy = user.id;
+      pending.delegatedAt = new Date();
+      if (!pending.approverIds?.includes(toUserId)) {
+        pending.approverIds = [...(pending.approverIds ?? []), toUserId];
+      }
       const note = `Delegated ${user.id} → ${toUserId}${reason ? ` (${reason})` : ''}`;
       pending.reason = pending.reason ? `${pending.reason} · ${note}` : note;
       await this.steps.save(pending);
@@ -500,6 +559,42 @@ export class ApprovalsService {
       { id: bookingId, tenantId: user.tenantId },
       { delegatedTo: toUserId, exceptionNotes: b.exceptionNotes ? `${b.exceptionNotes} · ${note}` : note },
     );
+  }
+
+  // Throw unless `toUserId` is an active user in the tenant whose role holds
+  // approval.decide. Shared by the delegate endpoint; the directory typeahead
+  // applies the same filter so an ineligible user never appears as an option.
+  private async assertEligibleDelegate(tenantId: string, toUserId: string) {
+    const target = await this.users.findOne({
+      where: { id: toUserId, tenantId },
+      select: { id: true, role: true, isActive: true },
+    });
+    if (!target || !target.isActive) {
+      throw new BadRequestException('Selected user is not an active member of this tenant.');
+    }
+    const canApprove = await this.permissions.hasPermission(tenantId, target.role, Perm.ApprovalDecide);
+    if (!canApprove) {
+      throw new BadRequestException(
+        'Selected user cannot approve bookings (their role has no approval permission). Pick an eligible approver.',
+      );
+    }
+  }
+
+  // Filter a directory search down to users who can actually approve, so the
+  // delegate picker only ever offers eligible approvers. Permission lookups are
+  // memoised per distinct role (a few roles cover any result page).
+  async filterEligibleApprovers<T extends { role: string }>(tenantId: string, list: T[]): Promise<T[]> {
+    const byRole = new Map<string, boolean>();
+    const out: T[] = [];
+    for (const u of list) {
+      let ok = byRole.get(u.role);
+      if (ok === undefined) {
+        ok = await this.permissions.hasPermission(tenantId, u.role, Perm.ApprovalDecide);
+        byRole.set(u.role, ok);
+      }
+      if (ok) out.push(u);
+    }
+    return out;
   }
 
   // ---- helpers ----

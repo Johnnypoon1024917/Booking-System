@@ -4,6 +4,7 @@ import { IsOptional, IsString, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
 import { PushService } from '../push/push.service';
 import { AuditService } from '../audit/audit.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { RateLimit } from '../../common/guards/rate-limit.guard';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
@@ -32,6 +33,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly push: PushService,
     private readonly audit: AuditService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   // 10 attempts / 5 min per IP — absorbs a fat-fingered password but stops
@@ -96,10 +98,15 @@ export class AuthController {
     }
   }
 
+  // The SPA hydrates the session from here on every boot. We attach the user's
+  // effective permission keys so the client can gate navigation/routes on
+  // fine-grained permissions (e.g. report.view) rather than coarse role checks —
+  // the backend guards remain the authoritative enforcement.
   @ApiBearerAuth()
   @Get('me')
-  me(@CurrentUser() user: AuthUser) {
-    return user;
+  async me(@CurrentUser() user: AuthUser) {
+    const permissions = await this.permissions.effectivePermissions(user.tenantId, user.role);
+    return { ...user, permissions };
   }
 
   // Logout. The JWT itself is stateless (the client discards it), but on a

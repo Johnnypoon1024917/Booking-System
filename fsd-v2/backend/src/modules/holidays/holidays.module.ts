@@ -8,6 +8,7 @@ import { GovHKHolidayClient } from './govhk.client';
 import { CustomizationModule } from '../customization/customization.module';
 
 @Module({
+  // RedisService is @Global (RedisModule) — no import needed for the cron lock.
   imports: [TypeOrmModule.forFeature([Holiday]), CustomizationModule],
   controllers: [HolidaysAdminController],
   providers: [HolidaysService, HolidaysCron, GovHKHolidayClient],

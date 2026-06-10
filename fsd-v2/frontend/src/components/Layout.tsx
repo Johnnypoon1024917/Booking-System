@@ -61,7 +61,9 @@ function GuardedNavLink({ to, end, className, children }: {
 // TopBar.vue. The narrow 92-px icon-stack sidebar (light variant) +
 // 48-px utility topbar give the React SPA the same look as the Vue SPA.
 export function Layout() {
-  const { user, isAdmin, logout } = useAuth();
+  // No-selector subscription returns the whole store, so the nav re-renders when
+  // /auth/me hydrates `permissions` and hasPerm() starts returning true.
+  const { user, isAdmin, logout, hasPerm } = useAuth();
   const nav = useNavigate();
   const { pathname } = useLocation();
   const { t, i18n } = useT();
@@ -268,7 +270,7 @@ export function Layout() {
               <CheckCircle size={22} /><span>{t('nav.approvals')}</span>
             </GuardedNavLink>
           )}
-          {show('reports') && canAdmin && (
+          {show('reports') && hasPerm('report.view') && (
             <GuardedNavLink to="/admin/reports" className={({ isActive }) => isActive ? 'active' : ''}>
               <BarChart3 size={22} /><span>{t('nav.reports')}</span>
             </GuardedNavLink>
@@ -352,6 +354,9 @@ export function Layout() {
                 <div className="menu-divider" />
                 <button className="menu-item" onClick={() => { setUserOpen(false); guardedNav('/profile'); }}>
                   <User size={14} /> Profile
+                </button>
+                <button className="menu-item" onClick={() => { setUserOpen(false); guardedNav('/settings'); }}>
+                  <Settings size={14} /> Settings
                 </button>
                 {canAdmin && (
                   <button className="menu-item" onClick={() => { setUserOpen(false); guardedNav('/admin/studio'); }}>

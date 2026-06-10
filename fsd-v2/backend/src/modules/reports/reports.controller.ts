@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Controller, Get, Query, Res, UseGuards,
+  BadRequestException, Controller, Get, Query, Res,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -9,8 +9,9 @@ import ExcelJS from 'exceljs';
 import { ReportsService, DashboardFilter, DashboardScope } from './reports.service';
 import { normalizeReportType } from './report.types';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
-import { AdminRoles, Roles, RequireRoles, Role } from '../../common/decorators/roles.decorator';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles, Role } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { Perm } from '../permissions/permission-catalog';
 import { AuditService } from '../audit/audit.service';
 
 // reportRange defaults the date window to the last 30 days when the
@@ -57,10 +58,12 @@ export class ReportsController {
     return this.svc.dashboard(u.tenantId, s, e, filter, region, location);
   }
 
-  // Tabular preview — admin only.
+  // Tabular preview — gated on the report.view permission (not merely an
+  // admin-tier ROLE). A role can be admin-tier yet lack report.view (e.g.
+  // Secretary), and must then be refused here — the role gate let those roles
+  // through despite the matrix saying otherwise.
   @Get('table')
-  @UseGuards(RolesGuard)
-  @RequireRoles(...AdminRoles)
+  @RequirePermission(Perm.ReportView)
   @ApiQuery({ name: 'type', required: false })
   @ApiQuery({ name: 'start', required: false })
   @ApiQuery({ name: 'end', required: false })
@@ -78,10 +81,10 @@ export class ReportsController {
     }
   }
 
-  // Export CSV / XLSX — admin only, streamed.
+  // Export CSV / XLSX — gated on report.export (a stricter permission than
+  // viewing: it produces a downloadable data extract that leaves the system).
   @Get('export')
-  @UseGuards(RolesGuard)
-  @RequireRoles(...AdminRoles)
+  @RequirePermission(Perm.ReportExport)
   @ApiQuery({ name: 'type', required: false })
   @ApiQuery({ name: 'format', required: false, enum: ['csv', 'xlsx'] })
   @ApiQuery({ name: 'start', required: false })

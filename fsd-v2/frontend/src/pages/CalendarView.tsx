@@ -11,10 +11,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useToast } from '../stores/toast';
 import { useRealtime } from '../hooks/useRealtime';
+import { useRealtimeStore } from '../stores/realtime';
 import { useTimezone } from '../hooks/useTimezone';
 import { BookingModal } from '../components/BookingModal';
 import { RoomGridView } from '../components/RoomGridView';
 import { Combobox, ComboOption } from '../components/Combobox';
+import { useAuth } from '../hooks/useAuth';
+
+// Status filter chips (Outlook-style): each toggles whether bookings of that
+// status show. They double as the colour legend, so the swatch matches
+// statusColor() above. 'Confirmed' is labelled "Booked" to match v1's wording.
+const STATUS_FILTERS = [
+  { key: 'Confirmed', label: 'Booked', color: 'var(--brand-primary)' },
+  { key: 'Pending Approval', label: 'Pending approval', color: 'var(--warning)' },
+  { key: 'Checked In', label: 'Checked in', color: 'var(--success)' },
+] as const;
 
 // Schedule view — FullCalendar week/month/day grid with the v1 .mrbs panel
 // chrome, a room filter, a status legend, and BookingModal-based creation.
@@ -46,9 +57,22 @@ export function CalendarView() {
   // replay a single catch-up reload once it ends.
   const interacting = useRef(false);
   const missedReload = useRef(false);
+  // Coalesces bursts of reloads (e.g. a reconnect replaying many missed booking
+  // events) into a single refetch instead of one bookingsRange call per event.
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [bookings, setBookings] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [roomFilter, setRoomFilter] = useState('');   // '' = all rooms
+  // "My bookings only" toggle — the shared timeline shows every room's bookings
+  // by default (intended: it's a shared calendar, private ones redacted), so a
+  // general user wanting just their own needs this filter (matches Outlook's
+  // "My calendar"). Matched against the caller's id; private bookings owned by
+  // others arrive with userId stripped, so they never leak in here.
+  const [mineOnly, setMineOnly] = useState(false);
+  // Status filter (Outlook-style). Empty set = show all; otherwise only the
+  // selected statuses render. Driven by the chips that double as the legend.
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(() => new Set());
+  const currentUserId = useAuth((s) => s.user?.id);
   // 'calendar' = FullCalendar day/week/month (drag to retime within a day).
   // 'rooms' = our room-column day grid (drag to retime AND re-room). The week
   // grid can't move a booking between rooms — only the room view can.
@@ -60,6 +84,10 @@ export function CalendarView() {
   // one-shot read) so rotating the device or resizing re-flows live.
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   const { lastEvent } = useRealtime();
+  // Bumped whenever the SSE stream re-establishes after a drop. We force a
+  // refetch so the grid catches up on anything that changed while offline,
+  // beyond whatever the server could replay from its buffer.
+  const reconnectNonce = useRealtimeStore((s) => s.reconnectNonce);
   // The grid renders in the tenant's zone (via the Luxon timeZone prop), so
   // every conversion of a FullCalendar Date back to wall-clock for the booking
   // modal must go through this — never the browser-local hhmm()/isoDate().
@@ -115,9 +143,19 @@ export function CalendarView() {
     // Defer the refresh if the user is actively dragging/resizing — replay it
     // when the gesture ends so the grid still converges, just not mid-drag.
     if (interacting.current) { missedReload.current = true; return; }
-    reload();
+    scheduleReload();
     /* eslint-disable-next-line */
   }, [lastEvent]);
+
+  // On SSE reconnect, force a catch-up refetch (skip the initial mount, which
+  // already loads via the effect above). Debounced so it coalesces with any
+  // booking events the server replays at the same moment.
+  useEffect(() => {
+    if (reconnectNonce === 0) return;
+    if (interacting.current) { missedReload.current = true; return; }
+    scheduleReload();
+    /* eslint-disable-next-line */
+  }, [reconnectNonce]);
 
   // FullCalendar drag/resize gesture boundaries. While a gesture is in flight we
   // hold off live reloads (see refs above); on completion we flush a single
@@ -130,6 +168,13 @@ export function CalendarView() {
       missedReload.current = false;
       setTimeout(() => { if (!interacting.current) reload(); }, 0);
     }
+  }
+
+  // Debounced reload: collapses a burst of triggers (a reconnect replaying many
+  // missed events, or rapid-fire live events) into one bookingsRange fetch.
+  function scheduleReload() {
+    if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    reloadTimer.current = setTimeout(() => { reloadTimer.current = null; reload(); }, 250);
   }
 
   function reload() {
@@ -192,8 +237,20 @@ export function CalendarView() {
     );
   }
 
+  function toggleStatus(key: string) {
+    setStatusFilter((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   const events = useMemo(() => bookings
     .filter((b) => b.status !== 'Cancelled')
+    // "My bookings only": keep just the caller's own bookings when toggled on.
+    .filter((b) => !mineOnly || b.userId === currentUserId)
+    // Status filter: empty set means "all"; otherwise keep only chosen statuses.
+    .filter((b) => statusFilter.size === 0 || statusFilter.has(b.status))
     .filter((b) => !roomFilter || b.resourceId === roomFilter)
     .map((b) => {
       // A room can be soft-deactivated (isActive=false) while its historical and
@@ -227,7 +284,7 @@ export function CalendarView() {
         ],
         extendedProps: { subjectHidden: !!b.subjectHidden, isRoomActive, roomName: rName },
       };
-    }), [bookings, roomFilter, rooms]);
+    }), [bookings, roomFilter, rooms, mineOnly, currentUserId, statusFilter]);
 
   function onSelect(info: any) {
     if (!rooms.length) { toast.warning('No bookable rooms'); return; }
@@ -433,6 +490,12 @@ export function CalendarView() {
             <Combobox className="cal-room-filter" ariaLabel="Filter by room"
                       value={roomFilter} onChange={setRoomFilter}
                       placeholder="All rooms" options={roomFilterOptions} />
+            {/* "My bookings only" — pressed state filters the grid to the
+                caller's own bookings (Outlook "My calendar"). */}
+            <button type="button" className={`seg-btn cal-mine-btn${mineOnly ? ' active' : ''}`}
+                    aria-pressed={mineOnly} onClick={() => setMineOnly((v) => !v)}>
+              My bookings
+            </button>
           </div>
         </div>
 
@@ -505,12 +568,28 @@ export function CalendarView() {
           />
         </div>
 
-        <div className="pb" style={{ padding: '10px 14px', borderTop: '1px solid var(--asl-line)', display: 'flex', alignItems: 'center' }}>
-          <span className="pill" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--brand-primary)' }}>Booked</span>
-          <span className="pill" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--warning)', marginLeft: 8 }}>Pending approval</span>
-          <span className="pill" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--success)', marginLeft: 8 }}>Checked in</span>
-          <span className="muted text-sm" style={{ marginLeft: 12 }}>
-            Drag across a time range, then choose a room in the popup to book it.
+        <div className="pb" style={{ padding: '10px 14px', borderTop: '1px solid var(--asl-line)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          {/* The colour legend doubles as a status filter: click a chip to show
+              only that status; click again to clear. Pressed chips fill with
+              their accent so the active filter is obvious. */}
+          {STATUS_FILTERS.map((s) => {
+            const on = statusFilter.has(s.key);
+            return (
+              <button key={s.key} type="button" aria-pressed={on}
+                      className={`pill cal-status-chip${on ? ' active' : ''}`}
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `4px solid ${s.color}`, ...(on ? { background: `color-mix(in srgb, ${s.color} 14%, var(--surface))`, borderColor: s.color } : {}) }}
+                      onClick={() => toggleStatus(s.key)}>
+                {s.label}
+              </button>
+            );
+          })}
+          {statusFilter.size > 0 && (
+            <button type="button" className="btn ghost sm" onClick={() => setStatusFilter(new Set())}>
+              Clear
+            </button>
+          )}
+          <span className="muted text-sm" style={{ marginLeft: 'auto' }}>
+            Click a status to filter · drag a time range to book.
           </span>
         </div>
       </div>

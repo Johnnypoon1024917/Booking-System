@@ -64,6 +64,14 @@ export function BroadcastBanner() {
     if (lastEvent?.type === 'broadcast.published') load();
   }, [lastEvent, load]);
 
+  // Refetch the moment the SSE stream re-establishes after a drop, so a
+  // broadcast published while we were offline shows up immediately rather than
+  // waiting out the 60s poll.
+  const reconnectNonce = useRealtimeStore((s) => s.reconnectNonce);
+  useEffect(() => {
+    if (reconnectNonce > 0) load();
+  }, [reconnectNonce, load]);
+
   const live = useMemo(
     () => items.filter((b) => !dismissed.has(b.id)),
     [items, dismissed],

@@ -40,6 +40,7 @@ import { Settings } from './pages/Settings';
 import { useAuth } from './hooks/useAuth';
 import { useTenant } from './stores/tenant';
 import { useTheme } from './stores/theme';
+import { api } from './api/client';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const user = useAuth((s) => s.user);
@@ -48,18 +49,35 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return children;
 }
 
+// Route guard for permission-gated pages. While permissions are still loading
+// (null) we render the page — the backend is the real gate, so a brief window
+// can't leak data, and this avoids a false redirect on first paint. Once known,
+// a user lacking the permission is bounced to the dashboard.
+function RequirePerm({ perm, children }: { perm: string; children: JSX.Element }) {
+  const permissions = useAuth((s) => s.permissions);
+  const hasPerm = useAuth((s) => s.hasPerm);
+  if (permissions !== null && !hasPerm(perm)) return <Navigate to="/" replace />;
+  return children;
+}
+
 export function App() {
   const user = useAuth((s) => s.user);
   const loadTenant = useTenant((s) => s.load);
   const applyTheme = useTheme((s) => s.apply);
+  const setPermissions = useAuth((s) => s.setPermissions);
 
   // Hydrate tenant customization + theme once we know the user is in.
   // Tenant load may fail silently — the store surfaces error state for
   // any screen that wants to react to it.
   useEffect(() => {
     applyTheme();
-    if (user) loadTenant().catch(() => { /* surfaced via store.error */ });
-  }, [user, loadTenant, applyTheme]);
+    if (user) {
+      loadTenant().catch(() => { /* surfaced via store.error */ });
+      // Refresh the caller's effective permissions so the UI gates on the live
+      // matrix (an admin may have changed the role's permissions since login).
+      api.me().then((me) => setPermissions(me?.permissions ?? [])).catch(() => { /* keep persisted set */ });
+    }
+  }, [user, loadTenant, applyTheme, setPermissions]);
 
   return (
     <>
@@ -81,7 +99,7 @@ export function App() {
           <Route path="/admin/bookings"       element={<AdminBookings />} />
           <Route path="/admin/departments"    element={<AdminDepartments />} />
           <Route path="/admin/studio"         element={<TenantStudio />} />
-          <Route path="/admin/reports"        element={<Reports />} />
+          <Route path="/admin/reports"        element={<RequirePerm perm="report.view"><Reports /></RequirePerm>} />
           <Route path="/admin/approval-chain" element={<AdminApprovalChain />} />
           <Route path="/admin/permissions"    element={<AdminPermissions />} />
           <Route path="/admin/broadcasts"     element={<AdminBroadcasts />} />

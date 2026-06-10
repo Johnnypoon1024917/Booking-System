@@ -1,5 +1,6 @@
-import { Controller, MessageEvent, Sse } from '@nestjs/common';
+import { Controller, MessageEvent, Req, Sse } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { RealtimeGateway } from './realtime.gateway';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
@@ -25,7 +26,11 @@ export class RealtimeController {
   @ApiOperation({
     summary: 'Server-sent events stream for tenant-scoped lifecycle events',
   })
-  stream(@CurrentUser() user: AuthUser): Observable<MessageEvent> {
-    return this.gateway.streamFor(user.tenantId);
+  stream(@CurrentUser() user: AuthUser, @Req() req: Request): Observable<MessageEvent> {
+    // A reconnecting EventSource resends the id of the last event it saw via the
+    // standard Last-Event-ID header; the gateway replays anything newer from the
+    // per-tenant buffer before resuming the live stream.
+    const lastEventId = (req.headers['last-event-id'] as string | undefined) || undefined;
+    return this.gateway.streamFor(user.tenantId, user.id, lastEventId);
   }
 }

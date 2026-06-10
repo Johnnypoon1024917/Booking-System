@@ -3,10 +3,13 @@
 # Usage:
 #   cd fsd-v2
 #   cp .env.example .env          # then fill in real secrets
-#   # FIRST deploy only — create the schema (no migrations ship with the app):
-#   DB_SYNCHRONIZE=true docker compose -f docker-compose.prod.yml up -d --build
-#   # ...wait for the api to be healthy, then lock the schema and redeploy:
-#   docker compose -f docker-compose.prod.yml up -d --build   # DB_SYNCHRONIZE=false (default)
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Schema is managed by migrations (DB_MIGRATIONS_RUN=true runs the committed
+# baseline on boot) — NOT by synchronize. See backend/src/migrations/.
+#
+# To run multiple API instances behind the FSD load balancer, see
+# docker-compose.scale.yml (adds an nginx LB and `--scale api=N`).
 #
 # Only the frontend publishes a host port. Terminate TLS in front of it
 # (nginx/Caddy/Traefik) — nothing here speaks HTTPS.
@@ -14,6 +17,13 @@ services:
   postgres_db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # max_connections sized for N api replicas × DB_POOL_MAX × (1 + #replicas).
+    # Raise both together, or front Postgres with PgBouncer (transaction pooling)
+    # for large fleets — see the DB pool note in .env.example.
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=${PG_MAX_CONNECTIONS:-200}"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -25,23 +35,47 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: ${PG_MEM_LIMIT:-1g}
+          cpus: "${PG_CPU_LIMIT:-2}"
     # No host port published — Postgres stays on the internal network only.
 
-  # Shared-state backplane for HA (realtime SSE pub/sub, global rate-limit
-  # window, broadcast announcement dedup). Required only when running more than
-  # one `api` instance behind a load balancer. A single Redis is shared by all
-  # API instances across both sites (or replicate Redis per site with a relay).
+  # Shared-state backplane for HA (realtime SSE pub/sub + replay buffer, global
+  # rate-limit window, broadcast dedup, cron leader-locks). Required only when
+  # running more than one `api` instance. One Redis is shared by all API
+  # instances (across both sites, or replicate per site with a relay).
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    # Password-protected even on the internal network (a compromised neighbour
+    # container otherwise gets full read/write to session-adjacent state).
+    # maxmemory + LRU bounds the per-tenant SSE replay buffers so they can't OOM.
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"
+      - "--maxmemory"
+      - "${REDIS_MAXMEMORY:-256mb}"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
     volumes:
       - redis_v2_prod:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEM_LIMIT:-384m}
+          cpus: "${REDIS_CPU_LIMIT:-1}"
     # No host port published — internal network only.
 
   api:
@@ -50,26 +84,48 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      DB_HOST: postgres_db
+      DB_HOST: ${DB_HOST:-postgres_db}
       DB_PORT: 5432
       DB_USER: ${POSTGRES_USER:?}
       DB_PASS: ${POSTGRES_PASSWORD:?}
       DB_NAME: ${POSTGRES_DB:?}
-      # First boot: true to create the schema; then back to false (default).
+      # Schema via migrations (default). Keep DB_SYNCHRONIZE=false everywhere.
       DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-false}
-      # HA shared-state. Set to switch realtime/rate-limit/broadcasts into the
-      # multi-instance-safe code paths. Leave empty for a single api instance.
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      # Read replicas (comma-separated hosts). When set, SELECTs load-balance
-      # across replicas and writes go to DB_HOST (the current primary, kept
-      # pointed there by the Patroni/VIP HA layer). Empty = single-DB mode.
+      DB_MIGRATIONS_RUN: ${DB_MIGRATIONS_RUN:-true}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      # Read replicas (comma-separated). Opens warm replica pools (readiness
+      # probe / standby). App reads still run on the primary inside the tenant
+      # tx — see the note in database.config.ts. Empty = single-DB.
       DB_REPLICA_HOSTS: ${DB_REPLICA_HOSTS:-}
       DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-5000}
       DB_RETRY_ATTEMPTS: ${DB_RETRY_ATTEMPTS:-10}
       DB_RETRY_DELAY_MS: ${DB_RETRY_DELAY_MS:-3000}
+      # HA shared-state. Includes the Redis password. Leave empty for a single
+      # api instance (everything falls back to in-memory).
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379}
       JWT_SECRET: ${JWT_SECRET:?set a 32+ byte JWT_SECRET in .env}
       JWT_TTL: ${JWT_TTL:-12h}
       PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SSE_MAX_PER_USER: ${SSE_MAX_PER_USER:-5}
+      # Tenant isolation: connect as a NON-superuser role for RLS to bite.
+      RLS_FAIL_CLOSED: ${RLS_FAIL_CLOSED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
+      # Integration credential encryption (REQUIRED — fails closed without it).
+      INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:?set INTEGRATION_SECRET_KEY in .env}
+      # Public integration secrets (set when the feature is used).
+      KIOSK_TOKEN: ${KIOSK_TOKEN:-}
+      KIOSK_TOKENS: ${KIOSK_TOKENS:-}
+      KIOSK_BOOKING_USER_ID: ${KIOSK_BOOKING_USER_ID:-}
+      BOT_APP_ID: ${BOT_APP_ID:-}
+      BOT_APP_PASSWORD: ${BOT_APP_PASSWORD:-}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-}
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@fsd-mrbs.local}
       # Production hard-offs — never enable these on a live deploy.
       ALLOW_DEV_LOGIN: "false"
       ALLOW_DEV_INTEGRATION_EPHEMERAL: "false"
@@ -86,11 +142,17 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    stop_grace_period: 30s
     depends_on:
       postgres_db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEM_LIMIT:-512m}
+          cpus: "${API_CPU_LIMIT:-1}"
     # No host port published — the frontend nginx proxies to api:3000 on the
     # internal network. To reach it directly, add "127.0.0.1:3000:3000".
 
@@ -114,6 +176,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${FRONTEND_MEM_LIMIT:-128m}
+          cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
 
 volumes:
   pg_v2_prod:

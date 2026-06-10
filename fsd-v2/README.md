@@ -76,10 +76,10 @@ replicas:
 
 | Concern | Single node (no Redis) | Multi-instance (Redis set) |
 |---|---|---|
-| Realtime SSE fan-out | in-process RxJS bus | Redis pub/sub — events reach clients on every node |
+| Realtime SSE fan-out | in-process RxJS bus | Redis pub/sub — events reach clients on every node, with a per-tenant replay buffer so a reconnecting client catches up missed events via `Last-Event-ID` (plus refetch-on-reconnect on the SPA) |
 | Auth rate-limit window | per-pod Map (N× the limit) | atomic Redis INCR — one global window |
 | Broadcast announcements | one announcer | Redis `NX` lock dedups N pods firing the same timer |
-| Postgres reads | single DB | `DB_REPLICA_HOSTS` splits SELECTs across replicas |
+| Postgres failover | single DB | primary fronted by an HA proxy/VIP; `DB_REPLICA_HOSTS` opens warm replica pools (used by the readiness probe / standby). NB: app reads still run on the primary inside the tenant transaction — replica read-scaling is a documented follow-up, not yet wired |
 
 Enable it by setting two env vars (see [.env.example](.env.example)):
 

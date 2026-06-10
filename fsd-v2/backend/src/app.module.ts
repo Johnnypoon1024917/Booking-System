@@ -3,8 +3,12 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { LoggerModule } from 'nestjs-pino';
 
 import { databaseConfig } from './config/database.config';
+import { loggerConfig } from './common/observability/logger.config';
+import { MetricsModule } from './common/observability/metrics.module';
+import { MetricsInterceptor } from './common/observability/metrics.interceptor';
 import { RedisModule } from './common/redis/redis.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
@@ -57,8 +61,13 @@ import { DemoSeederService } from './common/demo-seeder.service';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Structured JSON logging with request/tenant ids — early so other modules'
+    // loggers inherit it.
+    LoggerModule.forRoot(loggerConfig()),
     TypeOrmModule.forRoot(databaseConfig()),
     ScheduleModule.forRoot(),
+    // Prometheus /metrics (@Global): HTTP latency, SSE gauge, runtime metrics.
+    MetricsModule,
     // Shared-state backplane (Redis) for multi-instance HA: realtime pub/sub,
     // global rate-limit window, broadcast announcement dedup. No-op fallback to
     // in-memory when REDIS_URL is unset. @Global — exported for all modules.
@@ -123,6 +132,9 @@ import { DemoSeederService } from './common/demo-seeder.service';
     // Fine-grained permission-matrix enforcement. Runs after the JWT guard
     // (needs req.user) and only acts on routes carrying @RequirePermission.
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    // HTTP latency/error metrics. Registered first so it is the OUTERMOST
+    // interceptor and times the full request including the tenant transaction.
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
     // Global audit net. Registered BEFORE TenantTxInterceptor so it is the
     // OUTERMOST interceptor: its logging runs outside the request's tenant
     // transaction and writes on its own connection, so an audit entry persists

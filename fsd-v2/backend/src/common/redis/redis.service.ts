@@ -44,14 +44,46 @@ export class RedisService implements OnModuleDestroy {
     return this.client;
   }
 
-  // Fire-and-forget publish to a channel. No-op when Redis is disabled. Errors
-  // are logged, not thrown — a pub/sub blip must not fail the calling request.
-  async publish(channel: string, message: string): Promise<void> {
-    if (!this.enabled || !this.client) return;
+  // Liveness check for the readiness probe. Returns true when Redis is disabled
+  // (nothing to be unhealthy about) or a PING round-trips; false on error.
+  async ping(): Promise<boolean> {
+    if (!this.enabled || !this.client) return true;
+    try {
+      return (await this.client.ping()) === 'PONG';
+    } catch {
+      return false;
+    }
+  }
+
+  // Publish to a channel. Returns true if the message was handed to Redis, false
+  // if Redis is disabled or the publish failed — so callers can fall back (e.g.
+  // realtime delivery to local clients). Errors are logged, not thrown: a pub/sub
+  // blip must not fail the calling request.
+  async publish(channel: string, message: string): Promise<boolean> {
+    if (!this.enabled || !this.client) return false;
     try {
       await this.client.publish(channel, message);
+      return true;
     } catch (e) {
       this.log.error(`publish to ${channel} failed: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  // Best-effort leader lock for "run this on exactly one instance" work (e.g.
+  // crons that hit a throttled external API). Returns true if THIS instance won
+  // the lock for the next ttlMs, false if another instance holds it. When Redis
+  // is disabled there's only one instance, so it always wins. On a Redis error
+  // it also returns true (fail-open) — better to risk a duplicate run than to
+  // silently skip the job on every node.
+  async tryLock(key: string, ttlMs: number): Promise<boolean> {
+    if (!this.enabled || !this.client) return true;
+    try {
+      const won = await this.client.set(`lock:${key}`, '1', 'PX', ttlMs, 'NX');
+      return won === 'OK';
+    } catch (e) {
+      this.log.warn(`leader lock ${key} unavailable, running anyway: ${(e as Error).message}`);
+      return true;
     }
   }
 
@@ -86,8 +118,12 @@ export class RedisService implements OnModuleDestroy {
     return conn;
   }
 
-  onModuleDestroy() {
-    this.client?.disconnect();
-    this.subscribers.forEach((s) => s.disconnect());
+  async onModuleDestroy() {
+    // Graceful: quit() flushes pending commands and closes cleanly, unlike
+    // disconnect() which drops them. Fall back to disconnect if quit hangs.
+    const all = [this.client, ...this.subscribers].filter(Boolean) as Redis[];
+    await Promise.all(
+      all.map((c) => c.quit().catch(() => c.disconnect())),
+    );
   }
 }

@@ -10,6 +10,7 @@ import { BookingsModule } from '../bookings/bookings.module';
 import { ResourcesModule } from '../resources/resources.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { Booking } from '../bookings/booking.entity';
 import { Resource } from '../resources/resource.entity';
 import { User } from '../users/user.entity';
@@ -22,6 +23,9 @@ import { Department } from '../departments/department.entity';
     ResourcesModule,
     NotificationsModule,
     UsersModule,
+    // Delegation may only target users who can actually approve, and the
+    // delegate picker is filtered to them — both consult the permission matrix.
+    PermissionsModule,
   ],
   controllers: [ApprovalsController, AdminApprovalRulesController],
   providers: [ApprovalsService, ApprovalsCron],
